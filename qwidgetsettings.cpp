@@ -13,7 +13,7 @@
 #include <QPlainTextEdit>
 #include <QMetaProperty>
 #include <QListWidget>
-#include <QDesktopWidget>
+//#include <QDesktopWidget>
 #include <QFontComboBox>
 #include <QTreeWidget>
 #include <QSplitter>
@@ -88,7 +88,8 @@ void QWidgetSettings::loadInputsSettings(QWidget* parent, bool restoreParentWidg
         settings.beginGroup("WidgetsPos");
         parent->resize(settings.value(parent->objectName()+"_size", parent->size()).toSize());
         QPoint savedPos = settings.value(parent->objectName()+"_pos", parent->pos()).toPoint();
-        if ((savedPos.x() < QApplication::desktop()->width()) && (savedPos.y() < QApplication::desktop()->height()))
+        //if ((savedPos.x() < QApplication::desktop()->width()) && (savedPos.y() < QApplication::desktop()->height()))
+        if ((savedPos.x() < QGuiApplication::primaryScreen()->availableGeometry().width()) && (savedPos.y() < QGuiApplication::primaryScreen()->availableGeometry().height()))
             parent->move(savedPos);
         settings.endGroup();
     }

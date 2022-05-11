@@ -27,7 +27,7 @@ QSqlError REQ_SQLManager::newDB(QString filename)
             if(!db.isValid())
                 return err;
             QSqlQuery query("", db);
-            QStringList queries = fileContent.split("\n",QString::SkipEmptyParts);
+            QStringList queries = fileContent.split("\n",Qt::SkipEmptyParts);
             for (int i=0; i< queries.count() ; ++i)
             {
                 if (!query.exec(queries.at(i)))
