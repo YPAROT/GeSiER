@@ -10,8 +10,6 @@ QT              += printsupport
 
 greaterThan(QT_MAJOR_VERSION, 4): QT += widgets
 
-greaterThan(QT_MAJOR_VERSION,5): QT += core5compat
-
 TARGET = GeSiER
 TEMPLATE = app
 
@@ -28,6 +26,11 @@ DEFINES += QT_DEPRECATED_WARNINGS
 
 
 SOURCES += \
+    coveragedashboard.cpp \
+    csvutility.cpp \
+    databasemigrator.cpp \
+    traceabilitywidget.cpp \
+    n2matrixwidget.cpp \
     edittabledialog.cpp \
     edittableviewform.cpp \
     exportcsvdialog.cpp \
@@ -47,6 +50,11 @@ SOURCES += \
     importlogdialog.cpp
 
 HEADERS += \
+    coveragedashboard.h \
+    csvutility.h \
+    databasemigrator.h \
+    traceabilitywidget.h \
+    n2matrixwidget.h \
     edittabledialog.h \
     edittableviewform.h \
     mainwindow.h \
@@ -78,10 +86,6 @@ FORMS += \
     importlogdialog.ui
 
 DESTDIR = $$_PRO_FILE_PWD_/bin/
-
-QTCSV_LOCATION = $$DESTDIR
-LIBS += -L$$QTCSV_LOCATION -lqtcsv
-INCLUDEPATH += $$PWD/../qtcsv-master/include
 
 message(=== Configuration of $$TARGET ===)
 message(Qt version: $$[QT_VERSION])

@@ -13,6 +13,7 @@
 #include <QMessageBox>
 #include <QApplication>
 #include <QDateTime>
+#include <QStandardPaths>
 
 class REQ_SQLManager
 {
@@ -21,7 +22,7 @@ public:
 
 
     QSqlError newDB(QString filename);
-    QSqlError openDB(QString filename);
+    QSqlError openDB(QString filename, bool backupBeforeMigration = true);
     void close();
     bool saveAs(QString filename);
     QString currentConnection() const;
@@ -29,8 +30,11 @@ public:
     QVector<QStringList> execQueryAndGetResults(QString queryStr);
     QStringList getColumnFromQuery(QString queryStr, int colnum=0);
     QString lastError()const { return m_lastError;}
+    QString filename() const { return m_filename; }
 
 private:
+    bool createBackup(const QString &filename, QString *backupFilename = nullptr);
+    QSqlError error(const QString &text) const;
     QString m_filename;
 //    QSqlDatabase m_db;
     QString m_DBConnectionName;

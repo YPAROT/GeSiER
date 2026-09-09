@@ -103,7 +103,7 @@ bool ReqTrackForm::SetModel(QModelIndex idx,QSqlDatabase db)
     if(!idx.isValid())
         return false;
 
-    if(!m_Req_Arbo)
+    if(m_Req_Arbo)
         delete m_Req_Arbo;
 
     m_Req_Arbo = new SqlTreeReqModel(db,this);

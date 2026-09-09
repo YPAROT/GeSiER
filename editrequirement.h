@@ -9,6 +9,8 @@
 namespace Ui {
 class EditRequirement;
 }
+class QLineEdit;
+class QCheckBox;
 
 class EditRequirement : public QDialog
 {
@@ -28,6 +30,11 @@ private:
     QDataWidgetMapper * m_mapper;
     QSortFilterProxyModel *m_chapterProxy;
     QSortFilterProxyModel *m_reqDocProxy;
+    QLineEdit *m_verifProcedure;
+    QLineEdit *m_redmineReference;
+    QLineEdit *m_verifMeans;
+    QLineEdit *m_verifStatus;
+    QCheckBox *m_traceRoot;
 };
 
 #endif // EDITREQUIREMENT_H

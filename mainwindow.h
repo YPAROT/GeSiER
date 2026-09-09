@@ -19,6 +19,9 @@ QT_FORWARD_DECLARE_CLASS(QPushButton)
 QT_FORWARD_DECLARE_CLASS(QTextEdit)
 QT_FORWARD_DECLARE_CLASS(QSqlError)
 QT_FORWARD_DECLARE_CLASS(QTableWidgetItem)
+class CoverageDashboard;
+class TraceabilityWidget;
+class N2MatrixWidget;
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -103,7 +106,10 @@ private:
     QString m_importLog;
 
     //Tree a refaire au besoin ailleurs
-    SqlTreeModel* m_PTmodel;
+    SqlTreeModel* m_PTmodel = nullptr;
+    CoverageDashboard* m_coverageDashboard = nullptr;
+    TraceabilityWidget* m_traceabilityWidget = nullptr;
+    N2MatrixWidget* m_n2MatrixWidget = nullptr;
     //SqlTreeReqModel* m_Req_Arbo;
 };
 

@@ -11,11 +11,11 @@
 #include "importrequirementdialog.h"
 #include "importbasicdialog.h"
 #include "importlogdialog.h"
+#include "coveragedashboard.h"
+#include "traceabilitywidget.h"
+#include "n2matrixwidget.h"
 
-#include "qtcsv/reader.h"
-#include "qtcsv/writer.h"
-#include "qtcsv/stringdata.h"
-#include "qtcsv/variantdata.h"
+#include "csvutility.h"
 
 #include <QTableWidget> //ajout après suppression etiquette
 
@@ -25,6 +25,16 @@ MainWindow::MainWindow(QWidget *parent)
     , ui(new Ui::MainWindow)
 {
     ui->setupUi(this);
+    m_coverageDashboard = new CoverageDashboard(this);
+    ui->ViewTabWidget->addTab(m_coverageDashboard, tr("Couverture"));
+    m_traceabilityWidget = new TraceabilityWidget(this);
+    ui->ViewTabWidget->addTab(m_traceabilityWidget, tr("Traçabilité"));
+    m_n2MatrixWidget = new N2MatrixWidget(this);
+    ui->ViewTabWidget->addTab(m_n2MatrixWidget, tr("Matrice N²"));
+    connect(m_coverageDashboard, &CoverageDashboard::statusMessage,
+            this, &MainWindow::statusMessage);
+    connect(m_traceabilityWidget, &TraceabilityWidget::dataChanged,
+            m_coverageDashboard, &CoverageDashboard::refresh);
     m_SQLManager = new REQ_SQLManager();
     m_tableViewManager = new TableViewManager();
     m_tableViewManager->loadConfFromFile(QApplication::applicationDirPath()+"\\defaultConf.ini");
@@ -63,6 +73,9 @@ MainWindow::MainWindow(QWidget *parent)
             //test pour arborescence requirement
             ui->ReqTrackViewWidget->setConnectionName(m_SQLManager->currentConnection());
             ui->ReqTrackViewWidget->init();
+            m_coverageDashboard->setConnectionName(m_SQLManager->currentConnection());
+            m_traceabilityWidget->setConnectionName(m_SQLManager->currentConnection());
+            m_n2MatrixWidget->setConnectionName(m_SQLManager->currentConnection());
 
 
             refreshEditTables();
@@ -143,6 +156,9 @@ void MainWindow::on_actionNew_DB_triggered()
             {
                 QWidgetSettings::setValue("REQ",filename);
                 setWindowTitle("GEstion  SImplifée d'Exigences pour La Recherche: "+filename);
+                m_coverageDashboard->setConnectionName(m_SQLManager->currentConnection());
+                m_traceabilityWidget->setConnectionName(m_SQLManager->currentConnection());
+                m_n2MatrixWidget->setConnectionName(m_SQLManager->currentConnection());
             }
         }
     }
@@ -164,6 +180,9 @@ void MainWindow::on_actionLoad_DB_triggered()
         {
             QWidgetSettings::setValue("REQ",filename);
             setWindowTitle("GEstion  SImplifée d'Exigences pour La Recherche: "+filename);
+            m_coverageDashboard->setConnectionName(m_SQLManager->currentConnection());
+            m_traceabilityWidget->setConnectionName(m_SQLManager->currentConnection());
+            m_n2MatrixWidget->setConnectionName(m_SQLManager->currentConnection());
         }
     }
     refreshEditTables();
@@ -196,7 +215,7 @@ void MainWindow::refreshViewTables()
       ui->docIFViewSqlTableWidget->execQuery("SELECT D.TITLE AS [Titre],D.DESCRIPTION AS [Description],IFLIST.IF_COUNT [Nombre d'Interfaces],CC.CH_COUNT AS [Nombre de Chapitres] "
                                            "FROM (SELECT IF.DOC_ID,COUNT(*) AS [IF_COUNT]FROM INTERFACE IF GROUP BY IF.DOC_ID) IFLIST "
                                            "LEFT JOIN DOCUMENT D ON IFLIST.DOC_ID=D.ID "
-                                           "LEFT JOIN (SELECT IFC.DOC_ID,COUNT(*) AS CH_COUNT FROM IF_CHAPTER IFC) CC ON IFLIST.DOC_ID=CC.DOC_ID",m_SQLManager->currentConnection());
+                                           "LEFT JOIN (SELECT IFC.DOC_ID,COUNT(*) AS CH_COUNT FROM IF_CHAPTER IFC GROUP BY IFC.DOC_ID) CC ON IFLIST.DOC_ID=CC.DOC_ID",m_SQLManager->currentConnection());
 
       ui->ReqViewSqlTableWidget->execQuery("SELECT R.CODE AS [Req. Code],R.TITLE AS [Titre],PT.NAME AS [Element du PT],D.TITLE AS [Document associé], RC.CHAPTER AS [Chapitre], R.DESCRIPTION AS [Description], "
                                            "RT.TYPE AS [Type], RS.STATUS AS [Statut], R.SOURCE AS [Source], RP.CODE AS [Req. parent], R.VERIF_LEVEL AS [Niveau de vérification], RM.METHOD AS [Méthode de vérification], R.COMMENTS AS [Commentaires]"
@@ -276,6 +295,19 @@ void MainWindow::on_clearButton_clicked()
 
 void MainWindow::refreshEditTables()
 {
+    QSqlDatabase db = QSqlDatabase::database(m_SQLManager->currentConnection());
+    if (!db.isOpen())
+        return;
+    if (!m_PTmodel) {
+        m_PTmodel = new SqlTreeModel(m_SQLManager->currentConnection(), this);
+        m_PTmodel->setRelation(QSqlRelation("PT","ID","PARENT"));
+        QMap<int,int> mapping;
+        mapping.insert(0,1); mapping.insert(1,2); mapping.insert(2,0);
+        m_PTmodel->setColumnMapping(mapping);
+        ui->PTtreeView->setModel(m_PTmodel);
+        ui->PTtreeView->hideColumn(1);
+        ui->PTtreeView->hideColumn(2);
+    }
     ui->editPTSqlTableWidget->SetHorizontalHeaders(0,"ID");
     ui->editPTSqlTableWidget->SetHorizontalHeaders(1,"Code Arbre Produit");
     ui->editPTSqlTableWidget->SetHorizontalHeaders(2,"ID du Parent");
@@ -402,7 +434,9 @@ QVariant MainWindow::getRelatedTablePKvalue(int column,SQLTableForm *tableform, 
 
     QSqlQuery query(db);
 
-    query.exec(QString("SELECT * FROM %1 WHERE %2=\"%3\"").arg(relation.tableName(),relation.displayColumn(),searchStr));
+    query.prepare(QString("SELECT * FROM %1 WHERE %2=?").arg(relation.tableName(),relation.displayColumn()));
+    query.addBindValue(searchStr);
+    query.exec();
 
     if(!query.first())
     {
@@ -466,16 +500,16 @@ void MainWindow::exportToCsv(QTableView *sqlTable,QString tableName)
             if (!filename.isEmpty())
             {
                 QStringList strList;
-                QtCSV::StringData strData;
-                strData.addRow(_exportCsvDialog->columnNames());
+                QList<QStringList> rows;
+                rows << _exportCsvDialog->columnNames();
                 for (int row=0; row < sqlTable->model()->rowCount();++row)
                 {
                     strList.clear();
                     for (int column = 0; column < columnIndexes.count();++column)
                         strList <<  sqlTable->model()->index(row,columnIndexes.at(column)).data().toString();
-                    strData.addRow(strList);
+                    rows << strList;
                 }
-                if (QtCSV::Writer::write(filename,strData,";") == false)
+                if (!CsvUtility::write(filename,rows,';'))
                     QMessageBox::warning(this,"Enregistrement en csv","Erreur lors de l'enregistrement du csv...");
             }
         }
@@ -514,6 +548,9 @@ void MainWindow::refreshTableSlot()
 {
     refreshEditTables();
     refreshViewTables();
+    m_coverageDashboard->refresh();
+    m_traceabilityWidget->refresh();
+    m_n2MatrixWidget->refresh();
 }
 
 void MainWindow::on_exportReqListToCsvPushButton_clicked()
@@ -656,9 +693,9 @@ void MainWindow::importReq()
     if (filename.isEmpty())
         return;
 
-    QList<QStringList> data = QtCSV::Reader::readToList(filename, ";", "\"");
+    QList<QStringList> data = CsvUtility::read(filename, ';');
     if (data.count()<2)//ne permet pas de changer le séparateur...
-        data = QtCSV::Reader::readToList(filename, ",", "\"");
+        data = CsvUtility::read(filename, ',');
     if (data.count()<2)
     {
         QMessageBox::warning(this,"Fichier CSV","Le fichier CSV est vide ou le séparateur n'est pas \",\" ou \";\" ....");
@@ -788,9 +825,9 @@ void MainWindow::importBasic(SQLTableForm *tableform)
     if (filename.isEmpty())
         return;
 
-    QList<QStringList> data = QtCSV::Reader::readToList(filename, ";", "\"");
+    QList<QStringList> data = CsvUtility::read(filename, ';');
     if (data.isEmpty())
-        data = QtCSV::Reader::readToList(filename, ",", "\"");
+        data = CsvUtility::read(filename, ',');
     if (data.isEmpty())
     {
         QMessageBox::warning(this,"Fichier CSV","Le fichier CSV est vide ou le séparateur n'est pas \",\" ou \";\" ....");
@@ -858,9 +895,9 @@ void MainWindow::importChapter(SQLTableForm *tableform)
     if (filename.isEmpty())
         return;
 
-    QList<QStringList> data = QtCSV::Reader::readToList(filename, ";", "\"");
+    QList<QStringList> data = CsvUtility::read(filename, ';');
     if (data.isEmpty())
-        data = QtCSV::Reader::readToList(filename, ",", "\"");
+        data = CsvUtility::read(filename, ',');
     if (data.isEmpty())
     {
         QMessageBox::warning(this,"Fichier CSV","Le fichier CSV est vide ou le séparateur n'est pas \",\" ou \";\" ....");

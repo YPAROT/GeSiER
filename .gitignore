@@ -1,0 +1,15 @@
+# qmake / compiler output
+.qmake.stash
+Makefile*
+*_resource.rc
+debug/
+release/
+bin/
+build/
+cmake-build-*/
+CMakeUserPresets.json
+ui_*.h
+moc_*.cpp
+qrc_*.cpp
+*.o
+*.obj

@@ -4,6 +4,10 @@
 //#include <QSqlRelationalDelegate>
 #include "sqlproxyrelationaldelegate.h"
 #include <QCompleter>
+#include <QCheckBox>
+#include <QGridLayout>
+#include <QLabel>
+#include <QLineEdit>
 
 
 #define PT_INDEX 1
@@ -28,6 +32,18 @@ EditRequirement::EditRequirement(QAbstractItemModel *model, const QModelIndex &i
     QModelIndex newIndex=index;
 
     ui->setupUi(this);
+
+    QGridLayout *verificationLayout=qobject_cast<QGridLayout*>(ui->groupBox_3->layout());
+    m_verifProcedure=new QLineEdit(this);m_verifProcedure->setPlaceholderText("Référence de procédure ou cas de test");
+    m_redmineReference=new QLineEdit(this);m_redmineReference->setPlaceholderText("Identifiant ou URL Redmine");
+    m_verifMeans=new QLineEdit(this);m_verifMeans->setPlaceholderText("Moyen ou équipement (facultatif)");
+    m_verifStatus=new QLineEdit(this);m_verifStatus->setPlaceholderText("Statut synthétique");
+    verificationLayout->addWidget(new QLabel("Procédure",this),2,0);verificationLayout->addWidget(m_verifProcedure,2,1);
+    verificationLayout->addWidget(new QLabel("Redmine",this),3,0);verificationLayout->addWidget(m_redmineReference,3,1);
+    verificationLayout->addWidget(new QLabel("Moyen",this),4,0);verificationLayout->addWidget(m_verifMeans,4,1);
+    verificationLayout->addWidget(new QLabel("Statut",this),5,0);verificationLayout->addWidget(m_verifStatus,5,1);
+    m_traceRoot=new QCheckBox("Exigence source/racine (aucun lien amont attendu)",this);
+    verificationLayout->addWidget(m_traceRoot,6,0,1,2);
 
     this->setWindowTitle("Requirements Editor");
 
@@ -133,6 +149,11 @@ EditRequirement::EditRequirement(QAbstractItemModel *model, const QModelIndex &i
     m_mapper->addMapping(ui->VerifLvl_lineEdit,VERIF_LEVEL_INDEX);
     m_mapper->addMapping(ui->VerifMethod_comboBox,VERIF_METHOD_INDEX);
     m_mapper->addMapping(ui->Comments_plainTextEdit,COMMENTS_INDEX);
+    m_mapper->addMapping(m_traceRoot,sqlModel->fieldIndex("IS_TRACE_ROOT"));
+    m_mapper->addMapping(m_verifProcedure,sqlModel->fieldIndex("VERIF_PROCEDURE"));
+    m_mapper->addMapping(m_redmineReference,sqlModel->fieldIndex("REDMINE_REF"));
+    m_mapper->addMapping(m_verifStatus,sqlModel->fieldIndex("VERIF_STATUS"));
+    m_mapper->addMapping(m_verifMeans,sqlModel->fieldIndex("VERIF_MEANS"));
 
 
 

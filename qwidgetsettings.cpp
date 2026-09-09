@@ -17,6 +17,17 @@
 #include <QFontComboBox>
 #include <QTreeWidget>
 #include <QSplitter>
+#include <QDir>
+#include <QStandardPaths>
+
+namespace {
+QString settingsFilename()
+{
+    const QString directory=QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
+    QDir().mkpath(directory);
+    return QDir(directory).filePath(QApplication::applicationName()+".ini");
+}
+}
 
 
 QList<QWidget *> QWidgetSettings::allInputsWidgets(QWidget *parent,AllInputsTypes types,QList<QWidget*> excludedWidgets, QList<QWidget*> includedWidgets)
@@ -56,7 +67,7 @@ void QWidgetSettings::loadAllInputsSettings(QWidget *parent, AllInputsTypes type
 
 void QWidgetSettings::setValue(const QString &key, const QVariant &value)
 {
-    QSettings settings(QApplication::applicationDirPath()+"/config/ini/"+QApplication::applicationName()+".ini",QSettings::IniFormat);
+    QSettings settings(settingsFilename(),QSettings::IniFormat);
     settings.beginGroup("Custom");
     settings.setValue(key,value);
     settings.endGroup();
@@ -65,7 +76,7 @@ void QWidgetSettings::setValue(const QString &key, const QVariant &value)
 QVariant QWidgetSettings::value(const QString &key, const QVariant &defaultValue)
 {
     QVariant result;
-    QSettings settings(QApplication::applicationDirPath()+"/config/ini/"+QApplication::applicationName()+".ini",QSettings::IniFormat);
+    QSettings settings(settingsFilename(),QSettings::IniFormat);
     settings.beginGroup("Custom");
     result = settings.value(key,defaultValue);
     settings.endGroup();
@@ -75,13 +86,13 @@ QVariant QWidgetSettings::value(const QString &key, const QVariant &defaultValue
 
 QSettings*  QWidgetSettings::qSettings()
 {
-    return new QSettings(QApplication::applicationDirPath()+"/config/ini/"+QApplication::applicationName()+".ini",QSettings::IniFormat);
+    return new QSettings(settingsFilename(),QSettings::IniFormat);
 }
 
 
 void QWidgetSettings::loadInputsSettings(QWidget* parent, bool restoreParentWidgetSizeAndPos, QList<QWidget*> inputsWidgets)
 {
-    QSettings settings(QApplication::applicationDirPath()+"/config/ini/"+QApplication::applicationName()+".ini",QSettings::IniFormat);
+    QSettings settings(settingsFilename(),QSettings::IniFormat);
     qDebug() << "loading settings from "<< settings.fileName();
     if (restoreParentWidgetSizeAndPos)
     {
@@ -161,7 +172,7 @@ void QWidgetSettings::saveAllInputsSettings(QWidget* parent,AllInputsTypes types
 
 void QWidgetSettings::saveInputsSettings(QWidget* parent, QList<QWidget*> inputsWidgets)
 {
-    QSettings settings(QApplication::applicationDirPath()+"/config/ini/"+QApplication::applicationName()+".ini",QSettings::IniFormat);
+    QSettings settings(settingsFilename(),QSettings::IniFormat);
     qDebug() << "saving settings to "<< settings.fileName();
     settings.beginGroup("WidgetsPos");
     settings.setValue(parent->objectName()+"_size", parent->size());
