@@ -31,6 +31,8 @@ SOURCES += \
     databasemigrator.cpp \
     traceabilitywidget.cpp \
     n2matrixwidget.cpp \
+    producttreeservice.cpp \
+    producttreewidget.cpp \
     edittabledialog.cpp \
     edittableviewform.cpp \
     exportcsvdialog.cpp \
@@ -55,6 +57,8 @@ HEADERS += \
     databasemigrator.h \
     traceabilitywidget.h \
     n2matrixwidget.h \
+    producttreeservice.h \
+    producttreewidget.h \
     edittabledialog.h \
     edittableviewform.h \
     mainwindow.h \

@@ -14,10 +14,16 @@
 #include "coveragedashboard.h"
 #include "traceabilitywidget.h"
 #include "n2matrixwidget.h"
+#include "producttreewidget.h"
 
 #include "csvutility.h"
 
 #include <QTableWidget> //ajout après suppression etiquette
+#include <QListWidget>
+#include <QStackedWidget>
+#include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QLabel>
 
 
 MainWindow::MainWindow(QWidget *parent)
@@ -103,6 +109,8 @@ MainWindow::MainWindow(QWidget *parent)
     //connection des commits au refresh
     connect(ui->editPTSqlTableWidget,SIGNAL(comitOccured()),this,SLOT(refreshTableSlot()));
 
+    setupModernNavigation();
+
     emit statusMessage(tr("Ready."));
 }
 
@@ -161,6 +169,7 @@ void MainWindow::on_actionNew_DB_triggered()
                 m_n2MatrixWidget->setConnectionName(m_SQLManager->currentConnection());
                 ui->ReqTrackViewWidget->setConnectionName(m_SQLManager->currentConnection());
                 ui->ReqTrackViewWidget->init();
+                if (m_productTreeWidget) m_productTreeWidget->setConnectionName(m_SQLManager->currentConnection());
             }
         }
     }
@@ -186,6 +195,7 @@ void MainWindow::on_actionLoad_DB_triggered()
             m_traceabilityWidget->setConnectionName(m_SQLManager->currentConnection());
             m_n2MatrixWidget->setConnectionName(m_SQLManager->currentConnection());
             ui->ReqTrackViewWidget->setConnectionName(m_SQLManager->currentConnection());
+            if (m_productTreeWidget) m_productTreeWidget->setConnectionName(m_SQLManager->currentConnection());
         }
     }
     refreshEditTables();
@@ -554,6 +564,39 @@ void MainWindow::refreshTableSlot()
     m_coverageDashboard->refresh();
     m_traceabilityWidget->refresh();
     m_n2MatrixWidget->refresh();
+}
+
+void MainWindow::setupModernNavigation()
+{
+    QWidget *dashboardPage=new QWidget(this);
+    QVBoxLayout *dashboardLayout=new QVBoxLayout(dashboardPage);
+    QLabel *dashboardTitle=new QLabel(tr("Tableau de bord du projet"),dashboardPage);
+    QFont titleFont=dashboardTitle->font();titleFont.setPointSize(titleFont.pointSize()+4);titleFont.setBold(true);dashboardTitle->setFont(titleFont);
+    dashboardLayout->addWidget(dashboardTitle);dashboardLayout->addWidget(m_coverageDashboard);
+
+    QWidget *projectPage=new QWidget(this);QHBoxLayout *projectLayout=new QHBoxLayout(projectPage);
+    m_projectNavigation=new QListWidget(projectPage);m_projectNavigation->setMaximumWidth(210);
+    m_projectPages=new QStackedWidget(projectPage);
+    m_productTreeWidget=new ProductTreeWidget(projectPage);
+    const QStringList sections={tr("Product Tree"),tr("Exigences"),tr("Documents"),tr("Interfaces"),tr("Vérification"),tr("Changements"),tr("Historique")};
+    m_projectNavigation->addItems(sections);
+    m_projectPages->addWidget(m_productTreeWidget);
+    m_projectPages->addWidget(m_traceabilityWidget);
+    m_projectPages->addWidget(new QLabel(tr("La nouvelle vue Documents sera intégrée dans l'incrément suivant."),projectPage));
+    m_projectPages->addWidget(m_n2MatrixWidget);
+    m_projectPages->addWidget(ui->tab_reqinput_edit);
+    m_projectPages->addWidget(ui->tab_ConfChange_edit);
+    m_projectPages->addWidget(ui->tab_Logs);
+    projectLayout->addWidget(m_projectNavigation);projectLayout->addWidget(m_projectPages,1);
+    connect(m_projectNavigation,&QListWidget::currentRowChanged,m_projectPages,&QStackedWidget::setCurrentIndex);
+    connect(m_productTreeWidget,&ProductTreeWidget::dataChanged,this,&MainWindow::refreshTableSlot);
+    m_projectNavigation->setCurrentRow(0);
+    if (QSqlDatabase::database(m_SQLManager->currentConnection()).isOpen())
+        m_productTreeWidget->setConnectionName(m_SQLManager->currentConnection());
+
+    ui->mainTabWidget->clear();
+    ui->mainTabWidget->addTab(dashboardPage,tr("Tableau de bord"));
+    ui->mainTabWidget->addTab(projectPage,tr("Projet"));
 }
 
 void MainWindow::on_exportReqListToCsvPushButton_clicked()

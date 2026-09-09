@@ -22,6 +22,9 @@ QT_FORWARD_DECLARE_CLASS(QTableWidgetItem)
 class CoverageDashboard;
 class TraceabilityWidget;
 class N2MatrixWidget;
+class ProductTreeWidget;
+class QListWidget;
+class QStackedWidget;
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -54,6 +57,7 @@ private:
     void importReq();
     void importBasic(SQLTableForm *tableform);
     void importChapter(SQLTableForm *tableform);
+    void setupModernNavigation();
 
 private slots:
 
@@ -110,6 +114,9 @@ private:
     CoverageDashboard* m_coverageDashboard = nullptr;
     TraceabilityWidget* m_traceabilityWidget = nullptr;
     N2MatrixWidget* m_n2MatrixWidget = nullptr;
+    ProductTreeWidget* m_productTreeWidget = nullptr;
+    QListWidget* m_projectNavigation = nullptr;
+    QStackedWidget* m_projectPages = nullptr;
     //SqlTreeReqModel* m_Req_Arbo;
 };
 

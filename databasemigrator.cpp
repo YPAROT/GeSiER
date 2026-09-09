@@ -101,12 +101,24 @@ bool DatabaseMigrator::migrate(QSqlDatabase db, QString *errorMessage)
         {"DOCUMENT", "METADATA_JSON", "TEXT"},
         {"INTERFACE", "CODE", "TEXT"},
         {"INTERFACE", "STATUS", "TEXT NOT NULL DEFAULT 'DRAFT'"}
+        ,{"PT", "SEGMENT", "TEXT"}
+        ,{"PT", "DESCRIPTION", "TEXT"}
+        ,{"PT", "POSITION", "INTEGER NOT NULL DEFAULT 0"}
+        ,{"PT", "ARCHIVED", "INTEGER NOT NULL DEFAULT 0 CHECK(ARCHIVED IN (0,1))"}
+        ,{"PT", "CREATED_AT", "TEXT"}
+        ,{"PT", "UPDATED_AT", "TEXT"}
     };
     for (const Column &column : columns) {
         if (!addColumnIfMissing(db, column.table, column.name, column.definition, errorMessage)) {
             db.rollback();
             return false;
         }
+    }
+
+    if (!execute(db, "UPDATE PT SET SEGMENT=COALESCE(NULLIF(SEGMENT,''),NAME), CREATED_AT=COALESCE(CREATED_AT,CURRENT_TIMESTAMP), UPDATED_AT=COALESCE(UPDATED_AT,CURRENT_TIMESTAMP)", errorMessage)
+            || !execute(db, "INSERT OR IGNORE INTO PROJECT_META(KEY,VALUE) VALUES('pt_separator','-')", errorMessage)
+            || !execute(db, "CREATE UNIQUE INDEX IF NOT EXISTS IDX_PT_SIBLING_SEGMENT ON PT(IFNULL(PARENT,-1),SEGMENT)", errorMessage)) {
+        db.rollback(); return false;
     }
 
     // Preserve the legacy single-parent relationship as an explicit decomposition link.

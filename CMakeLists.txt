@@ -16,6 +16,8 @@ qt_add_executable(GeSiER WIN32
     coveragedashboard.cpp coveragedashboard.h
     traceabilitywidget.cpp traceabilitywidget.h
     n2matrixwidget.cpp n2matrixwidget.h
+    producttreeservice.cpp producttreeservice.h
+    producttreewidget.cpp producttreewidget.h
     databasemigrator.cpp databasemigrator.h
     csvutility.cpp csvutility.h
     req_sqlmanager.cpp req_sqlmanager.h
