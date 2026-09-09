@@ -45,8 +45,10 @@ bool SqlTreeModel::select()
 
     m_rootItem = new SqlTreeItem(headerfromquery);
 
-    if(!query.first())
+    if(!query.first()) {
+        endResetModel();
         return false;
+    }
 
     {
         QSqlRecord rec=query.record();
@@ -129,6 +131,8 @@ Qt::ItemFlags SqlTreeModel::flags(const QModelIndex &index) const
 
 QVariant SqlTreeModel::headerData(int section, Qt::Orientation orientation, int role) const
 {
+    if (!m_rootItem)
+        return QVariant();
     if (orientation == Qt::Horizontal && role == Qt::DisplayRole)
     {
         if(m_columnMap.contains(section))
@@ -145,7 +149,7 @@ bool SqlTreeModel::setHeaderData(int section, Qt::Orientation orientation, const
 {
     Q_UNUSED(role);
 
-    if(orientation!=Qt::Horizontal)
+    if(orientation!=Qt::Horizontal || !m_rootItem)
         return false;
 
     m_rootItem->setData(section,value);
@@ -190,6 +194,8 @@ QModelIndex SqlTreeModel::parent(const QModelIndex &index) const
 
 int SqlTreeModel::rowCount(const QModelIndex &parent) const
 {
+    if (!m_rootItem)
+        return 0;
     SqlTreeItem *parentItem;
     if (parent.column() > 0)
         return 0;
@@ -205,6 +211,8 @@ int SqlTreeModel::rowCount(const QModelIndex &parent) const
 
 int SqlTreeModel::columnCount(const QModelIndex &parent) const
 {
+    if (!m_rootItem)
+        return 0;
     if (parent.isValid())
     {
         return static_cast<SqlTreeItem*>(parent.internalPointer())->columnCount();

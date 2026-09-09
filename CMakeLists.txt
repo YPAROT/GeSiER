@@ -54,6 +54,8 @@ if(BUILD_TESTING)
     qt_add_executable(database_migrator_test
         tests/database_migrator_test.cpp
         databasemigrator.cpp databasemigrator.h
+        sqltreemodel.cpp sqltreemodel.h
+        sqltreeitem.cpp sqltreeitem.h
     )
     target_link_libraries(database_migrator_test PRIVATE Qt6::Core Qt6::Sql Qt6::Test)
     target_include_directories(database_migrator_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

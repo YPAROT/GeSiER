@@ -3,8 +3,10 @@
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QTemporaryDir>
+#include <QAbstractItemModelTester>
 
 #include "databasemigrator.h"
+#include "sqltreemodel.h"
 
 class DatabaseMigratorTest : public QObject
 {
@@ -37,6 +39,12 @@ void DatabaseMigratorTest::migratesLegacySchemaWithoutLosingLinks()
     QVERIFY2(DatabaseMigrator::migrate(db,&error),qPrintable(error));
     QVERIFY(query.exec("PRAGMA user_version")); QVERIFY(query.next()); QCOMPARE(query.value(0).toInt(),DatabaseMigrator::CurrentVersion);
     QVERIFY(query.exec("SELECT COUNT(*) FROM REQUIREMENT_RELATION WHERE SOURCE_REQ_ID=1 AND TARGET_REQ_ID=2 AND TYPE_ID=1")); QVERIFY(query.next()); QCOMPARE(query.value(0).toInt(),1);
+    QVERIFY(query.exec("CREATE TABLE EMPTY_PT(ID INTEGER PRIMARY KEY,NAME TEXT,PARENT INTEGER)"));
+    SqlTreeModel emptyTree("migration-test");
+    emptyTree.setRelation(QSqlRelation("EMPTY_PT","ID","PARENT"));
+    QAbstractItemModelTester modelTester(&emptyTree,QAbstractItemModelTester::FailureReportingMode::QtTest);
+    QVERIFY(!emptyTree.select());
+    QCOMPARE(emptyTree.rowCount(),0);
     QVERIFY(query.exec("SELECT COUNT(*) FROM REQUIREMENT_PT WHERE REQ_ID IN (1,2)")); QVERIFY(query.next()); QCOMPARE(query.value(0).toInt(),2);
     QVERIFY(!query.exec("INSERT INTO REQUIREMENT_RELATION(SOURCE_REQ_ID,TARGET_REQ_ID,TYPE_ID) VALUES(2,1,1)"));
     QVERIFY(query.exec("SELECT COUNT(*) FROM EVENT_LOG WHERE OBJECT_TYPE='REQUIREMENT_RELATION' AND EVENT_TYPE='CREATE'")); QVERIFY(query.next()); QCOMPARE(query.value(0).toInt(),1);

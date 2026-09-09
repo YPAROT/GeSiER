@@ -159,6 +159,8 @@ void MainWindow::on_actionNew_DB_triggered()
                 m_coverageDashboard->setConnectionName(m_SQLManager->currentConnection());
                 m_traceabilityWidget->setConnectionName(m_SQLManager->currentConnection());
                 m_n2MatrixWidget->setConnectionName(m_SQLManager->currentConnection());
+                ui->ReqTrackViewWidget->setConnectionName(m_SQLManager->currentConnection());
+                ui->ReqTrackViewWidget->init();
             }
         }
     }
@@ -183,6 +185,7 @@ void MainWindow::on_actionLoad_DB_triggered()
             m_coverageDashboard->setConnectionName(m_SQLManager->currentConnection());
             m_traceabilityWidget->setConnectionName(m_SQLManager->currentConnection());
             m_n2MatrixWidget->setConnectionName(m_SQLManager->currentConnection());
+            ui->ReqTrackViewWidget->setConnectionName(m_SQLManager->currentConnection());
         }
     }
     refreshEditTables();
