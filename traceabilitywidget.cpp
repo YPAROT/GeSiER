@@ -61,6 +61,11 @@ void TraceabilityWidget::setConnectionName(const QString &connectionName)
 
 void TraceabilityWidget::refresh()
 {
+    const QSqlDatabase db=QSqlDatabase::database(m_connectionName,false);
+    if(m_connectionName.isEmpty()||!db.isValid()||!db.isOpen()){
+        m_requirement->clear();m_target->clear();m_relationType->clear();
+        m_scene->clear();m_relations->setRowCount(0);return;
+    }
     refreshRequirements(); refreshRelationTypes(); refreshSelection();
 }
 

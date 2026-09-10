@@ -29,7 +29,7 @@ void N2MatrixWidget::setConnectionName(const QString &connectionName){m_connecti
 
 void N2MatrixWidget::refresh()
 {
-    QSqlDatabase db=QSqlDatabase::database(m_connectionName);m_matrix->clear();m_ptIds.clear();if(!db.isOpen()){m_matrix->setRowCount(0);m_matrix->setColumnCount(0);return;}
+    QSqlDatabase db=QSqlDatabase::database(m_connectionName,false);m_matrix->clear();m_ptIds.clear();if(!db.isValid()||!db.isOpen()){m_matrix->setRowCount(0);m_matrix->setColumnCount(0);return;}
     QString condition;
     if(m_onlyWithInterfaces->isChecked())condition=" WHERE EXISTS(SELECT 1 FROM INTERFACE I WHERE I.ELEMENT1=PT.ID OR I.ELEMENT2=PT.ID)";
     QSqlQuery pt("SELECT ID,NAME FROM PT"+condition+" ORDER BY NAME",db);QStringList names;
@@ -52,7 +52,7 @@ void N2MatrixWidget::refresh()
 void N2MatrixWidget::showDetails(int row,int column)
 {
     if(row<0||column<0||row==column||row>=m_ptIds.size()||column>=m_ptIds.size())return;
-    QSqlQuery query(QSqlDatabase::database(m_connectionName));query.prepare("SELECT COALESCE(I.CODE,'IF-'||I.ID),COALESCE(GROUP_CONCAT(DISTINCT T.LABEL),'Type non défini'),COALESCE(GROUP_CONCAT(DISTINCT DOC.TITLE),'Aucun ICD'),I.DESCRIPTION FROM INTERFACE I LEFT JOIN INTERFACE_TYPE_LINK L ON L.INTERFACE_ID=I.ID LEFT JOIN INTERFACE_TYPE T ON T.ID=L.TYPE_ID LEFT JOIN INTERFACE_DOCUMENT D ON D.INTERFACE_ID=I.ID LEFT JOIN DOCUMENT DOC ON DOC.ID=D.DOC_ID WHERE (I.ELEMENT1=? AND I.ELEMENT2=?) OR (I.ELEMENT1=? AND I.ELEMENT2=?) GROUP BY I.ID ORDER BY I.CODE");
+    QSqlQuery query(QSqlDatabase::database(m_connectionName, false));query.prepare("SELECT COALESCE(I.CODE,'IF-'||I.ID),COALESCE(GROUP_CONCAT(DISTINCT T.LABEL),'Type non défini'),COALESCE(GROUP_CONCAT(DISTINCT DOC.TITLE),'Aucun ICD'),I.DESCRIPTION FROM INTERFACE I LEFT JOIN INTERFACE_TYPE_LINK L ON L.INTERFACE_ID=I.ID LEFT JOIN INTERFACE_TYPE T ON T.ID=L.TYPE_ID LEFT JOIN INTERFACE_DOCUMENT D ON D.INTERFACE_ID=I.ID LEFT JOIN DOCUMENT DOC ON DOC.ID=D.DOC_ID WHERE (I.ELEMENT1=? AND I.ELEMENT2=?) OR (I.ELEMENT1=? AND I.ELEMENT2=?) GROUP BY I.ID ORDER BY I.CODE");
     query.addBindValue(m_ptIds[row]);query.addBindValue(m_ptIds[column]);query.addBindValue(m_ptIds[column]);query.addBindValue(m_ptIds[row]);query.exec();QStringList details;
     while(query.next())details<<QString("%1\nType : %2\nICD : %3\n%4").arg(query.value(0).toString(),query.value(1).toString(),query.value(2).toString(),query.value(3).toString());
     if(details.isEmpty())details<<"Aucune interface déclarée entre ces éléments.";
