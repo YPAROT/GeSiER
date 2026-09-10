@@ -4,6 +4,7 @@
 #include <QSqlQuery>
 #include <QTemporaryDir>
 #include <QtTest>
+#include <algorithm>
 
 #include "databasemigrator.h"
 #include "producttreeservice.h"
@@ -65,6 +66,38 @@ void DatabaseMigratorTest::managesRelationsAndDocumentOccurrences() {
     }
   }
   QCOMPARE(occurrences, 1);
+  DocumentRecord saved = documents.document(1);
+  saved.reference = "SPEC-A";
+  saved.secondaryReferences = {"GED-42", "CUSTOMER-7"};
+  saved.metadata["Auteur"] = "Équipe système";
+  saved.metadata["Indice"] = "B";
+  QVERIFY(documents.saveDocument(saved).success);
+  QCOMPARE(documents.document(1).metadata.value("Indice"), QString("B"));
+  QCOMPARE(documents.document(1).secondaryReferences.size(), 2);
+
+  const auto first = documents.addChapter(1, -1, "Premier");
+  const auto second = documents.addChapter(1, -1, "Second");
+  QVERIFY(first.success); QVERIFY(second.success);
+  const auto text = documents.addText(1, first.id, "<p><b>Texte riche</b></p>");
+  const auto image = documents.addImage(1, first.id, QByteArray("PNG"), "Architecture");
+  QVERIFY(text.success); QVERIFY(image.success);
+  QVERIFY(documents.updateText(text.id, "<p>Texte modifié</p>").success);
+  QVERIFY(documents.updateImage(image.id, QByteArray("NEWPNG"), "Vue logique").success);
+  QVERIFY(documents.moveNode(first.id, second.id, 0).success);
+  QVERIFY(!documents.moveNode(second.id, first.id, 0).success);
+
+  DocumentService reopened(manager.currentConnection());
+  const auto persisted = reopened.nodes(1);
+  bool foundText=false, foundImage=false;
+  QMap<int, QList<int>> positions;
+  for(const auto &node:persisted){positions[node.parentId]<<node.position;foundText|=node.id==text.id&&node.textContent.contains("modifié");foundImage|=node.id==image.id&&node.imageLegend=="Vue logique";}
+  QVERIFY(foundText); QVERIFY(foundImage);
+  for(auto values:positions){std::sort(values.begin(),values.end());for(int i=0;i<values.size();++i)QCOMPARE(values[i],i);}
+  QVERIFY(reopened.previewHtml(1).contains("Texte modifié"));
+  QVERIFY(query.exec(QString("INSERT INTO DOCUMENT(ID,PT_ID,TYPE,REFERENCE,TITLE) VALUES(2,%1,1,'SPEC-B','Autre')").arg(root)));
+  QVERIFY(documents.placeRequirement(2,-1,1).success);
+  QVERIFY(query.exec("SELECT COUNT(*) FROM EVENT_LOG WHERE OBJECT_TYPE='DOCUMENT' AND EVENT_TYPE='COMPOSITION'"));
+  QVERIFY(query.next()); QVERIFY(query.value(0).toInt() >= 7);
   query = QSqlQuery(); db = QSqlDatabase(); manager.close();
 }
 

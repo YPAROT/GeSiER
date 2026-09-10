@@ -9,6 +9,7 @@ class QTreeWidget;
 class QLineEdit;
 class QTextEdit;
 class QComboBox;
+class QTableWidget;
 
 class DocumentWidget : public QWidget {
   Q_OBJECT
@@ -40,6 +41,7 @@ private:
   QTextEdit *m_description;
   QComboBox *m_type;
   QComboBox *m_pt;
+  QTableWidget *m_metadata;
 };
 
 #endif
