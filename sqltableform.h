@@ -24,6 +24,7 @@ class SQLTableForm : public QWidget
     Q_OBJECT
 
 public:
+    void releaseDatabase();
     explicit SQLTableForm(QWidget *parent = nullptr);
     ~SQLTableForm();
 

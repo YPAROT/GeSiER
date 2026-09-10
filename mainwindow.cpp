@@ -15,6 +15,8 @@
 #include "traceabilitywidget.h"
 #include "n2matrixwidget.h"
 #include "producttreewidget.h"
+#include "requirementwidget.h"
+#include "documentwidget.h"
 
 #include "csvutility.h"
 
@@ -53,7 +55,9 @@ MainWindow::MainWindow(QWidget *parent)
     ui->editTabWidget->setCurrentIndex(0);
 
 
-    QString filename = QWidgetSettings::value("REQ").toString();
+    QString filename = qEnvironmentVariable("GESIER_PROJECT_PATH");
+    if (filename.isEmpty() && !qEnvironmentVariableIsSet("GESIER_IGNORE_LAST_PROJECT"))
+        filename = QWidgetSettings::value("REQ").toString();
     if (!filename.isEmpty())
     {
         QSqlError err = m_SQLManager->openDB(filename);
@@ -82,6 +86,8 @@ MainWindow::MainWindow(QWidget *parent)
             m_coverageDashboard->setConnectionName(m_SQLManager->currentConnection());
             m_traceabilityWidget->setConnectionName(m_SQLManager->currentConnection());
             m_n2MatrixWidget->setConnectionName(m_SQLManager->currentConnection());
+            if (m_requirementWidget) m_requirementWidget->setConnectionName(m_SQLManager->currentConnection());
+            if (m_documentWidget) m_documentWidget->setConnectionName(m_SQLManager->currentConnection());
 
 
             refreshEditTables();
@@ -116,17 +122,88 @@ MainWindow::MainWindow(QWidget *parent)
 
 MainWindow::~MainWindow()
 {
-    m_SQLManager->close();
+    closeProject();
+    delete m_PTmodel;
+    m_PTmodel = nullptr;
+    delete ui;
+    ui = nullptr;
     delete m_SQLManager;
     m_tableViewManager->saveConfToFile(QApplication::applicationDirPath()+"\\defaultConf.ini");
     delete m_tableViewManager;
+}
+
+bool MainWindow::hasOpenProject() const
+{
+    if (!m_SQLManager)
+        return false;
+    const QString connection = m_SQLManager->currentConnection();
+    return QSqlDatabase::contains(connection) &&
+           QSqlDatabase::database(connection, false).isOpen();
+}
+
+void MainWindow::updateProjectUi()
+{
+    const bool open = hasOpenProject();
+    ui->actionSave_as->setEnabled(open);
+    if (m_projectNavigation)
+        m_projectNavigation->setEnabled(open);
+    if (m_projectPages)
+        m_projectPages->setEnabled(open);
+    if (m_coverageDashboard)
+        m_coverageDashboard->setEnabled(open);
+    if (!open)
+        emit statusMessage(tr("Aucun projet ouvert. Créez ou ouvrez un projet pour commencer."));
+}
+
+void MainWindow::releaseProjectViews()
+{
+    if (!ui)
+        return;
+    ui->PTtreeView->setModel(nullptr);
     delete m_PTmodel;
-    delete ui;
+    m_PTmodel = nullptr;
+    ui->ReqTrackViewWidget->releaseDatabase();
+    const QList<SQLTableForm *> forms = findChildren<SQLTableForm *>();
+    for (SQLTableForm *form : forms)
+        form->releaseDatabase();
+    if (m_productTreeWidget) m_productTreeWidget->setConnectionName({});
+    if (m_requirementWidget) m_requirementWidget->setConnectionName({});
+    if (m_documentWidget) m_documentWidget->releaseDatabase();
+    if (m_coverageDashboard) m_coverageDashboard->setConnectionName({});
+    if (m_traceabilityWidget) m_traceabilityWidget->setConnectionName({});
+    if (m_n2MatrixWidget) m_n2MatrixWidget->setConnectionName({});
+}
+
+void MainWindow::closeProject()
+{
+    releaseProjectViews();
+    if (m_SQLManager)
+        m_SQLManager->close();
+    updateProjectUi();
+}
+
+void MainWindow::bindProjectViews()
+{
+    if (!ui || !m_SQLManager ||
+        !hasOpenProject())
+        return;
+    const QString connection = m_SQLManager->currentConnection();
+    ui->ReqTrackViewWidget->setConnectionName(connection);
+    ui->ReqTrackViewWidget->init();
+    if (m_coverageDashboard) m_coverageDashboard->setConnectionName(connection);
+    if (m_traceabilityWidget) m_traceabilityWidget->setConnectionName(connection);
+    if (m_n2MatrixWidget) m_n2MatrixWidget->setConnectionName(connection);
+    if (m_productTreeWidget) m_productTreeWidget->setConnectionName(connection);
+    if (m_requirementWidget) m_requirementWidget->setConnectionName(connection);
+    if (m_documentWidget) m_documentWidget->setConnectionName(connection);
+    refreshEditTables();
+    refreshViewTables();
+    updateProjectUi();
 }
 
 void MainWindow::on_actionClose_triggered()
 {
-    m_SQLManager->close();
+    closeProject();
     close();
 }
 
@@ -156,10 +233,16 @@ void MainWindow::on_actionNew_DB_triggered()
     {
         if ((!QFile::exists(filename)) || (QMessageBox::information(NULL,"Nouvelle Base de données","Le fichier existe déjà, la BDD contenue dans le fichier va etre effacée, continuer ?",QMessageBox::Yes | QMessageBox::No)==QMessageBox::Yes))
         {
+            const QString previousProject = m_SQLManager->filename();
+            closeProject();
             QSqlError err = m_SQLManager->newDB(filename);
             if (err.type() != QSqlError::NoError)
+            {
                 QMessageBox::warning(this, tr("Unable to create database"), tr("An error occurred while "
                                                                                "creating the connection: ") + err.text());
+                if (!previousProject.isEmpty() && m_SQLManager->openDB(previousProject).type() == QSqlError::NoError)
+                    bindProjectViews();
+            }
             else
             {
                 QWidgetSettings::setValue("REQ",filename);
@@ -170,12 +253,15 @@ void MainWindow::on_actionNew_DB_triggered()
                 ui->ReqTrackViewWidget->setConnectionName(m_SQLManager->currentConnection());
                 ui->ReqTrackViewWidget->init();
                 if (m_productTreeWidget) m_productTreeWidget->setConnectionName(m_SQLManager->currentConnection());
+                if (m_requirementWidget) m_requirementWidget->setConnectionName(m_SQLManager->currentConnection());
+                if (m_documentWidget) m_documentWidget->setConnectionName(m_SQLManager->currentConnection());
             }
         }
     }
 
     refreshEditTables();
     refreshViewTables();
+    updateProjectUi();
 }
 
 void MainWindow::on_actionLoad_DB_triggered()
@@ -183,10 +269,16 @@ void MainWindow::on_actionLoad_DB_triggered()
     QString filename = QFileDialog::getOpenFileName(this,"Ouvrir une base de données",QApplication::applicationDirPath(),"*.db");
     if (!filename.isEmpty())
     {
+        const QString previousProject = m_SQLManager->filename();
+        closeProject();
         QSqlError err = m_SQLManager->openDB(filename);
         if (err.type() != QSqlError::NoError)
+        {
             QMessageBox::warning(this, tr("Unable to open database"), tr("An error occurred while "
                                                                          "opening the connection: ") + err.text());
+            if (!previousProject.isEmpty() && m_SQLManager->openDB(previousProject).type() == QSqlError::NoError)
+                bindProjectViews();
+        }
         else
         {
             QWidgetSettings::setValue("REQ",filename);
@@ -196,11 +288,14 @@ void MainWindow::on_actionLoad_DB_triggered()
             m_n2MatrixWidget->setConnectionName(m_SQLManager->currentConnection());
             ui->ReqTrackViewWidget->setConnectionName(m_SQLManager->currentConnection());
             if (m_productTreeWidget) m_productTreeWidget->setConnectionName(m_SQLManager->currentConnection());
+            if (m_requirementWidget) m_requirementWidget->setConnectionName(m_SQLManager->currentConnection());
+            if (m_documentWidget) m_documentWidget->setConnectionName(m_SQLManager->currentConnection());
         }
     }
     refreshEditTables();
     ui->ReqTrackViewWidget->init();
     refreshViewTables();
+    updateProjectUi();
 }
 
 void MainWindow::on_actionSave_as_triggered()
@@ -208,6 +303,7 @@ void MainWindow::on_actionSave_as_triggered()
     QString filename = QFileDialog::getSaveFileName(this,"Enregistrer sous...","","*.db");
     if (!filename.isEmpty())
     {
+        releaseProjectViews();
         if (m_SQLManager->saveAs(filename) == false)
             QMessageBox::warning(this,"Enregistrer sous...","Erreur lors du renommage du fichier");
         else
@@ -215,11 +311,29 @@ void MainWindow::on_actionSave_as_triggered()
             QWidgetSettings::setValue("REQ",filename);
             setWindowTitle("GEstion  SImplifée d'Exigences pour La Recherche: "+filename);
         }
+        if (hasOpenProject()) {
+            refreshEditTables();
+            refreshViewTables();
+            ui->ReqTrackViewWidget->setConnectionName(m_SQLManager->currentConnection());
+            ui->ReqTrackViewWidget->init();
+            if (m_productTreeWidget) m_productTreeWidget->setConnectionName(m_SQLManager->currentConnection());
+            if (m_requirementWidget) m_requirementWidget->setConnectionName(m_SQLManager->currentConnection());
+            if (m_documentWidget) m_documentWidget->setConnectionName(m_SQLManager->currentConnection());
+        }
     }
+    updateProjectUi();
 }
 
 void MainWindow::refreshViewTables()
 {
+      if (!m_SQLManager)
+          return;
+      const QString connection = m_SQLManager->currentConnection();
+      if (connection.isEmpty() || !QSqlDatabase::contains(connection))
+          return;
+      const QSqlDatabase db = QSqlDatabase::database(connection, false);
+      if (!db.isValid() || !db.isOpen())
+          return;
       ui->docViewSqlTableWidget->execQuery("SELECT D.TITLE AS [Titre],D.DESCRIPTION AS [Description],REQLIST.REQ_COUNT [Nombre de Requirements],CC.CH_COUNT AS [Nombre de Chapitres] "
                                            "FROM (SELECT R.DOC_ID,COUNT(*) AS [REQ_COUNT]FROM REQUIREMENT R GROUP BY R.DOC_ID) REQLIST "
                                            "LEFT JOIN DOCUMENT D ON REQLIST.DOC_ID=D.ID "
@@ -308,7 +422,9 @@ void MainWindow::on_clearButton_clicked()
 
 void MainWindow::refreshEditTables()
 {
-    QSqlDatabase db = QSqlDatabase::database(m_SQLManager->currentConnection());
+    if (!hasOpenProject())
+        return;
+    QSqlDatabase db = QSqlDatabase::database(m_SQLManager->currentConnection(), false);
     if (!db.isOpen())
         return;
     if (!m_PTmodel) {
@@ -438,7 +554,9 @@ QVariant MainWindow::getRelatedTablePKvalue(int column,SQLTableForm *tableform, 
     QSqlRelation relation = tableform->getRelationAtColumn(column);
     if(!relation.isValid())
         return -1;
-    QSqlDatabase db =QSqlDatabase::database(m_SQLManager->currentConnection());
+    if (!hasOpenProject())
+        return QVariant();
+    QSqlDatabase db =QSqlDatabase::database(m_SQLManager->currentConnection(), false);
     if(!db.isValid())
         return QVariant();
 
@@ -559,8 +677,16 @@ void MainWindow::on_exportDocToCsvPushButton_clicked()
 
 void MainWindow::refreshTableSlot()
 {
+    if (!m_SQLManager)
+        return;
+    const QString connection = m_SQLManager->currentConnection();
+    const QSqlDatabase db = QSqlDatabase::database(connection, false);
+    if (connection.isEmpty() || !db.isValid() || !db.isOpen())
+        return;
     refreshEditTables();
     refreshViewTables();
+    if (m_documentWidget)
+        m_documentWidget->refresh();
     m_coverageDashboard->refresh();
     m_traceabilityWidget->refresh();
     m_n2MatrixWidget->refresh();
@@ -578,11 +704,13 @@ void MainWindow::setupModernNavigation()
     m_projectNavigation=new QListWidget(projectPage);m_projectNavigation->setMaximumWidth(210);
     m_projectPages=new QStackedWidget(projectPage);
     m_productTreeWidget=new ProductTreeWidget(projectPage);
+    m_requirementWidget=new RequirementWidget(projectPage);
+    m_documentWidget=new DocumentWidget(projectPage);
     const QStringList sections={tr("Product Tree"),tr("Exigences"),tr("Documents"),tr("Interfaces"),tr("Vérification"),tr("Changements"),tr("Historique")};
     m_projectNavigation->addItems(sections);
     m_projectPages->addWidget(m_productTreeWidget);
-    m_projectPages->addWidget(m_traceabilityWidget);
-    m_projectPages->addWidget(new QLabel(tr("La nouvelle vue Documents sera intégrée dans l'incrément suivant."),projectPage));
+    m_projectPages->addWidget(m_requirementWidget);
+    m_projectPages->addWidget(m_documentWidget);
     m_projectPages->addWidget(m_n2MatrixWidget);
     m_projectPages->addWidget(ui->tab_reqinput_edit);
     m_projectPages->addWidget(ui->tab_ConfChange_edit);
@@ -590,13 +718,22 @@ void MainWindow::setupModernNavigation()
     projectLayout->addWidget(m_projectNavigation);projectLayout->addWidget(m_projectPages,1);
     connect(m_projectNavigation,&QListWidget::currentRowChanged,m_projectPages,&QStackedWidget::setCurrentIndex);
     connect(m_productTreeWidget,&ProductTreeWidget::dataChanged,this,&MainWindow::refreshTableSlot);
+    connect(m_requirementWidget,&RequirementWidget::dataChanged,this,&MainWindow::refreshTableSlot);
+    connect(m_documentWidget,&DocumentWidget::dataChanged,this,&MainWindow::refreshTableSlot);
+    connect(m_documentWidget,&DocumentWidget::openRequirement,this,[this](int id){ui->mainTabWidget->setCurrentIndex(1);m_projectNavigation->setCurrentRow(1);m_requirementWidget->openRequirement(id);});
+    connect(m_requirementWidget,&RequirementWidget::openDocumentRequested,this,[this](int id){ui->mainTabWidget->setCurrentIndex(1);m_projectNavigation->setCurrentRow(2);m_documentWidget->openDocument(id);});
+    connect(m_productTreeWidget,&ProductTreeWidget::openRequirementsForPt,this,[this](int pt){RequirementFilter f;f.ptIds={pt};m_requirementWidget->applyFilter(f);ui->mainTabWidget->setCurrentIndex(1);m_projectNavigation->setCurrentRow(1);});
+    connect(m_productTreeWidget,&ProductTreeWidget::openInterfacesForPt,this,[this](int){ui->mainTabWidget->setCurrentIndex(1);m_projectNavigation->setCurrentRow(3);});
+    connect(m_productTreeWidget,&ProductTreeWidget::openChangesForPt,this,[this](int){ui->mainTabWidget->setCurrentIndex(1);m_projectNavigation->setCurrentRow(5);});
+    connect(m_coverageDashboard,&CoverageDashboard::navigateRequested,this,[this](int page,const QString&filter){if(page==1){RequirementFilter f;if(filter=="unallocated")f.allocated=0;else if(filter=="untraced")f.traced=0;else if(filter=="undocumented")f.documented=0;else if(filter=="unverified")f.verified=0;m_requirementWidget->applyFilter(f);}ui->mainTabWidget->setCurrentIndex(1);m_projectNavigation->setCurrentRow(page);});
     m_projectNavigation->setCurrentRow(0);
-    if (QSqlDatabase::database(m_SQLManager->currentConnection()).isOpen())
-        m_productTreeWidget->setConnectionName(m_SQLManager->currentConnection());
+    if (hasOpenProject())
+    { m_productTreeWidget->setConnectionName(m_SQLManager->currentConnection());m_requirementWidget->setConnectionName(m_SQLManager->currentConnection());m_documentWidget->setConnectionName(m_SQLManager->currentConnection()); }
 
     ui->mainTabWidget->clear();
     ui->mainTabWidget->addTab(dashboardPage,tr("Tableau de bord"));
     ui->mainTabWidget->addTab(projectPage,tr("Projet"));
+    updateProjectUi();
 }
 
 void MainWindow::on_exportReqListToCsvPushButton_clicked()
@@ -640,7 +777,9 @@ void MainWindow::importReq()
 {
     m_importLog.clear();
 
-    QSqlDatabase db = QSqlDatabase::database(m_SQLManager->currentConnection());
+    if (!hasOpenProject())
+        return;
+    QSqlDatabase db = QSqlDatabase::database(m_SQLManager->currentConnection(), false);
 
     if(!db.isValid())
         return;
@@ -857,7 +996,9 @@ void MainWindow::importBasic(SQLTableForm *tableform)
 {
     m_importLog.clear();
 
-    QSqlDatabase db = QSqlDatabase::database(m_SQLManager->currentConnection());
+    if (!hasOpenProject())
+        return;
+    QSqlDatabase db = QSqlDatabase::database(m_SQLManager->currentConnection(), false);
 
     if(!db.isValid())
         return;
@@ -927,7 +1068,9 @@ void MainWindow::importChapter(SQLTableForm *tableform)
 {
     m_importLog.clear();
 
-    QSqlDatabase db = QSqlDatabase::database(m_SQLManager->currentConnection());
+    if (!hasOpenProject())
+        return;
+    QSqlDatabase db = QSqlDatabase::database(m_SQLManager->currentConnection(), false);
 
     if(!db.isValid())
         return;

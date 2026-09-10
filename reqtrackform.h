@@ -5,6 +5,8 @@
 #include <QtSql>
 #include "sqltreereqmodel.h"
 
+class QStandardItemModel;
+
 namespace Ui {
 class ReqTrackForm;
 }
@@ -18,6 +20,7 @@ public:
     ~ReqTrackForm();
 
     void setConnectionName(QString connectionName);
+    void releaseDatabase();
     bool init(void);
     bool refresh(void);
 
@@ -32,6 +35,7 @@ private:
     Ui::ReqTrackForm *ui;
     QSqlTableModel *m_req_model;
     SqlTreeReqModel *m_Req_Arbo;
+    QStandardItemModel *m_emptyModel;
     QString m_connectionName;
 };
 

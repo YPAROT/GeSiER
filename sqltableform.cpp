@@ -267,16 +267,36 @@ void SQLTableForm::showTable(const QString &tableName, QString dbConnectionName)
     refreshTable(true);
 }
 
+void SQLTableForm::releaseDatabase()
+{
+    ui->sqlTableView->setModel(nullptr);
+    delete m_sqlTableModel;
+    m_sqlTableModel = nullptr;
+    qDeleteAll(m_proxies);
+    m_proxies.clear();
+    m_dbConnectionName.clear();
+}
+
 void SQLTableForm::refreshTable(bool newTable)
 {
     ui->sqlTableView->setUpdatesEnabled(false);
 
-    if(m_sqlTableModel)
+    if (m_sqlTableModel) {
+        ui->sqlTableView->setModel(nullptr);
         delete m_sqlTableModel;
+        m_sqlTableModel = nullptr;
+    }
 
-    QSqlDatabase db = QSqlDatabase::database(m_dbConnectionName);
-    if(!db.isValid())
+    if (m_dbConnectionName.isEmpty() ||
+        !QSqlDatabase::contains(m_dbConnectionName)) {
+        ui->sqlTableView->setUpdatesEnabled(true);
         return;
+    }
+    QSqlDatabase db = QSqlDatabase::database(m_dbConnectionName, false);
+    if(!db.isValid() || !db.isOpen()) {
+        ui->sqlTableView->setUpdatesEnabled(true);
+        return;
+    }
 
 
     m_sqlTableModel = new CustomModel(ui->sqlTableView, db);
@@ -451,9 +471,15 @@ QTableView* SQLTableForm::sqlTableView()
 void SQLTableForm::execQuery(QString queryStr, QString dbConnectionName)
 {
     ui->sqlTableView->setUpdatesEnabled(false);
-    QSqlDatabase db = QSqlDatabase::database(dbConnectionName);
-    if(!db.isValid())
+    if (dbConnectionName.isEmpty() || !QSqlDatabase::contains(dbConnectionName)) {
+        ui->sqlTableView->setUpdatesEnabled(true);
         return;
+    }
+    QSqlDatabase db = QSqlDatabase::database(dbConnectionName, false);
+    if(!db.isValid() || !db.isOpen()) {
+        ui->sqlTableView->setUpdatesEnabled(true);
+        return;
+    }
     QSqlQueryModel *model = new QSqlQueryModel(ui->sqlTableView);
     model->setQuery(QSqlQuery(queryStr, db));
 

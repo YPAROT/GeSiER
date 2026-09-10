@@ -19,6 +19,14 @@ Le fichier `GeSiER.pro` est conservé provisoirement pour faciliter la transitio
 des anciens environnements Qt Creator. CMake est désormais le système de
 construction de référence.
 
+L'organisation des services, widgets, migrations et la règle de durée de vie
+de `REQ_DB` sont décrites dans [docs/architecture.md](docs/architecture.md).
+
+Au démarrage sans projet, l'interface reste utilisable pour créer ou ouvrir un
+fichier, tandis que les actions et pages nécessitant SQLite sont désactivées.
+La navigation principale ne présente que **Tableau de bord** et **Projet** ; les
+anciens écrans SQL ne sont plus exposés.
+
 ## Fonctions de la refonte engagée
 
 - migration automatique et sauvegardée des anciennes bases ;

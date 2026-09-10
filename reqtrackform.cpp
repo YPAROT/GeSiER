@@ -1,7 +1,8 @@
 #include "reqtrackform.h"
 #include "ui_reqtrackform.h"
-#include <QDebug>
 #include <QCompleter>
+#include <QSignalBlocker>
+#include <QStandardItemModel>
 
 ReqTrackForm::ReqTrackForm(QWidget *parent) :
     QWidget(parent),
@@ -10,6 +11,7 @@ ReqTrackForm::ReqTrackForm(QWidget *parent) :
     ui->setupUi(this);
     m_req_model=Q_NULLPTR;
     m_Req_Arbo=Q_NULLPTR;
+    m_emptyModel = new QStandardItemModel(this);
 
     ui->ReqcomboBox->setInsertPolicy(QComboBox::NoInsert);
     ui->ReqcomboBox->setEditable(true);
@@ -29,22 +31,39 @@ void ReqTrackForm::setConnectionName(QString connectionName)
     m_connectionName = connectionName;
 }
 
+void ReqTrackForm::releaseDatabase()
+{
+    const QSignalBlocker blocker(ui->ReqcomboBox);
+    ui->ReqcomboBox->setModel(m_emptyModel);
+    ui->treeView->setModel(nullptr);
+    delete m_req_model;
+    m_req_model = nullptr;
+    delete m_Req_Arbo;
+    m_Req_Arbo = nullptr;
+    m_connectionName.clear();
+}
+
 bool ReqTrackForm::init()
 {
-    if(!QSqlDatabase::database(m_connectionName).isValid())
+    const QSqlDatabase db = QSqlDatabase::database(m_connectionName, false);
+    if(!db.isValid() || !db.isOpen())
         return false;
 
-    fillComboBox(QSqlDatabase::database(m_connectionName));
-    SetModel(m_req_model->index(ui->ReqcomboBox->currentIndex(),m_req_model->fieldIndex("ID")),QSqlDatabase::database(m_connectionName));
+    if (!fillComboBox(db) || !m_req_model || m_req_model->rowCount() == 0)
+        return true;
+    SetModel(m_req_model->index(ui->ReqcomboBox->currentIndex(),m_req_model->fieldIndex("ID")), db);
 
     return true;
 }
 
 bool ReqTrackForm::refresh()
 {
+    const QSqlDatabase db = QSqlDatabase::database(m_connectionName, false);
+    if (!db.isValid() || !db.isOpen())
+        return false;
     QString oldSelectedReq=ui->ReqcomboBox->currentText();
 
-    fillComboBox(QSqlDatabase::database(m_connectionName));
+    fillComboBox(db);
 
     if(!m_req_model)
         return false;
@@ -62,13 +81,10 @@ bool ReqTrackForm::refresh()
     {
 //        m_Req_Arbo->select(m_req_model->index(ui->ReqcomboBox->currentIndex(),m_req_model->fieldIndex("ID")).data());
 //        ui->treeView->expandAll();
-        qDebug()<<"Refresh non possible en conservant l'ancienne selection combo box (ReqTrackForm::refresh)";
         return false;
     }
 
     ui->ReqcomboBox->setCurrentIndex(idx.at(0).row());
-
-    qDebug()<<"Refresh effectué sur ID: "<<m_req_model->index(idx.at(0).row(),m_req_model->fieldIndex("ID")).data()<<" (ReqTrackForm::refresh)";
 
     return true;
 }
@@ -81,7 +97,10 @@ bool ReqTrackForm::fillComboBox(QSqlDatabase db)
 
     if(m_req_model)
     {
+        const QSignalBlocker blocker(ui->ReqcomboBox);
+        ui->ReqcomboBox->setModel(m_emptyModel);
         delete m_req_model;
+        m_req_model = nullptr;
     }
 
     m_req_model = new QSqlTableModel(this,db);
@@ -114,7 +133,6 @@ bool ReqTrackForm::SetModel(QModelIndex idx,QSqlDatabase db)
     ReqArbomap.insert(2,0);
     m_Req_Arbo->setColumnMapping(ReqArbomap);
 
-    qDebug()<<"ID selectionné: "<<idx.data()<<" (ReqTrackForm::SetModel)";
     m_Req_Arbo->select(idx.data());
 
     ui->treeView->setModel(m_Req_Arbo);
@@ -139,6 +157,5 @@ void ReqTrackForm::on_ReqcomboBox_currentIndexChanged(int index)
         return;
     m_Req_Arbo->select(idx.data());
     ui->treeView->expandAll();
-    qDebug()<<"ID selectionné: "<<idx.data()<<" (ReqTrackForm::on_ReqcomboBox_currentIndexChanged)";
 //    SetModel(idx,QSqlDatabase::database(m_connectionName));
 }

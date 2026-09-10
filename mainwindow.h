@@ -23,6 +23,8 @@ class CoverageDashboard;
 class TraceabilityWidget;
 class N2MatrixWidget;
 class ProductTreeWidget;
+class RequirementWidget;
+class DocumentWidget;
 class QListWidget;
 class QStackedWidget;
 
@@ -51,6 +53,11 @@ public:
     void exportToCsv(QTableView *sqlTable, QString tableName);
 
 private:
+    bool hasOpenProject() const;
+    void updateProjectUi();
+    void closeProject();
+    void releaseProjectViews();
+    void bindProjectViews();
     void refreshViewTables();
     void refreshEditTables();
     QVariant getRelatedTablePKvalue(int column, SQLTableForm *tableform, QString searchStr, bool CanBeNull=false);
@@ -115,6 +122,8 @@ private:
     TraceabilityWidget* m_traceabilityWidget = nullptr;
     N2MatrixWidget* m_n2MatrixWidget = nullptr;
     ProductTreeWidget* m_productTreeWidget = nullptr;
+    RequirementWidget* m_requirementWidget = nullptr;
+    DocumentWidget* m_documentWidget = nullptr;
     QListWidget* m_projectNavigation = nullptr;
     QStackedWidget* m_projectPages = nullptr;
     //SqlTreeReqModel* m_Req_Arbo;
