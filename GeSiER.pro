@@ -33,6 +33,8 @@ SOURCES += \
     verificationwidget.cpp \
     traceabilitywidget.cpp \
     n2matrixwidget.cpp \
+    interfaceservice.cpp \
+    interfacewidget.cpp \
     producttreeservice.cpp \
     producttreewidget.cpp \
     edittabledialog.cpp \
@@ -61,6 +63,8 @@ HEADERS += \
     verificationwidget.h \
     traceabilitywidget.h \
     n2matrixwidget.h \
+    interfaceservice.h \
+    interfacewidget.h \
     producttreeservice.h \
     producttreewidget.h \
     edittabledialog.h \

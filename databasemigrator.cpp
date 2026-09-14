@@ -38,6 +38,7 @@ bool DatabaseMigrator::migrate(QSqlDatabase db, QString *errorMessage) {
 
   QSqlQuery versionQuery("PRAGMA user_version", db);
   const int version = versionQuery.next() ? versionQuery.value(0).toInt() : 0;
+  versionQuery.finish();
   if (version > CurrentVersion) {
     if (errorMessage)
       *errorMessage = QString("Cette base utilise le schéma %1, plus récent "
@@ -47,10 +48,71 @@ bool DatabaseMigrator::migrate(QSqlDatabase db, QString *errorMessage) {
     return false;
   }
 
+  bool rebuildInterface = false;
+  QSqlQuery interfaceInfo("PRAGMA table_info(INTERFACE)", db);
+  while (interfaceInfo.next())
+    if (interfaceInfo.value(1).toString().compare("DOC_ID",
+                                                  Qt::CaseInsensitive) == 0)
+      rebuildInterface = interfaceInfo.value(3).toBool();
+  interfaceInfo.finish();
+  interfaceInfo = QSqlQuery();
+  const bool foreignKeys = [&db] {
+    QSqlQuery q("PRAGMA foreign_keys", db);
+    return q.next() && q.value(0).toBool();
+  }();
+  struct ForeignKeyRestore {
+    QSqlDatabase db;
+    bool restore;
+    ~ForeignKeyRestore() {
+      if (restore) {
+        QSqlQuery q(db);
+        q.exec("PRAGMA foreign_keys=ON");
+      }
+    }
+  } restore{db, rebuildInterface && foreignKeys};
+  if (rebuildInterface && foreignKeys) {
+    QSqlQuery q(db);
+    q.exec("PRAGMA foreign_keys=OFF");
+  }
+
   if (!db.transaction()) {
     if (errorMessage)
       *errorMessage = db.lastError().text();
     return false;
+  }
+
+  if (rebuildInterface) {
+    const QSqlRecord old = db.record("INTERFACE");
+    auto source = [&old](const QString &column, const QString &fallback) {
+      return old.indexOf(column) >= 0 ? column : fallback;
+    };
+    if (!execute(db,
+                 "CREATE TABLE INTERFACE_V12(ID INTEGER PRIMARY KEY "
+                 "AUTOINCREMENT,ELEMENT1 INTEGER NOT NULL REFERENCES "
+                 "PT(ID),ELEMENT2 INTEGER NOT NULL REFERENCES PT(ID),DOC_ID "
+                 "INTEGER REFERENCES DOCUMENT(ID),DESCRIPTION TEXT,DOC_CHAPTER "
+                 "INTEGER REFERENCES IF_CHAPTER(ID),CODE TEXT,STATUS TEXT NOT "
+                 "NULL DEFAULT 'DRAFT',ARCHIVED INTEGER NOT NULL DEFAULT 0 "
+                 "CHECK(ARCHIVED IN (0,1)),CREATED_AT TEXT,UPDATED_AT TEXT)",
+                 errorMessage) ||
+        !execute(
+            db,
+            QString(
+                "INSERT INTO "
+                "INTERFACE_V12(ID,ELEMENT1,ELEMENT2,DOC_ID,DESCRIPTION,DOC_"
+                "CHAPTER,CODE,STATUS,ARCHIVED,CREATED_AT,UPDATED_AT) SELECT "
+                "ID,ELEMENT1,ELEMENT2,DOC_ID,DESCRIPTION,DOC_CHAPTER,%1,%2,%3,%"
+                "4,%5 FROM INTERFACE")
+                .arg(source("CODE", "NULL"), source("STATUS", "'DRAFT'"),
+                     source("ARCHIVED", "0"), source("CREATED_AT", "NULL"),
+                     source("UPDATED_AT", "NULL")),
+            errorMessage) ||
+        !execute(db, "DROP TABLE INTERFACE", errorMessage) ||
+        !execute(db, "ALTER TABLE INTERFACE_V12 RENAME TO INTERFACE",
+                 errorMessage)) {
+      db.rollback();
+      return false;
+    }
   }
 
   QStringList statements;
@@ -131,6 +193,11 @@ bool DatabaseMigrator::migrate(QSqlDatabase db, QString *errorMessage) {
          "NOT NULL REFERENCES DOCUMENT(ID) ON DELETE CASCADE, CHAPTER_NODE_ID "
          "INTEGER REFERENCES DOCUMENT_NODE(ID), PRIMARY "
          "KEY(INTERFACE_ID,DOC_ID))"
+      << "CREATE TABLE IF NOT EXISTS INTERFACE_REQUIREMENT (INTERFACE_ID "
+         "INTEGER "
+         "NOT NULL REFERENCES INTERFACE(ID) ON DELETE CASCADE, REQ_ID INTEGER "
+         "NOT NULL REFERENCES REQUIREMENT(ID) ON DELETE CASCADE, PRIMARY "
+         "KEY(INTERFACE_ID,REQ_ID))"
       << "CREATE TABLE IF NOT EXISTS CHANGE_ITEM (ID INTEGER PRIMARY KEY "
          "AUTOINCREMENT, CODE TEXT UNIQUE NOT NULL, TYPE TEXT NOT NULL "
          "CHECK(TYPE IN ('CHANGE_REQUEST','WAIVER','DEVIATION','OTHER')), "
@@ -155,7 +222,11 @@ bool DatabaseMigrator::migrate(QSqlDatabase db, QString *errorMessage) {
       << "CREATE INDEX IF NOT EXISTS IDX_DOC_NODE_DOC ON "
          "DOCUMENT_NODE(DOC_ID,PARENT_ID,POSITION)"
       << "CREATE INDEX IF NOT EXISTS IDX_EVENT_OBJECT ON "
-         "EVENT_LOG(OBJECT_TYPE,OBJECT_ID,EVENT_TIME)";
+         "EVENT_LOG(OBJECT_TYPE,OBJECT_ID,EVENT_TIME)"
+      << "CREATE INDEX IF NOT EXISTS IDX_INTERFACE_ENDPOINTS ON "
+         "INTERFACE(ELEMENT1,ELEMENT2)"
+      << "CREATE INDEX IF NOT EXISTS IDX_INTERFACE_REQUIREMENT_REQ ON "
+         "INTERFACE_REQUIREMENT(REQ_ID)";
 
   statements
       << "CREATE TRIGGER IF NOT EXISTS REQUIREMENT_DELETE_GUARD BEFORE DELETE "
@@ -187,9 +258,23 @@ bool DatabaseMigrator::migrate(QSqlDatabase db, QString *errorMessage) {
          "NEW.EXPORT_KIND WHEN 'DRAFT' THEN 'EXPORT_DRAFT' ELSE 'PUBLISH' "
          "END,'DOCUMENT',NEW.DOC_ID,json_object('export_id',NEW.ID,'version',"
          "NEW.VERSION,'path',NEW.FILE_PATH,'sha256',NEW.FILE_SHA256)); END"
-      << "CREATE TRIGGER IF NOT EXISTS DOCUMENT_NODE_PARENT_INSERT BEFORE INSERT ON DOCUMENT_NODE WHEN NEW.PARENT_ID IS NOT NULL AND NOT EXISTS(SELECT 1 FROM DOCUMENT_NODE P WHERE P.ID=NEW.PARENT_ID AND P.DOC_ID=NEW.DOC_ID AND P.NODE_TYPE='CHAPTER') BEGIN SELECT RAISE(ABORT,'Parent de document invalide'); END"
-      << "CREATE TRIGGER IF NOT EXISTS DOCUMENT_NODE_PARENT_UPDATE BEFORE UPDATE OF PARENT_ID,DOC_ID ON DOCUMENT_NODE WHEN NEW.PARENT_ID IS NOT NULL AND NOT EXISTS(SELECT 1 FROM DOCUMENT_NODE P WHERE P.ID=NEW.PARENT_ID AND P.DOC_ID=NEW.DOC_ID AND P.NODE_TYPE='CHAPTER') BEGIN SELECT RAISE(ABORT,'Parent de document invalide'); END"
-      << "CREATE TRIGGER IF NOT EXISTS DOCUMENT_NODE_CYCLE_UPDATE BEFORE UPDATE OF PARENT_ID ON DOCUMENT_NODE WHEN NEW.PARENT_ID IS NOT NULL AND EXISTS(WITH RECURSIVE D(ID) AS (SELECT ID FROM DOCUMENT_NODE WHERE PARENT_ID=NEW.ID UNION ALL SELECT N.ID FROM DOCUMENT_NODE N JOIN D ON N.PARENT_ID=D.ID) SELECT 1 FROM D WHERE ID=NEW.PARENT_ID) BEGIN SELECT RAISE(ABORT,'Cycle de document interdit'); END";
+      << "CREATE TRIGGER IF NOT EXISTS DOCUMENT_NODE_PARENT_INSERT BEFORE "
+         "INSERT ON DOCUMENT_NODE WHEN NEW.PARENT_ID IS NOT NULL AND NOT "
+         "EXISTS(SELECT 1 FROM DOCUMENT_NODE P WHERE P.ID=NEW.PARENT_ID AND "
+         "P.DOC_ID=NEW.DOC_ID AND P.NODE_TYPE='CHAPTER') BEGIN SELECT "
+         "RAISE(ABORT,'Parent de document invalide'); END"
+      << "CREATE TRIGGER IF NOT EXISTS DOCUMENT_NODE_PARENT_UPDATE BEFORE "
+         "UPDATE OF PARENT_ID,DOC_ID ON DOCUMENT_NODE WHEN NEW.PARENT_ID IS "
+         "NOT NULL AND NOT EXISTS(SELECT 1 FROM DOCUMENT_NODE P WHERE "
+         "P.ID=NEW.PARENT_ID AND P.DOC_ID=NEW.DOC_ID AND "
+         "P.NODE_TYPE='CHAPTER') BEGIN SELECT RAISE(ABORT,'Parent de document "
+         "invalide'); END"
+      << "CREATE TRIGGER IF NOT EXISTS DOCUMENT_NODE_CYCLE_UPDATE BEFORE "
+         "UPDATE OF PARENT_ID ON DOCUMENT_NODE WHEN NEW.PARENT_ID IS NOT NULL "
+         "AND EXISTS(WITH RECURSIVE D(ID) AS (SELECT ID FROM DOCUMENT_NODE "
+         "WHERE PARENT_ID=NEW.ID UNION ALL SELECT N.ID FROM DOCUMENT_NODE N "
+         "JOIN D ON N.PARENT_ID=D.ID) SELECT 1 FROM D WHERE ID=NEW.PARENT_ID) "
+         "BEGIN SELECT RAISE(ABORT,'Cycle de document interdit'); END";
 
   for (const QString &statement : statements) {
     if (!execute(db, statement, errorMessage)) {
@@ -219,6 +304,10 @@ bool DatabaseMigrator::migrate(QSqlDatabase db, QString *errorMessage) {
       {"DOCUMENT", "METADATA_JSON", "TEXT"},
       {"INTERFACE", "CODE", "TEXT"},
       {"INTERFACE", "STATUS", "TEXT NOT NULL DEFAULT 'DRAFT'"},
+      {"INTERFACE", "ARCHIVED",
+       "INTEGER NOT NULL DEFAULT 0 CHECK(ARCHIVED IN (0,1))"},
+      {"INTERFACE", "CREATED_AT", "TEXT"},
+      {"INTERFACE", "UPDATED_AT", "TEXT"},
       {"PT", "SEGMENT", "TEXT"},
       {"PT", "DESCRIPTION", "TEXT"},
       {"PT", "POSITION", "INTEGER NOT NULL DEFAULT 0"},
@@ -238,6 +327,17 @@ bool DatabaseMigrator::migrate(QSqlDatabase db, QString *errorMessage) {
       db.rollback();
       return false;
     }
+  }
+
+  // Conserve les liens ICD des anciens fichiers dont le document était porté
+  // directement par INTERFACE.
+  if (!execute(db,
+               "INSERT OR IGNORE INTO "
+               "INTERFACE_DOCUMENT(INTERFACE_ID,DOC_ID,CHAPTER_NODE_ID) SELECT "
+               "ID,DOC_ID,NULL FROM INTERFACE WHERE DOC_ID IS NOT NULL",
+               errorMessage)) {
+    db.rollback();
+    return false;
   }
 
   if (!execute(db,
@@ -280,13 +380,17 @@ bool DatabaseMigrator::migrate(QSqlDatabase db, QString *errorMessage) {
                "P.REQ_ID=REQUIREMENT_PT.REQ_ID AND P.IS_PRIMARY=1)",
                errorMessage) ||
       !execute(db,
-               "UPDATE CONFIGURATION SET CREATED_AT=COALESCE(CREATED_AT,CURRENT_TIMESTAMP), "
-               "UPDATED_AT=COALESCE(UPDATED_AT,CURRENT_TIMESTAMP)", errorMessage) ||
-      !execute(db,
-               "CREATE INDEX IF NOT EXISTS IDX_CONFIGURATION_ORDER ON CONFIGURATION(ACTIVE DESC,POSITION,CODE)",
+               "UPDATE CONFIGURATION SET "
+               "CREATED_AT=COALESCE(CREATED_AT,CURRENT_TIMESTAMP), "
+               "UPDATED_AT=COALESCE(UPDATED_AT,CURRENT_TIMESTAMP)",
                errorMessage) ||
       !execute(db,
-               "CREATE INDEX IF NOT EXISTS IDX_APPLICABILITY_CONFIG ON REQUIREMENT_APPLICABILITY(CONFIG_ID,PT_ID,REQ_ID)",
+               "CREATE INDEX IF NOT EXISTS IDX_CONFIGURATION_ORDER ON "
+               "CONFIGURATION(ACTIVE DESC,POSITION,CODE)",
+               errorMessage) ||
+      !execute(db,
+               "CREATE INDEX IF NOT EXISTS IDX_APPLICABILITY_CONFIG ON "
+               "REQUIREMENT_APPLICABILITY(CONFIG_ID,PT_ID,REQ_ID)",
                errorMessage)) {
     db.rollback();
     return false;
@@ -322,69 +426,111 @@ bool DatabaseMigrator::migrate(QSqlDatabase db, QString *errorMessage) {
 
   if (version < 7) {
     const bool hasLegacyChapters = db.tables().contains("REQ_CHAPTER");
-    if ((hasLegacyChapters && !execute(db,
-                 "INSERT OR IGNORE INTO DOCUMENT_NODE(DOC_ID,PARENT_ID,"
-                 "NODE_TYPE,POSITION,TITLE) SELECT C.DOC_ID,NULL,'CHAPTER',"
-                 "1000000+C.ID,C.CHAPTER FROM REQ_CHAPTER C",
-                 errorMessage)) ||
-        !execute(db, hasLegacyChapters ?
-                 "INSERT OR IGNORE INTO DOCUMENT_NODE(DOC_ID,PARENT_ID,"
-                 "NODE_TYPE,POSITION,REQ_ID) SELECT R.DOC_ID,(SELECT N.ID "
-                 "FROM DOCUMENT_NODE N JOIN REQ_CHAPTER C ON C.DOC_ID=N.DOC_ID "
-                 "AND C.CHAPTER=N.TITLE WHERE C.ID=R.DOC_CHAPTER AND "
-                 "N.NODE_TYPE='CHAPTER' LIMIT 1),'REQUIREMENT',2000000+R.ID,R.ID FROM "
-                 "REQUIREMENT R WHERE R.DOC_ID IS NOT NULL" :
-                 "INSERT OR IGNORE INTO DOCUMENT_NODE(DOC_ID,PARENT_ID,"
-                 "NODE_TYPE,POSITION,REQ_ID) SELECT R.DOC_ID,NULL,'REQUIREMENT',"
-                 "2000000+R.ID,R.ID FROM REQUIREMENT R WHERE R.DOC_ID IS NOT NULL",
-                 errorMessage)) {
+    if ((hasLegacyChapters &&
+         !execute(db,
+                  "INSERT OR IGNORE INTO DOCUMENT_NODE(DOC_ID,PARENT_ID,"
+                  "NODE_TYPE,POSITION,TITLE) SELECT C.DOC_ID,NULL,'CHAPTER',"
+                  "1000000+C.ID,C.CHAPTER FROM REQ_CHAPTER C",
+                  errorMessage)) ||
+        !execute(
+            db,
+            hasLegacyChapters
+                ? "INSERT OR IGNORE INTO DOCUMENT_NODE(DOC_ID,PARENT_ID,"
+                  "NODE_TYPE,POSITION,REQ_ID) SELECT R.DOC_ID,(SELECT N.ID "
+                  "FROM DOCUMENT_NODE N JOIN REQ_CHAPTER C ON "
+                  "C.DOC_ID=N.DOC_ID "
+                  "AND C.CHAPTER=N.TITLE WHERE C.ID=R.DOC_CHAPTER AND "
+                  "N.NODE_TYPE='CHAPTER' LIMIT "
+                  "1),'REQUIREMENT',2000000+R.ID,R.ID FROM "
+                  "REQUIREMENT R WHERE R.DOC_ID IS NOT NULL"
+                : "INSERT OR IGNORE INTO DOCUMENT_NODE(DOC_ID,PARENT_ID,"
+                  "NODE_TYPE,POSITION,REQ_ID) SELECT "
+                  "R.DOC_ID,NULL,'REQUIREMENT',"
+                  "2000000+R.ID,R.ID FROM REQUIREMENT R WHERE R.DOC_ID IS NOT "
+                  "NULL",
+            errorMessage)) {
       db.rollback();
       return false;
     }
   }
 
-  if (!execute(db,
-               "CREATE TRIGGER IF NOT EXISTS DOCUMENT_PUBLICATION_IMMUTABLE "
-               "BEFORE UPDATE ON DOCUMENT_EXPORT WHEN OLD.EXPORT_KIND='PUBLICATION' "
-               "AND (NEW.DOC_ID<>OLD.DOC_ID OR NEW.EXPORT_KIND<>OLD.EXPORT_KIND OR "
-               "IFNULL(NEW.VERSION,'')<>IFNULL(OLD.VERSION,'') OR "
-               "IFNULL(NEW.TITLE,'')<>IFNULL(OLD.TITLE,'') OR "
-               "IFNULL(NEW.AUTHOR,'')<>IFNULL(OLD.AUTHOR,'') OR "
-               "NEW.EXPORTED_AT<>OLD.EXPORTED_AT OR "
-               "IFNULL(NEW.FILE_PATH,'')<>IFNULL(OLD.FILE_PATH,'') OR "
-               "IFNULL(NEW.FILE_SHA256,'')<>IFNULL(OLD.FILE_SHA256,'') OR "
-               "IFNULL(NEW.SNAPSHOT_JSON,'')<>IFNULL(OLD.SNAPSHOT_JSON,'') OR "
-               "IFNULL(NEW.TEMPLATE_PATH,'')<>IFNULL(OLD.TEMPLATE_PATH,'') OR "
-               "IFNULL(NEW.TEMPLATE_SHA256,'')<>IFNULL(OLD.TEMPLATE_SHA256,'') OR "
-               "IFNULL(NEW.METADATA_JSON,'')<>IFNULL(OLD.METADATA_JSON,'')) "
-               "BEGIN SELECT RAISE(ABORT,'Une publication est immuable'); END",
-               errorMessage) ||
-      !execute(db,
-               "CREATE TRIGGER IF NOT EXISTS DOCUMENT_PUBLICATION_NODELETE "
-               "BEFORE DELETE ON DOCUMENT_EXPORT WHEN OLD.EXPORT_KIND='PUBLICATION' "
-               "BEGIN SELECT RAISE(ABORT,'Une publication est immuable'); END",
-               errorMessage)) {
+  if (!execute(
+          db,
+          "CREATE TRIGGER IF NOT EXISTS DOCUMENT_PUBLICATION_IMMUTABLE "
+          "BEFORE UPDATE ON DOCUMENT_EXPORT WHEN OLD.EXPORT_KIND='PUBLICATION' "
+          "AND (NEW.DOC_ID<>OLD.DOC_ID OR NEW.EXPORT_KIND<>OLD.EXPORT_KIND OR "
+          "IFNULL(NEW.VERSION,'')<>IFNULL(OLD.VERSION,'') OR "
+          "IFNULL(NEW.TITLE,'')<>IFNULL(OLD.TITLE,'') OR "
+          "IFNULL(NEW.AUTHOR,'')<>IFNULL(OLD.AUTHOR,'') OR "
+          "NEW.EXPORTED_AT<>OLD.EXPORTED_AT OR "
+          "IFNULL(NEW.FILE_PATH,'')<>IFNULL(OLD.FILE_PATH,'') OR "
+          "IFNULL(NEW.FILE_SHA256,'')<>IFNULL(OLD.FILE_SHA256,'') OR "
+          "IFNULL(NEW.SNAPSHOT_JSON,'')<>IFNULL(OLD.SNAPSHOT_JSON,'') OR "
+          "IFNULL(NEW.TEMPLATE_PATH,'')<>IFNULL(OLD.TEMPLATE_PATH,'') OR "
+          "IFNULL(NEW.TEMPLATE_SHA256,'')<>IFNULL(OLD.TEMPLATE_SHA256,'') OR "
+          "IFNULL(NEW.METADATA_JSON,'')<>IFNULL(OLD.METADATA_JSON,'')) "
+          "BEGIN SELECT RAISE(ABORT,'Une publication est immuable'); END",
+          errorMessage) ||
+      !execute(
+          db,
+          "CREATE TRIGGER IF NOT EXISTS DOCUMENT_PUBLICATION_NODELETE "
+          "BEFORE DELETE ON DOCUMENT_EXPORT WHEN OLD.EXPORT_KIND='PUBLICATION' "
+          "BEGIN SELECT RAISE(ABORT,'Une publication est immuable'); END",
+          errorMessage)) {
     db.rollback();
     return false;
   }
 
-  if (!execute(db,
-               "CREATE TRIGGER IF NOT EXISTS CONFIGURATION_NEW AFTER INSERT ON CONFIGURATION BEGIN "
-               "INSERT INTO EVENT_LOG(EVENT_TYPE,OBJECT_TYPE,OBJECT_ID,AFTER_JSON) VALUES('CREATE','CONFIGURATION',NEW.ID,json_object('code',NEW.CODE,'label',NEW.LABEL,'active',NEW.ACTIVE,'position',NEW.POSITION)); END",
-               errorMessage) ||
+  if (!execute(
+          db,
+          "CREATE TRIGGER IF NOT EXISTS CONFIGURATION_NEW AFTER INSERT ON "
+          "CONFIGURATION BEGIN "
+          "INSERT INTO EVENT_LOG(EVENT_TYPE,OBJECT_TYPE,OBJECT_ID,AFTER_JSON) "
+          "VALUES('CREATE','CONFIGURATION',NEW.ID,json_object('code',NEW.CODE,'"
+          "label',NEW.LABEL,'active',NEW.ACTIVE,'position',NEW.POSITION)); END",
+          errorMessage) ||
+      !execute(
+          db,
+          "CREATE TRIGGER IF NOT EXISTS CONFIGURATION_UPDATE AFTER UPDATE ON "
+          "CONFIGURATION BEGIN "
+          "UPDATE CONFIGURATION SET UPDATED_AT=CURRENT_TIMESTAMP WHERE "
+          "ID=NEW.ID AND UPDATED_AT IS OLD.UPDATED_AT; "
+          "INSERT INTO "
+          "EVENT_LOG(EVENT_TYPE,OBJECT_TYPE,OBJECT_ID,BEFORE_JSON,AFTER_JSON) "
+          "VALUES(CASE WHEN OLD.ACTIVE<>NEW.ACTIVE THEN CASE NEW.ACTIVE WHEN 1 "
+          "THEN 'RESTORE' ELSE 'ARCHIVE' END ELSE 'UPDATE' "
+          "END,'CONFIGURATION',NEW.ID,json_object('code',OLD.CODE,'label',OLD."
+          "LABEL,'description',OLD.DESCRIPTION,'active',OLD.ACTIVE,'position',"
+          "OLD.POSITION),json_object('code',NEW.CODE,'label',NEW.LABEL,'"
+          "description',NEW.DESCRIPTION,'active',NEW.ACTIVE,'position',NEW."
+          "POSITION)); END",
+          errorMessage) ||
       !execute(db,
-               "CREATE TRIGGER IF NOT EXISTS CONFIGURATION_UPDATE AFTER UPDATE ON CONFIGURATION BEGIN "
-               "UPDATE CONFIGURATION SET UPDATED_AT=CURRENT_TIMESTAMP WHERE ID=NEW.ID AND UPDATED_AT IS OLD.UPDATED_AT; "
-               "INSERT INTO EVENT_LOG(EVENT_TYPE,OBJECT_TYPE,OBJECT_ID,BEFORE_JSON,AFTER_JSON) VALUES(CASE WHEN OLD.ACTIVE<>NEW.ACTIVE THEN CASE NEW.ACTIVE WHEN 1 THEN 'RESTORE' ELSE 'ARCHIVE' END ELSE 'UPDATE' END,'CONFIGURATION',NEW.ID,json_object('code',OLD.CODE,'label',OLD.LABEL,'description',OLD.DESCRIPTION,'active',OLD.ACTIVE,'position',OLD.POSITION),json_object('code',NEW.CODE,'label',NEW.LABEL,'description',NEW.DESCRIPTION,'active',NEW.ACTIVE,'position',NEW.POSITION)); END",
+               "CREATE TRIGGER IF NOT EXISTS APPLICABILITY_NEW AFTER INSERT ON "
+               "REQUIREMENT_APPLICABILITY BEGIN INSERT INTO "
+               "EVENT_LOG(EVENT_TYPE,OBJECT_TYPE,OBJECT_ID,AFTER_JSON) "
+               "VALUES('CREATE','REQUIREMENT_APPLICABILITY',NEW.REQ_ID,json_"
+               "object('configuration',NEW.CONFIG_ID,'pt',NEW.PT_ID,'"
+               "applicable',NEW.APPLICABLE,'comment',NEW.COMMENT)); END",
                errorMessage) ||
+      !execute(
+          db,
+          "CREATE TRIGGER IF NOT EXISTS APPLICABILITY_UPDATE AFTER UPDATE ON "
+          "REQUIREMENT_APPLICABILITY BEGIN INSERT INTO "
+          "EVENT_LOG(EVENT_TYPE,OBJECT_TYPE,OBJECT_ID,BEFORE_JSON,AFTER_JSON) "
+          "VALUES('UPDATE','REQUIREMENT_APPLICABILITY',NEW.REQ_ID,json_object('"
+          "configuration',OLD.CONFIG_ID,'pt',OLD.PT_ID,'applicable',OLD."
+          "APPLICABLE,'comment',OLD.COMMENT),json_object('configuration',NEW."
+          "CONFIG_ID,'pt',NEW.PT_ID,'applicable',NEW.APPLICABLE,'comment',NEW."
+          "COMMENT)); END",
+          errorMessage) ||
       !execute(db,
-               "CREATE TRIGGER IF NOT EXISTS APPLICABILITY_NEW AFTER INSERT ON REQUIREMENT_APPLICABILITY BEGIN INSERT INTO EVENT_LOG(EVENT_TYPE,OBJECT_TYPE,OBJECT_ID,AFTER_JSON) VALUES('CREATE','REQUIREMENT_APPLICABILITY',NEW.REQ_ID,json_object('configuration',NEW.CONFIG_ID,'pt',NEW.PT_ID,'applicable',NEW.APPLICABLE,'comment',NEW.COMMENT)); END",
-               errorMessage) ||
-      !execute(db,
-               "CREATE TRIGGER IF NOT EXISTS APPLICABILITY_UPDATE AFTER UPDATE ON REQUIREMENT_APPLICABILITY BEGIN INSERT INTO EVENT_LOG(EVENT_TYPE,OBJECT_TYPE,OBJECT_ID,BEFORE_JSON,AFTER_JSON) VALUES('UPDATE','REQUIREMENT_APPLICABILITY',NEW.REQ_ID,json_object('configuration',OLD.CONFIG_ID,'pt',OLD.PT_ID,'applicable',OLD.APPLICABLE,'comment',OLD.COMMENT),json_object('configuration',NEW.CONFIG_ID,'pt',NEW.PT_ID,'applicable',NEW.APPLICABLE,'comment',NEW.COMMENT)); END",
-               errorMessage) ||
-      !execute(db,
-               "CREATE TRIGGER IF NOT EXISTS APPLICABILITY_DELETE AFTER DELETE ON REQUIREMENT_APPLICABILITY BEGIN INSERT INTO EVENT_LOG(EVENT_TYPE,OBJECT_TYPE,OBJECT_ID,BEFORE_JSON) VALUES('DELETE','REQUIREMENT_APPLICABILITY',OLD.REQ_ID,json_object('configuration',OLD.CONFIG_ID,'pt',OLD.PT_ID,'applicable',OLD.APPLICABLE,'comment',OLD.COMMENT)); END",
+               "CREATE TRIGGER IF NOT EXISTS APPLICABILITY_DELETE AFTER DELETE "
+               "ON REQUIREMENT_APPLICABILITY BEGIN INSERT INTO "
+               "EVENT_LOG(EVENT_TYPE,OBJECT_TYPE,OBJECT_ID,BEFORE_JSON) "
+               "VALUES('DELETE','REQUIREMENT_APPLICABILITY',OLD.REQ_ID,json_"
+               "object('configuration',OLD.CONFIG_ID,'pt',OLD.PT_ID,'"
+               "applicable',OLD.APPLICABLE,'comment',OLD.COMMENT)); END",
                errorMessage)) {
     db.rollback();
     return false;

@@ -126,6 +126,11 @@ QSqlError REQ_SQLManager::openDB(QString filename, bool backupBeforeMigration) {
     return error(
         "Impossible de créer la sauvegarde de sécurité avant ouverture.");
   }
+  // La migration v12 reconstruit la table INTERFACE sur les anciens projets.
+  // Toute requête encore active sur le schéma empêcherait alors le DROP TABLE
+  // avec l'erreur SQLite "database table is locked".
+  versionQuery = QSqlQuery();
+  pragma = QSqlQuery();
   QString migrationError;
   if (!DatabaseMigrator::migrate(db, &migrationError)) {
     versionQuery = QSqlQuery();

@@ -16,6 +16,7 @@
 #include "docxexportservice.h"
 #include "applicabilityservice.h"
 #include "verificationservice.h"
+#include "interfaceservice.h"
 #include "xlsxreader.h"
 #include <private/qzipreader_p.h>
 #include <private/qzipwriter_p.h>
@@ -52,7 +53,73 @@ private slots:
   void managesRelationsAndDocumentOccurrences();
   void managesApplicabilityAndExportsMatrix();
   void managesVerificationMatrixAndExport();
+  void managesInterfacesAndExportsN2();
+  void opensVersion11ProjectWithRequiredLegacyIcd();
 };
+
+void DatabaseMigratorTest::opensVersion11ProjectWithRequiredLegacyIcd() {
+  QTemporaryDir directory;
+  const QString path = directory.filePath("version11.db");
+  {
+    REQ_SQLManager creator;
+    const QSqlError creation = creator.newDB(path);
+    QVERIFY2(creation.type() == QSqlError::NoError,
+             qPrintable(creation.text()));
+    creator.close();
+  }
+  {
+    QSqlDatabase db = QSqlDatabase::addDatabase("QSQLITE", "version11-prep");
+    db.setDatabaseName(path);
+    QVERIFY(db.open());
+    QSqlQuery q(db);
+    QVERIFY(q.exec("PRAGMA foreign_keys=OFF"));
+    QVERIFY(q.exec("CREATE TABLE INTERFACE_OLD(ID INTEGER PRIMARY KEY "
+                   "AUTOINCREMENT,ELEMENT1 INTEGER NOT NULL,ELEMENT2 INTEGER "
+                   "NOT NULL,DOC_ID INTEGER NOT NULL,DESCRIPTION TEXT,"
+                   "DOC_CHAPTER INTEGER,CODE TEXT,STATUS TEXT NOT NULL DEFAULT "
+                   "'DRAFT')"));
+    QVERIFY(q.exec("DROP TABLE INTERFACE"));
+    QVERIFY(q.exec("ALTER TABLE INTERFACE_OLD RENAME TO INTERFACE"));
+    QVERIFY(q.exec("PRAGMA user_version=11"));
+    q = QSqlQuery();
+    db.close();
+    db = QSqlDatabase();
+    QSqlDatabase::removeDatabase("version11-prep");
+  }
+  REQ_SQLManager manager;
+  const QSqlError opened = manager.openDB(path, false);
+  QVERIFY2(opened.type() == QSqlError::NoError, qPrintable(opened.text()));
+  QSqlDatabase db = QSqlDatabase::database(manager.currentConnection());
+  QSqlQuery q("PRAGMA table_info(INTERFACE)", db);
+  bool docIdIsNullable = false;
+  while (q.next())
+    if (q.value(1).toString() == "DOC_ID")
+      docIdIsNullable = !q.value(3).toBool();
+  QVERIFY(docIdIsNullable);
+  q = QSqlQuery();
+  db = QSqlDatabase();
+  manager.close();
+}
+
+void DatabaseMigratorTest::managesInterfacesAndExportsN2() {
+  QTemporaryDir directory; REQ_SQLManager manager;
+  const auto creation=manager.newDB(directory.filePath("interfaces.db"));
+  QVERIFY2(creation.type()==QSqlError::NoError,qPrintable(creation.text()));
+  QSqlDatabase db=QSqlDatabase::database(manager.currentConnection());
+  ProductTreeService tree(manager.currentConnection());
+  QVERIFY(tree.addNode(-1,"SYS").success);QSqlQuery q(db);QVERIFY(q.exec("SELECT ID FROM PT WHERE SEGMENT='SYS'"));QVERIFY(q.next());int sys=q.value(0).toInt();
+  QVERIFY(tree.addNode(sys,"PAYLOAD").success);QVERIFY(q.exec("SELECT ID FROM PT WHERE SEGMENT='PAYLOAD'"));QVERIFY(q.next());int payload=q.value(0).toInt();
+  QVERIFY(q.exec(QString("INSERT INTO DOCUMENT(ID,PT_ID,TYPE,REFERENCE,TITLE) VALUES(1,%1,2,'ICD-001','ICD système')").arg(sys)));
+  QVERIFY(q.exec(QString("INSERT INTO REQUIREMENT(ID,PT_ID,CODE,DOC_ID,TITLE,TYPE,STATUS,VERIF_METHOD) VALUES(1,%1,'REQ-IF',1,'Interface',1,1,1)").arg(sys)));
+  InterfaceService service(manager.currentConnection());InterfaceRecord record;record.code="IF-SYS-PAY";record.element1Id=sys;record.element2Id=payload;record.description="Liaison bidirectionnelle";record.status="APPROVED";record.typeIds={1,2};record.requirementIds={1};record.documentIds={1};
+  auto saved=service.save(record);QVERIFY2(saved.success,qPrintable(saved.message));
+  InterfaceFilter reverse;reverse.ptId=payload;auto rows=service.find(reverse);QCOMPARE(rows.size(),1);QCOMPARE(rows[0].code,record.code);QVERIFY(rows[0].types.contains("Mécanique"));QVERIFY(rows[0].requirements.contains("REQ-IF"));QVERIFY(rows[0].documents.contains("ICD-001"));
+  auto matrix=service.matrix();QCOMPARE(matrix.size(),1);QCOMPARE(matrix[0].interfaceCount,1);QCOMPARE(matrix[0].coveredCount,1);QCOMPARE(matrix[0].typeCount,2);
+  QVERIFY(service.setArchived(saved.id,true).success);QCOMPARE(service.find({}).size(),0);reverse.includeArchived=true;QCOMPARE(service.find(reverse).size(),1);QCOMPARE(service.matrix().size(),0);
+  QVERIFY(service.setArchived(saved.id,false).success);const QString path=directory.filePath("interfaces.xlsx");QVERIFY(service.exportXlsx(path,{}).success);QString error;auto sheets=XlsxReader::read(path,&error);QVERIFY2(error.isEmpty(),qPrintable(error));QCOMPARE(sheets.size(),3);QCOMPARE(sheets[0].name,QString("Synthèse"));QCOMPARE(sheets[1].name,QString("Matrice N2"));QCOMPARE(sheets[2].name,QString("Interfaces"));
+  QVERIFY(q.exec("SELECT COUNT(*) FROM EVENT_LOG WHERE OBJECT_TYPE='INTERFACE'"));QVERIFY(q.next());QVERIFY(q.value(0).toInt()>=3);
+  q=QSqlQuery();db=QSqlDatabase();manager.close();
+}
 
 void DatabaseMigratorTest::managesVerificationMatrixAndExport() {
   QTemporaryDir directory; REQ_SQLManager manager;
