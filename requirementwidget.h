@@ -25,6 +25,7 @@ public slots:
   void refresh();
   void applyFilter(const RequirementFilter &);
   void openRequirement(int id);
+  void openRequirementApplicability(int id);
 signals:
   void dataChanged();
   void openDocumentRequested(int id);

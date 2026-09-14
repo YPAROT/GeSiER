@@ -17,6 +17,7 @@
 #include "producttreewidget.h"
 #include "requirementwidget.h"
 #include "documentwidget.h"
+#include "applicabilitywidget.h"
 
 #include "csvutility.h"
 
@@ -169,6 +170,7 @@ void MainWindow::releaseProjectViews()
     if (m_productTreeWidget) m_productTreeWidget->setConnectionName({});
     if (m_requirementWidget) m_requirementWidget->setConnectionName({});
     if (m_documentWidget) m_documentWidget->releaseDatabase();
+    if (m_applicabilityWidget) m_applicabilityWidget->setConnectionName({});
     if (m_coverageDashboard) m_coverageDashboard->setConnectionName({});
     if (m_traceabilityWidget) m_traceabilityWidget->setConnectionName({});
     if (m_n2MatrixWidget) m_n2MatrixWidget->setConnectionName({});
@@ -196,6 +198,7 @@ void MainWindow::bindProjectViews()
     if (m_productTreeWidget) m_productTreeWidget->setConnectionName(connection);
     if (m_requirementWidget) m_requirementWidget->setConnectionName(connection);
     if (m_documentWidget) m_documentWidget->setConnectionName(connection);
+    if (m_applicabilityWidget) m_applicabilityWidget->setConnectionName(connection);
     refreshEditTables();
     refreshViewTables();
     updateProjectUi();
@@ -687,6 +690,8 @@ void MainWindow::refreshTableSlot()
     refreshViewTables();
     if (m_documentWidget)
         m_documentWidget->refresh();
+    if (m_applicabilityWidget)
+        m_applicabilityWidget->refresh();
     m_coverageDashboard->refresh();
     m_traceabilityWidget->refresh();
     m_n2MatrixWidget->refresh();
@@ -706,11 +711,13 @@ void MainWindow::setupModernNavigation()
     m_productTreeWidget=new ProductTreeWidget(projectPage);
     m_requirementWidget=new RequirementWidget(projectPage);
     m_documentWidget=new DocumentWidget(projectPage);
-    const QStringList sections={tr("Product Tree"),tr("Exigences"),tr("Documents"),tr("Interfaces"),tr("Vérification"),tr("Changements"),tr("Historique")};
+    m_applicabilityWidget=new ApplicabilityWidget(projectPage);
+    const QStringList sections={tr("Product Tree"),tr("Exigences"),tr("Documents"),tr("Applicabilité"),tr("Interfaces"),tr("Vérification"),tr("Changements"),tr("Historique")};
     m_projectNavigation->addItems(sections);
     m_projectPages->addWidget(m_productTreeWidget);
     m_projectPages->addWidget(m_requirementWidget);
     m_projectPages->addWidget(m_documentWidget);
+    m_projectPages->addWidget(m_applicabilityWidget);
     m_projectPages->addWidget(m_n2MatrixWidget);
     m_projectPages->addWidget(ui->tab_reqinput_edit);
     m_projectPages->addWidget(ui->tab_ConfChange_edit);
@@ -720,15 +727,22 @@ void MainWindow::setupModernNavigation()
     connect(m_productTreeWidget,&ProductTreeWidget::dataChanged,this,&MainWindow::refreshTableSlot);
     connect(m_requirementWidget,&RequirementWidget::dataChanged,this,&MainWindow::refreshTableSlot);
     connect(m_documentWidget,&DocumentWidget::dataChanged,this,&MainWindow::refreshTableSlot);
+    connect(m_applicabilityWidget,&ApplicabilityWidget::dataChanged,this,[this]{
+        // La matrice s'est déjà rafraîchie elle-même. Ne pas recharger toutes
+        // les pages du projet pour la modification d'une seule cellule.
+        if(m_requirementWidget)m_requirementWidget->refresh();
+        if(m_coverageDashboard)m_coverageDashboard->refresh();
+    });
+    connect(m_applicabilityWidget,&ApplicabilityWidget::openRequirementRequested,this,[this](int id){ui->mainTabWidget->setCurrentIndex(1);m_projectNavigation->setCurrentRow(1);m_requirementWidget->openRequirementApplicability(id);});
     connect(m_documentWidget,&DocumentWidget::openRequirement,this,[this](int id){ui->mainTabWidget->setCurrentIndex(1);m_projectNavigation->setCurrentRow(1);m_requirementWidget->openRequirement(id);});
     connect(m_requirementWidget,&RequirementWidget::openDocumentRequested,this,[this](int id){ui->mainTabWidget->setCurrentIndex(1);m_projectNavigation->setCurrentRow(2);m_documentWidget->openDocument(id);});
     connect(m_productTreeWidget,&ProductTreeWidget::openRequirementsForPt,this,[this](int pt){RequirementFilter f;f.ptIds={pt};m_requirementWidget->applyFilter(f);ui->mainTabWidget->setCurrentIndex(1);m_projectNavigation->setCurrentRow(1);});
-    connect(m_productTreeWidget,&ProductTreeWidget::openInterfacesForPt,this,[this](int){ui->mainTabWidget->setCurrentIndex(1);m_projectNavigation->setCurrentRow(3);});
-    connect(m_productTreeWidget,&ProductTreeWidget::openChangesForPt,this,[this](int){ui->mainTabWidget->setCurrentIndex(1);m_projectNavigation->setCurrentRow(5);});
+    connect(m_productTreeWidget,&ProductTreeWidget::openInterfacesForPt,this,[this](int){ui->mainTabWidget->setCurrentIndex(1);m_projectNavigation->setCurrentRow(4);});
+    connect(m_productTreeWidget,&ProductTreeWidget::openChangesForPt,this,[this](int){ui->mainTabWidget->setCurrentIndex(1);m_projectNavigation->setCurrentRow(6);});
     connect(m_coverageDashboard,&CoverageDashboard::navigateRequested,this,[this](int page,const QString&filter){if(page==1){RequirementFilter f;if(filter=="unallocated")f.allocated=0;else if(filter=="untraced")f.traced=0;else if(filter=="undocumented")f.documented=0;else if(filter=="unverified")f.verified=0;m_requirementWidget->applyFilter(f);}ui->mainTabWidget->setCurrentIndex(1);m_projectNavigation->setCurrentRow(page);});
     m_projectNavigation->setCurrentRow(0);
     if (hasOpenProject())
-    { m_productTreeWidget->setConnectionName(m_SQLManager->currentConnection());m_requirementWidget->setConnectionName(m_SQLManager->currentConnection());m_documentWidget->setConnectionName(m_SQLManager->currentConnection()); }
+    { m_productTreeWidget->setConnectionName(m_SQLManager->currentConnection());m_requirementWidget->setConnectionName(m_SQLManager->currentConnection());m_documentWidget->setConnectionName(m_SQLManager->currentConnection());m_applicabilityWidget->setConnectionName(m_SQLManager->currentConnection()); }
 
     ui->mainTabWidget->clear();
     ui->mainTabWidget->addTab(dashboardPage,tr("Tableau de bord"));

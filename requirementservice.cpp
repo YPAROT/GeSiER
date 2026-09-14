@@ -101,7 +101,7 @@ RequirementService::find(const RequirementFilter &filter,
       "V.REQ_ID=R.ID ORDER BY V.POSITION,V.ID)),''),"
       "COALESCE((SELECT GROUP_CONCAT(CODE,' | ') FROM (SELECT C.CODE FROM "
       "REQUIREMENT_APPLICABILITY A JOIN CONFIGURATION C ON C.ID=A.CONFIG_ID "
-      "WHERE A.REQ_ID=R.ID ORDER BY C.CODE)),''),"
+      "WHERE A.REQ_ID=R.ID AND A.PT_ID IS NULL ORDER BY C.CODE)),''),"
       "EXISTS(SELECT 1 FROM REQUIREMENT_PT X WHERE X.REQ_ID=R.ID),"
       "EXISTS(SELECT 1 FROM REQUIREMENT_RELATION X WHERE X.TARGET_REQ_ID=R.ID "
       "AND X.TYPE_ID IN(1,2)),"
@@ -157,7 +157,7 @@ RequirementRecord RequirementService::get(int id, QString *error) const {
         r.ptIds << pt.value(0).toInt();
     QSqlQuery applicability(db);
     applicability.prepare("SELECT CONFIG_ID FROM REQUIREMENT_APPLICABILITY "
-                          "WHERE REQ_ID=? ORDER BY CONFIG_ID");
+                          "WHERE REQ_ID=? AND PT_ID IS NULL ORDER BY CONFIG_ID");
     applicability.addBindValue(id);
     if (!applicability.exec()) {
       if (error)
@@ -360,7 +360,9 @@ RequirementResult RequirementService::save(const RequirementRecord &record,
     }
   }
   QSqlQuery clearApplicability(db);
-  clearApplicability.prepare("DELETE FROM REQUIREMENT_APPLICABILITY WHERE REQ_ID=?");
+  // The requirement editor owns only the simple applicability. PT-specific
+  // overrides are managed by the matrix and must survive ordinary edits.
+  clearApplicability.prepare("DELETE FROM REQUIREMENT_APPLICABILITY WHERE REQ_ID=? AND PT_ID IS NULL");
   clearApplicability.addBindValue(id);
   if (!clearApplicability.exec()) {
     if (manageTransaction) db.rollback();

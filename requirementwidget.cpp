@@ -222,17 +222,13 @@ RequirementWidget::RequirementWidget(QWidget *p) : QWidget(p) {
   m_tabs->addTab(documentsPage, "Documents");
 
   m_configurations = new QListWidget;
-  auto *addConfiguration = new QPushButton("Nouvelle configuration");
-  auto *editConfiguration = new QPushButton("Modifier");
-  auto *archiveConfiguration = new QPushButton("Archiver / restaurer");
-  auto *configurationActions = new QHBoxLayout;
-  configurationActions->addWidget(addConfiguration);
-  configurationActions->addWidget(editConfiguration);
-  configurationActions->addWidget(archiveConfiguration);
-  configurationActions->addStretch();
   auto *applicabilityPage = new QWidget;
   auto *applicabilityLayout = new QVBoxLayout(applicabilityPage);
-  applicabilityLayout->addLayout(configurationActions);
+  auto *applicabilityHelp = new QLabel(
+      "Cochez les configurations auxquelles l'exigence s'applique. "
+      "Les configurations se gèrent dans Projet > Applicabilité.");
+  applicabilityHelp->setWordWrap(true);
+  applicabilityLayout->addWidget(applicabilityHelp);
   applicabilityLayout->addWidget(m_configurations);
   m_tabs->addTab(applicabilityPage, "Applicabilité");
   for (QString name : {"Changements",
@@ -385,67 +381,6 @@ RequirementWidget::RequirementWidget(QWidget *p) : QWidget(p) {
     openRequirement(otherId);
   });
   connect(m_graphDepth, QOverload<int>::of(&QSpinBox::valueChanged), this, [this] { if (m_current >= 0) loadRelationGraph(m_current); });
-  connect(addConfiguration, &QPushButton::clicked, this, [this] {
-    bool ok = false;
-    const QString code = QInputDialog::getText(this, "Configuration", "Code", QLineEdit::Normal, {}, &ok).trimmed();
-    if (!ok || code.isEmpty()) return;
-    const QString label = QInputDialog::getText(this, "Configuration", "Libellé", QLineEdit::Normal, code, &ok).trimmed();
-    if (!ok) return;
-    QSqlQuery query(QSqlDatabase::database(m_connection));
-    query.prepare("INSERT INTO CONFIGURATION(CODE,LABEL) VALUES(?,?)"); query.addBindValue(code); query.addBindValue(label);
-    if (!query.exec()) QMessageBox::warning(this, "Configuration", query.lastError().text());
-    else { loadApplicability(editorRecord().configurationIds); m_dirty = true; }
-  });
-  connect(editConfiguration, &QPushButton::clicked, this, [this] {
-    QListWidgetItem *item = m_configurations->currentItem();
-    if (!item)
-      return;
-    QSqlDatabase db = QSqlDatabase::database(m_connection);
-    QSqlQuery current(db);
-    current.prepare("SELECT CODE,LABEL FROM CONFIGURATION WHERE ID=?");
-    current.addBindValue(item->data(Qt::UserRole));
-    if (!current.exec() || !current.next())
-      return;
-    bool ok = false;
-    const QString code = QInputDialog::getText(
-        this, "Configuration", "Code", QLineEdit::Normal,
-        current.value(0).toString(), &ok).trimmed();
-    if (!ok || code.isEmpty())
-      return;
-    const QString label = QInputDialog::getText(
-        this, "Configuration", "Libellé", QLineEdit::Normal,
-        current.value(1).toString(), &ok).trimmed();
-    if (!ok || label.isEmpty())
-      return;
-    QSqlQuery update(db);
-    update.prepare("UPDATE CONFIGURATION SET CODE=?,LABEL=? WHERE ID=?");
-    update.addBindValue(code);
-    update.addBindValue(label);
-    update.addBindValue(item->data(Qt::UserRole));
-    if (!update.exec())
-      QMessageBox::warning(this, "Configuration", update.lastError().text());
-    else {
-      loadApplicability(editorRecord().configurationIds);
-      emit dataChanged();
-    }
-  });
-  connect(archiveConfiguration, &QPushButton::clicked, this, [this] {
-    QListWidgetItem *item = m_configurations->currentItem();
-    if (!item)
-      return;
-    const QList<int> selected = editorRecord().configurationIds;
-    QSqlQuery update(QSqlDatabase::database(m_connection));
-    update.prepare(
-        "UPDATE CONFIGURATION SET ACTIVE=CASE ACTIVE WHEN 1 THEN 0 ELSE 1 "
-        "END WHERE ID=?");
-    update.addBindValue(item->data(Qt::UserRole));
-    if (!update.exec())
-      QMessageBox::warning(this, "Configuration", update.lastError().text());
-    else {
-      loadApplicability(selected);
-      emit dataChanged();
-    }
-  });
   connect(m_configurations, &QListWidget::itemChanged, this, [this] { if (!m_loading) m_dirty = true; });
   connect(addToDocument, &QPushButton::clicked, this, [this] {
     if (m_current < 0) return;
@@ -582,7 +517,8 @@ void RequirementWidget::loadLookups() {
   fillCheckable(m_methodFilter, db,
                 "SELECT ID,METHOD FROM REQ_METHOD ORDER BY ID");
   fillCheckable(m_applicabilityFilter, db,
-                "SELECT ID,CODE FROM CONFIGURATION WHERE ACTIVE=1 ORDER BY CODE");
+                "SELECT ID,CODE FROM CONFIGURATION WHERE ACTIVE=1 "
+                "ORDER BY POSITION,CODE");
   fillCombo(m_status, db, "SELECT ID,STATUS FROM REQ_STATUS ORDER BY ID",
             QString());
   fillCombo(
@@ -687,6 +623,17 @@ void RequirementWidget::openRequirement(int id) {
     m_list->scrollToItem(m_list->item(row, CodeCol));
   }
   loadEditor(id);
+}
+void RequirementWidget::openRequirementApplicability(int id) {
+  openRequirement(id);
+  if (m_current != id)
+    return;
+  for (int index = 0; index < m_tabs->count(); ++index) {
+    if (m_tabs->tabText(index) == "Applicabilité") {
+      m_tabs->setCurrentIndex(index);
+      break;
+    }
+  }
 }
 void RequirementWidget::sortByColumn(int column) {
   if (sender() == m_list->horizontalHeader()) {
@@ -1242,8 +1189,8 @@ void RequirementWidget::loadApplicability(const QList<int> &selected) {
   m_configurations->clear();
   if (!m_connection.isEmpty()) {
     QSqlQuery query(
-        "SELECT ID,CODE,LABEL,ACTIVE FROM CONFIGURATION ORDER BY ACTIVE "
-        "DESC,CODE",
+        "SELECT ID,CODE,LABEL,ACTIVE FROM CONFIGURATION "
+        "ORDER BY POSITION,CODE",
         QSqlDatabase::database(m_connection));
     while (query.next()) {
       const int id = query.value(0).toInt();
@@ -1255,6 +1202,12 @@ void RequirementWidget::loadApplicability(const QList<int> &selected) {
       item->setData(Qt::UserRole, id);
       item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
       item->setCheckState(selected.contains(id) ? Qt::Checked : Qt::Unchecked);
+      if (!query.value(3).toBool()) {
+        item->setFlags(item->flags() & ~Qt::ItemIsEnabled);
+        item->setToolTip(
+            "Configuration archivée : restaurez-la depuis Projet > "
+            "Applicabilité pour modifier cette association.");
+      }
       m_configurations->addItem(item);
     }
   }

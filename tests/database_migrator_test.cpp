@@ -14,6 +14,7 @@
 #include "requirementrelationservice.h"
 #include "documentservice.h"
 #include "docxexportservice.h"
+#include "applicabilityservice.h"
 #include <private/qzipreader_p.h>
 #include <private/qzipwriter_p.h>
 #include "sqltreemodel.h"
@@ -47,7 +48,42 @@ private slots:
   void storesMultipleVerificationMethods();
   void initializesNewProjectCatalogs();
   void managesRelationsAndDocumentOccurrences();
+  void managesApplicabilityAndExportsMatrix();
 };
+
+void DatabaseMigratorTest::managesApplicabilityAndExportsMatrix() {
+  QTemporaryDir directory;
+  REQ_SQLManager manager;
+  const QSqlError creation = manager.newDB(directory.filePath("applicability.db"));
+  QVERIFY2(creation.type() == QSqlError::NoError, qPrintable(creation.text()));
+  QSqlDatabase db = QSqlDatabase::database(manager.currentConnection());
+  ProductTreeService tree(manager.currentConnection());
+  QVERIFY(tree.addNode(-1, "SYS").success);
+  QSqlQuery q(db); QVERIFY(q.exec("SELECT ID FROM PT WHERE SEGMENT='SYS'")); QVERIFY(q.next()); const int pt=q.value(0).toInt();
+  QVERIFY(q.exec(QString("INSERT INTO DOCUMENT(ID,PT_ID,TYPE,REFERENCE,TITLE) VALUES(1,%1,1,'SPEC','Specification')").arg(pt)));
+  QVERIFY(q.exec(QString("INSERT INTO REQUIREMENT(ID,PT_ID,CODE,DOC_ID,TITLE,TYPE,STATUS,VERIF_METHOD) VALUES(1,%1,'REQ-A',1,'A',1,1,1),(2,%1,'REQ-B',1,'B',1,1,1)").arg(pt)));
+  QVERIFY(q.exec(QString("INSERT INTO REQUIREMENT_PT(REQ_ID,PT_ID,IS_PRIMARY) VALUES(1,%1,1),(2,%1,1)").arg(pt)));
+  ApplicabilityService service(manager.currentConnection());
+  ConfigurationRecord c;c.code="FM";c.label="Flight Model";c.description="Modèle de vol";c.position=1;
+  auto saved=service.saveConfiguration(c);QVERIFY2(saved.success,qPrintable(saved.message));
+  ConfigurationRecord duplicate=c;duplicate.label="Duplicate";QVERIFY(!service.saveConfiguration(duplicate).success);
+  QVERIFY(service.setApplicability(1,saved.id,-1,true,"base").success);
+  QVERIFY(service.setApplicability(1,saved.id,-1,false,"mise à jour").success);
+  QVERIFY(service.setApplicability(1,saved.id,pt,true,"exception PT").success);
+  RequirementService requirements(manager.currentConnection());
+  RequirementRecord edited=requirements.get(1);edited.typeId=1;edited.statusId=1;edited.title="A modifiée";QVERIFY(requirements.save(edited).success);
+  QVERIFY(q.exec(QString("SELECT COUNT(*) FROM REQUIREMENT_APPLICABILITY WHERE REQ_ID=1 AND CONFIG_ID=%1 AND PT_ID=%2").arg(saved.id).arg(pt)));QVERIFY(q.next());QCOMPARE(q.value(0).toInt(),1);
+  ApplicabilityFilter filter;filter.ptRootId=pt;const auto rows=service.matrix(filter);QCOMPARE(rows.size(),2);QCOMPARE(rows[0].cells.size(),1);QVERIFY(rows[0].cells[0].applicable);QCOMPARE(rows[0].cells[0].sourcePtId,pt);
+  QCOMPARE(service.rate(rows),50.0);
+  QVERIFY(service.setConfigurationActive(saved.id,false).success);
+  QCOMPARE(service.configurations(true).size(),1);QVERIFY(!service.configurations(true)[0].active);QCOMPARE(service.configurations(true)[0].useCount,1);
+  QCOMPARE(service.matrix(filter)[0].cells.size(),0);
+  filter.includeArchivedConfigurations=true;
+  QCOMPARE(service.matrix(filter)[0].cells.size(),1);
+  const QString output=directory.filePath("matrix.xlsx");auto exported=service.exportXlsx(output,filter);QVERIFY2(exported.success,qPrintable(exported.message));QZipReader zip(output);QVERIFY(zip.exists());QVERIFY(!zip.fileData("xl/worksheets/sheet1.xml").isEmpty());QVERIFY(!zip.fileData("xl/worksheets/sheet2.xml").isEmpty());QVERIFY(!zip.fileData("xl/worksheets/sheet3.xml").isEmpty());
+  QVERIFY(q.exec("SELECT COUNT(*) FROM EVENT_LOG WHERE OBJECT_TYPE='CONFIGURATION'"));QVERIFY(q.next());QVERIFY(q.value(0).toInt()>=2);
+  q=QSqlQuery();db=QSqlDatabase();manager.close();
+}
 
 void DatabaseMigratorTest::managesRelationsAndDocumentOccurrences() {
   QTemporaryDir directory;

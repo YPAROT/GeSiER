@@ -228,7 +228,10 @@ bool DatabaseMigrator::migrate(QSqlDatabase db, QString *errorMessage) {
       {"REQUIREMENT_PT", "IS_PRIMARY",
        "INTEGER NOT NULL DEFAULT 0 CHECK(IS_PRIMARY IN (0,1))"},
       {"REQUIREMENT_VERIFICATION", "VERIFICATION_LEVEL_PT_ID",
-       "INTEGER REFERENCES PT(ID)"}};
+       "INTEGER REFERENCES PT(ID)"},
+      {"CONFIGURATION", "POSITION", "INTEGER NOT NULL DEFAULT 0"},
+      {"CONFIGURATION", "CREATED_AT", "TEXT"},
+      {"CONFIGURATION", "UPDATED_AT", "TEXT"}};
   for (const Column &column : columns) {
     if (!addColumnIfMissing(db, column.table, column.name, column.definition,
                             errorMessage)) {
@@ -275,6 +278,15 @@ bool DatabaseMigrator::migrate(QSqlDatabase db, QString *errorMessage) {
                "R.PT_ID FROM REQUIREMENT R WHERE R.ID=REQUIREMENT_PT.REQ_ID) "
                "AND NOT EXISTS(SELECT 1 FROM REQUIREMENT_PT P WHERE "
                "P.REQ_ID=REQUIREMENT_PT.REQ_ID AND P.IS_PRIMARY=1)",
+               errorMessage) ||
+      !execute(db,
+               "UPDATE CONFIGURATION SET CREATED_AT=COALESCE(CREATED_AT,CURRENT_TIMESTAMP), "
+               "UPDATED_AT=COALESCE(UPDATED_AT,CURRENT_TIMESTAMP)", errorMessage) ||
+      !execute(db,
+               "CREATE INDEX IF NOT EXISTS IDX_CONFIGURATION_ORDER ON CONFIGURATION(ACTIVE DESC,POSITION,CODE)",
+               errorMessage) ||
+      !execute(db,
+               "CREATE INDEX IF NOT EXISTS IDX_APPLICABILITY_CONFIG ON REQUIREMENT_APPLICABILITY(CONFIG_ID,PT_ID,REQ_ID)",
                errorMessage)) {
     db.rollback();
     return false;
@@ -351,6 +363,28 @@ bool DatabaseMigrator::migrate(QSqlDatabase db, QString *errorMessage) {
                "CREATE TRIGGER IF NOT EXISTS DOCUMENT_PUBLICATION_NODELETE "
                "BEFORE DELETE ON DOCUMENT_EXPORT WHEN OLD.EXPORT_KIND='PUBLICATION' "
                "BEGIN SELECT RAISE(ABORT,'Une publication est immuable'); END",
+               errorMessage)) {
+    db.rollback();
+    return false;
+  }
+
+  if (!execute(db,
+               "CREATE TRIGGER IF NOT EXISTS CONFIGURATION_NEW AFTER INSERT ON CONFIGURATION BEGIN "
+               "INSERT INTO EVENT_LOG(EVENT_TYPE,OBJECT_TYPE,OBJECT_ID,AFTER_JSON) VALUES('CREATE','CONFIGURATION',NEW.ID,json_object('code',NEW.CODE,'label',NEW.LABEL,'active',NEW.ACTIVE,'position',NEW.POSITION)); END",
+               errorMessage) ||
+      !execute(db,
+               "CREATE TRIGGER IF NOT EXISTS CONFIGURATION_UPDATE AFTER UPDATE ON CONFIGURATION BEGIN "
+               "UPDATE CONFIGURATION SET UPDATED_AT=CURRENT_TIMESTAMP WHERE ID=NEW.ID AND UPDATED_AT IS OLD.UPDATED_AT; "
+               "INSERT INTO EVENT_LOG(EVENT_TYPE,OBJECT_TYPE,OBJECT_ID,BEFORE_JSON,AFTER_JSON) VALUES(CASE WHEN OLD.ACTIVE<>NEW.ACTIVE THEN CASE NEW.ACTIVE WHEN 1 THEN 'RESTORE' ELSE 'ARCHIVE' END ELSE 'UPDATE' END,'CONFIGURATION',NEW.ID,json_object('code',OLD.CODE,'label',OLD.LABEL,'description',OLD.DESCRIPTION,'active',OLD.ACTIVE,'position',OLD.POSITION),json_object('code',NEW.CODE,'label',NEW.LABEL,'description',NEW.DESCRIPTION,'active',NEW.ACTIVE,'position',NEW.POSITION)); END",
+               errorMessage) ||
+      !execute(db,
+               "CREATE TRIGGER IF NOT EXISTS APPLICABILITY_NEW AFTER INSERT ON REQUIREMENT_APPLICABILITY BEGIN INSERT INTO EVENT_LOG(EVENT_TYPE,OBJECT_TYPE,OBJECT_ID,AFTER_JSON) VALUES('CREATE','REQUIREMENT_APPLICABILITY',NEW.REQ_ID,json_object('configuration',NEW.CONFIG_ID,'pt',NEW.PT_ID,'applicable',NEW.APPLICABLE,'comment',NEW.COMMENT)); END",
+               errorMessage) ||
+      !execute(db,
+               "CREATE TRIGGER IF NOT EXISTS APPLICABILITY_UPDATE AFTER UPDATE ON REQUIREMENT_APPLICABILITY BEGIN INSERT INTO EVENT_LOG(EVENT_TYPE,OBJECT_TYPE,OBJECT_ID,BEFORE_JSON,AFTER_JSON) VALUES('UPDATE','REQUIREMENT_APPLICABILITY',NEW.REQ_ID,json_object('configuration',OLD.CONFIG_ID,'pt',OLD.PT_ID,'applicable',OLD.APPLICABLE,'comment',OLD.COMMENT),json_object('configuration',NEW.CONFIG_ID,'pt',NEW.PT_ID,'applicable',NEW.APPLICABLE,'comment',NEW.COMMENT)); END",
+               errorMessage) ||
+      !execute(db,
+               "CREATE TRIGGER IF NOT EXISTS APPLICABILITY_DELETE AFTER DELETE ON REQUIREMENT_APPLICABILITY BEGIN INSERT INTO EVENT_LOG(EVENT_TYPE,OBJECT_TYPE,OBJECT_ID,BEFORE_JSON) VALUES('DELETE','REQUIREMENT_APPLICABILITY',OLD.REQ_ID,json_object('configuration',OLD.CONFIG_ID,'pt',OLD.PT_ID,'applicable',OLD.APPLICABLE,'comment',OLD.COMMENT)); END",
                errorMessage)) {
     db.rollback();
     return false;

@@ -25,6 +25,7 @@ class N2MatrixWidget;
 class ProductTreeWidget;
 class RequirementWidget;
 class DocumentWidget;
+class ApplicabilityWidget;
 class QListWidget;
 class QStackedWidget;
 
@@ -124,6 +125,7 @@ private:
     ProductTreeWidget* m_productTreeWidget = nullptr;
     RequirementWidget* m_requirementWidget = nullptr;
     DocumentWidget* m_documentWidget = nullptr;
+    ApplicabilityWidget* m_applicabilityWidget = nullptr;
     QListWidget* m_projectNavigation = nullptr;
     QStackedWidget* m_projectPages = nullptr;
     //SqlTreeReqModel* m_Req_Arbo;
