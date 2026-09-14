@@ -28,6 +28,8 @@ qt_add_executable(GeSiER WIN32
     requirementwidget.cpp requirementwidget.h
     applicabilityservice.cpp applicabilityservice.h
     applicabilitywidget.cpp applicabilitywidget.h
+    verificationservice.cpp verificationservice.h
+    verificationwidget.cpp verificationwidget.h
     checkablecombobox.cpp checkablecombobox.h
     xlsxreader.cpp xlsxreader.h
     requirementimportdialog.cpp requirementimportdialog.h
@@ -73,6 +75,8 @@ if(BUILD_TESTING)
         producttreeservice.cpp producttreeservice.h
         requirementservice.cpp requirementservice.h
         applicabilityservice.cpp applicabilityservice.h
+        verificationservice.cpp verificationservice.h
+        xlsxreader.cpp xlsxreader.h
         requirementrelationservice.cpp requirementrelationservice.h
         documentservice.cpp documentservice.h
         docxexportservice.cpp docxexportservice.h

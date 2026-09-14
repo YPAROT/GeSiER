@@ -15,6 +15,8 @@
 #include "documentservice.h"
 #include "docxexportservice.h"
 #include "applicabilityservice.h"
+#include "verificationservice.h"
+#include "xlsxreader.h"
 #include <private/qzipreader_p.h>
 #include <private/qzipwriter_p.h>
 #include "sqltreemodel.h"
@@ -49,7 +51,27 @@ private slots:
   void initializesNewProjectCatalogs();
   void managesRelationsAndDocumentOccurrences();
   void managesApplicabilityAndExportsMatrix();
+  void managesVerificationMatrixAndExport();
 };
+
+void DatabaseMigratorTest::managesVerificationMatrixAndExport() {
+  QTemporaryDir directory; REQ_SQLManager manager;
+  const auto creation=manager.newDB(directory.filePath("verification-matrix.db"));
+  QVERIFY2(creation.type()==QSqlError::NoError,qPrintable(creation.text()));
+  QSqlDatabase db=QSqlDatabase::database(manager.currentConnection());
+  ProductTreeService tree(manager.currentConnection());
+  QVERIFY(tree.addNode(-1,"SYS").success);QSqlQuery q(db);QVERIFY(q.exec("SELECT ID FROM PT WHERE SEGMENT='SYS'"));QVERIFY(q.next());const int pt=q.value(0).toInt();
+  QVERIFY(q.exec(QString("INSERT INTO DOCUMENT(ID,PT_ID,TYPE,TITLE) VALUES(1,%1,1,'Vérification')").arg(pt)));
+  QVERIFY(q.exec(QString("INSERT INTO REQUIREMENT(ID,PT_ID,CODE,DOC_ID,TITLE,TYPE,STATUS,VERIF_METHOD) VALUES(1,%1,'SYS-001',1,'Couverte',1,1,1)").arg(pt)));
+  QVERIFY(q.exec(QString("INSERT INTO REQUIREMENT(ID,PT_ID,CODE,DOC_ID,TITLE,TYPE,STATUS,VERIF_METHOD) VALUES(2,%1,'SYS-002',1,'Manquante',1,1,1)").arg(pt)));
+  QVERIFY(q.exec(QString("INSERT INTO REQUIREMENT_PT(REQ_ID,PT_ID,IS_PRIMARY) VALUES(1,%1,1),(2,%1,1)").arg(pt)));
+  VerificationService service(manager.currentConnection());RequirementVerification v;v.methodId=1;v.levelPtId=pt;v.procedure="TC-001";v.redmine="https://redmine.invalid/1";v.means="Banc";v.verdict="PC";v.comment="Prévu";
+  const auto saved=service.save(1,{v});QVERIFY2(saved.success,qPrintable(saved.message));
+  auto rows=service.matrix({});QCOMPARE(rows.size(),2);QVERIFY(rows[0].covered);QVERIFY(!rows[1].covered);QCOMPARE(service.coverageRate(rows),50.0);
+  RequirementVerification duplicate=v;QVERIFY(!service.save(1,{v,duplicate}).success);
+  QVERIFY(tree.setArchived(pt,true).success);rows=service.matrix({});QVERIFY(!rows[0].covered);QVERIFY(rows[0].levels.contains("archivé"));
+  const QString path=directory.filePath("verification.xlsx");QVERIFY(service.exportXlsx(path,{}).success);QString error;const auto sheets=XlsxReader::read(path,&error);QVERIFY2(error.isEmpty(),qPrintable(error));QCOMPARE(sheets.size(),3);QCOMPARE(sheets[0].name,QString("Synthèse"));QCOMPARE(sheets[1].name,QString("Détails"));QCOMPARE(sheets[2].name,QString("Anomalies"));
+}
 
 void DatabaseMigratorTest::managesApplicabilityAndExportsMatrix() {
   QTemporaryDir directory;

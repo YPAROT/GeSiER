@@ -29,6 +29,8 @@ SOURCES += \
     coveragedashboard.cpp \
     csvutility.cpp \
     databasemigrator.cpp \
+    verificationservice.cpp \
+    verificationwidget.cpp \
     traceabilitywidget.cpp \
     n2matrixwidget.cpp \
     producttreeservice.cpp \
@@ -55,6 +57,8 @@ HEADERS += \
     coveragedashboard.h \
     csvutility.h \
     databasemigrator.h \
+    verificationservice.h \
+    verificationwidget.h \
     traceabilitywidget.h \
     n2matrixwidget.h \
     producttreeservice.h \
