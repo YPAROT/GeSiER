@@ -13,6 +13,7 @@ DocumentWidget::DocumentWidget(QWidget *parent) : QWidget(parent) {
   m_tree->setHeaderLabels({"Structure du document"});
   m_tree->setDragDropMode(QAbstractItemView::InternalMove);
   m_tree->setDefaultDropAction(Qt::MoveAction);
+  m_tree->setSelectionMode(QAbstractItemView::SingleSelection);
   m_reference = new QLineEdit;
   m_title = new QLineEdit;
   m_template = new QLineEdit;
@@ -26,6 +27,12 @@ DocumentWidget::DocumentWidget(QWidget *parent) : QWidget(parent) {
   auto *addDocument = new QPushButton("Nouveau document");
   auto *save = new QPushButton("Enregistrer");
   auto *addChapter = new QPushButton("Ajouter un chapitre");
+  addChapter->setToolTip("Ajoute un chapitre au même niveau que la sélection");
+  auto *addSubchapter = new QPushButton("Ajouter un sous-chapitre");
+  auto *promote = new QPushButton("Niveau −");
+  promote->setToolTip("Remonter le chapitre sélectionné d'un niveau");
+  auto *demote = new QPushButton("Niveau +");
+  demote->setToolTip("Placer le chapitre sélectionné sous le chapitre précédent");
   auto *addRequirement = new QPushButton("Ajouter une exigence");
   auto *addText = new QPushButton("Ajouter du texte");
   auto *addImage = new QPushButton("Ajouter une image");
@@ -57,6 +64,9 @@ DocumentWidget::DocumentWidget(QWidget *parent) : QWidget(parent) {
   properties->addRow("Métadonnées", metadataBox);
   auto *treeActions = new QHBoxLayout;
   treeActions->addWidget(addChapter);
+  treeActions->addWidget(addSubchapter);
+  treeActions->addWidget(promote);
+  treeActions->addWidget(demote);
   treeActions->addWidget(addRequirement);
   treeActions->addWidget(addText);
   treeActions->addWidget(addImage);
@@ -114,9 +124,28 @@ DocumentWidget::DocumentWidget(QWidget *parent) : QWidget(parent) {
     if (m_current < 0) return;
     bool ok = false;
     const QString title = QInputDialog::getText(this, "Chapitre", "Titre", QLineEdit::Normal, {}, &ok);
-    if (ok && m_service.addChapter(m_current, selectedParent(), title).success) {
-      loadTree(m_current); emit dataChanged();
+    if (ok) {
+      const RequirementResult result =
+          m_service.addChapter(m_current, selectedSiblingParent(), title);
+      if (!result.success) QMessageBox::warning(this, "Document", result.message);
+      else { loadTree(m_current); emit dataChanged(); }
     }
+  });
+  connect(addSubchapter, &QPushButton::clicked, this, [this] {
+    if (m_current < 0) return;
+    QTreeWidgetItem *selected = m_tree->currentItem();
+    if (!selected || selected->data(0, Qt::UserRole + 2).toString() != "CHAPTER") {
+      QMessageBox::information(this, "Document", "Sélectionnez le chapitre parent.");
+      return;
+    }
+    bool ok = false;
+    const QString title = QInputDialog::getText(
+        this, "Sous-chapitre", "Titre", QLineEdit::Normal, {}, &ok);
+    if (!ok) return;
+    const RequirementResult result = m_service.addChapter(
+        m_current, selected->data(0, Qt::UserRole).toInt(), title);
+    if (!result.success) QMessageBox::warning(this, "Document", result.message);
+    else { loadTree(m_current); emit dataChanged(); }
   });
   connect(addRequirement, &QPushButton::clicked, this, [this] {
     if (m_current < 0) return;
@@ -127,7 +156,7 @@ DocumentWidget::DocumentWidget(QWidget *parent) : QWidget(parent) {
     const QString choice = QInputDialog::getItem(this, "Ajouter une exigence", "Exigence", labels, 0, false, &ok);
     const int index = labels.indexOf(choice);
     if (ok && index >= 0) {
-      const RequirementResult result = m_service.placeRequirement(m_current, selectedParent(), ids[index]);
+      const RequirementResult result = m_service.placeRequirement(m_current, selectedContainer(), ids[index]);
       if (!result.success) QMessageBox::warning(this, "Document", result.message);
       else { loadTree(m_current); emit dataChanged(); }
     }
@@ -138,14 +167,38 @@ DocumentWidget::DocumentWidget(QWidget *parent) : QWidget(parent) {
     auto *editor=new QTextEdit;auto *buttons=new QDialogButtonBox(QDialogButtonBox::Ok|QDialogButtonBox::Cancel);
     auto *layout=new QVBoxLayout(&dialog);layout->addWidget(editor);layout->addWidget(buttons);
     connect(buttons,&QDialogButtonBox::accepted,&dialog,&QDialog::accept);connect(buttons,&QDialogButtonBox::rejected,&dialog,&QDialog::reject);
-    if(dialog.exec()==QDialog::Accepted){const auto result=m_service.addText(m_current,selectedParent(),editor->toHtml());if(!result.success)QMessageBox::warning(this,"Document",result.message);else{loadTree(m_current);emit dataChanged();}}
+    if(dialog.exec()==QDialog::Accepted){const auto result=m_service.addText(m_current,selectedContainer(),editor->toHtml());if(!result.success)QMessageBox::warning(this,"Document",result.message);else{loadTree(m_current);emit dataChanged();}}
   });
   connect(addImage, &QPushButton::clicked, this, [this] {
     if(m_current<0)return;
     const QString path=QFileDialog::getOpenFileName(this,"Ajouter une image",{},"Images (*.png *.jpg *.jpeg *.bmp)");if(path.isEmpty())return;
     QFile file(path);if(!file.open(QIODevice::ReadOnly)){QMessageBox::warning(this,"Document",file.errorString());return;}
     bool ok=false;const QString legend=QInputDialog::getText(this,"Image","Légende",QLineEdit::Normal,{},&ok);if(!ok)return;
-    const auto result=m_service.addImage(m_current,selectedParent(),file.readAll(),legend);if(!result.success)QMessageBox::warning(this,"Document",result.message);else{loadTree(m_current);emit dataChanged();}
+    const auto result=m_service.addImage(m_current,selectedContainer(),file.readAll(),legend);if(!result.success)QMessageBox::warning(this,"Document",result.message);else{loadTree(m_current);emit dataChanged();}
+  });
+  connect(promote, &QPushButton::clicked, this, [this] {
+    QTreeWidgetItem *item=m_tree->currentItem();
+    if(!item || !item->parent()) return;
+    QTreeWidgetItem *parent=item->parent();
+    QTreeWidgetItem *grandParent=parent->parent();
+    const int newParent=grandParent?grandParent->data(0,Qt::UserRole).toInt():-1;
+    const int parentPosition=grandParent?grandParent->indexOfChild(parent):m_tree->indexOfTopLevelItem(parent);
+    const RequirementResult result=m_service.moveNode(item->data(0,Qt::UserRole).toInt(),newParent,parentPosition+1);
+    if(!result.success)QMessageBox::warning(this,"Document",result.message);
+    loadTree(m_current); emit dataChanged();
+  });
+  connect(demote, &QPushButton::clicked, this, [this] {
+    QTreeWidgetItem *item=m_tree->currentItem(); if(!item)return;
+    QTreeWidgetItem *parent=item->parent();
+    const int index=parent?parent->indexOfChild(item):m_tree->indexOfTopLevelItem(item);
+    if(index<=0)return;
+    QTreeWidgetItem *previous=parent?parent->child(index-1):m_tree->topLevelItem(index-1);
+    if(previous->data(0,Qt::UserRole+2).toString()!="CHAPTER"){
+      QMessageBox::information(this,"Document","L'élément précédent doit être un chapitre.");return;
+    }
+    const RequirementResult result=m_service.moveNode(item->data(0,Qt::UserRole).toInt(),previous->data(0,Qt::UserRole).toInt(),previous->childCount());
+    if(!result.success)QMessageBox::warning(this,"Document",result.message);
+    loadTree(m_current); emit dataChanged();
   });
   connect(preview, &QPushButton::clicked, this, [this] {
     if(m_current<0)return;
@@ -178,19 +231,32 @@ DocumentWidget::DocumentWidget(QWidget *parent) : QWidget(parent) {
               m_service.renameChapter(item->data(0, Qt::UserRole).toInt(),
                                       item->text(0));
           });
-  connect(m_tree->model(), &QAbstractItemModel::rowsMoved, this, [this] {
-    std::function<void(QTreeWidgetItem *, int)> persist =
-        [this, &persist](QTreeWidgetItem *parent, int parentId) {
-          const int count = parent ? parent->childCount() : m_tree->topLevelItemCount();
-          for (int position = 0; position < count; ++position) {
-            QTreeWidgetItem *item = parent ? parent->child(position)
-                                           : m_tree->topLevelItem(position);
-            const int id = item->data(0, Qt::UserRole).toInt();
-            m_service.moveNode(id, parentId, position);
-            persist(item, id);
-          }
-        };
-    persist(nullptr, -1);
+  connect(m_tree->model(), &QAbstractItemModel::rowsMoved, this,
+          [this](const QModelIndex &sourceParent, int sourceStart,
+                 int sourceEnd, const QModelIndex &destinationParent,
+                 int destinationRow) {
+    const int count = sourceEnd - sourceStart + 1;
+    int firstDestinationRow = destinationRow;
+    if (sourceParent == destinationParent && destinationRow > sourceEnd)
+      firstDestinationRow -= count;
+
+    const int parentId = destinationParent.isValid()
+                             ? destinationParent.data(Qt::UserRole).toInt()
+                             : -1;
+    for (int offset = 0; offset < count; ++offset) {
+      const QModelIndex moved = m_tree->model()->index(
+          firstDestinationRow + offset, 0, destinationParent);
+      const int nodeId = moved.data(Qt::UserRole).toInt();
+      const RequirementResult result =
+          m_service.moveNode(nodeId, parentId, firstDestinationRow + offset);
+      if (!result.success) {
+        QMessageBox::warning(
+            this, "Document",
+            "Le déplacement n'a pas pu être enregistré :\n" + result.message);
+        loadTree(m_current);
+        return;
+      }
+    }
     emit dataChanged();
   });
 }
@@ -284,9 +350,15 @@ void DocumentWidget::loadTree(int id) {
   m_tree->expandAll();
 }
 
-int DocumentWidget::selectedParent() const {
+int DocumentWidget::selectedContainer() const {
   if (!m_tree->currentItem()) return -1;
   return m_tree->currentItem()->data(0, Qt::UserRole + 1).toInt() > 0
              ? (m_tree->currentItem()->parent() ? m_tree->currentItem()->parent()->data(0, Qt::UserRole).toInt() : -1)
              : m_tree->currentItem()->data(0, Qt::UserRole).toInt();
+}
+
+int DocumentWidget::selectedSiblingParent() const {
+  QTreeWidgetItem *item=m_tree->currentItem();
+  if(!item || !item->parent()) return -1;
+  return item->parent()->data(0,Qt::UserRole).toInt();
 }

@@ -110,12 +110,15 @@ void DatabaseMigratorTest::managesRelationsAndDocumentOccurrences() {
   QVERIFY(documents.updateImage(image.id, QByteArray("NEWPNG"), "Vue logique").success);
   QVERIFY(documents.moveNode(first.id, second.id, 0).success);
   QVERIFY(!documents.moveNode(second.id, first.id, 0).success);
+  QVERIFY(documents.moveNode(first.id, -1, 0).success);
+  const auto nested = documents.addChapter(1, first.id, "Sous-chapitre");
+  QVERIFY(nested.success);
 
   DocumentService reopened(manager.currentConnection());
   const auto persisted = reopened.nodes(1);
   bool foundText=false, foundImage=false;
   QMap<int, QList<int>> positions;
-  for(const auto &node:persisted){positions[node.parentId]<<node.position;foundText|=node.id==text.id&&node.textContent.contains("modifié");foundImage|=node.id==image.id&&node.imageLegend=="Vue logique";}
+  for(const auto &node:persisted){positions[node.parentId]<<node.position;foundText|=node.id==text.id&&node.textContent.contains("modifié");foundImage|=node.id==image.id&&node.imageLegend=="Vue logique";if(node.id==first.id)QCOMPARE(node.parentId,-1);if(node.id==nested.id)QCOMPARE(node.parentId,first.id);}
   QVERIFY(foundText); QVERIFY(foundImage);
   for(auto values:positions){std::sort(values.begin(),values.end());for(int i=0;i<values.size();++i)QCOMPARE(values[i],i);}
   QVERIFY(reopened.previewHtml(1).contains("Texte modifié"));
@@ -150,6 +153,23 @@ void DatabaseMigratorTest::managesRelationsAndDocumentOccurrences() {
   const QString coreProperties=QString::fromUtf8(templatedZip.fileData("docProps/core.xml"));QVERIFY(coreProperties.contains("<dc:title>Specification</dc:title>"));
   QVERIFY(query.exec(QString("INSERT INTO DOCUMENT(ID,PT_ID,TYPE,REFERENCE,TITLE) VALUES(2,%1,1,'SPEC-B','Autre')").arg(root)));
   QVERIFY(documents.placeRequirement(2,-1,1).success);
+  QVERIFY(query.exec(QString("INSERT INTO DOCUMENT(ID,PT_ID,TYPE,REFERENCE,TITLE) VALUES(3,%1,1,'SPEC-C','Ordre')").arg(root)));
+  const auto chapter1=documents.addChapter(3,-1,"Chapitre 1");
+  const auto chapter2=documents.addChapter(3,-1,"Chapitre 2");
+  const auto chapter3=documents.addChapter(3,-1,"Chapitre 3");
+  const auto subchapter=documents.addChapter(3,chapter3.id,"Sous-chapitre 3.1");
+  const auto trailingImage=documents.addImage(3,-1,QByteArray("IMAGE"),"Image finale");
+  QVERIFY(chapter1.success);QVERIFY(chapter2.success);QVERIFY(chapter3.success);
+  QVERIFY(subchapter.success);QVERIFY(trailingImage.success);
+  QVERIFY(documents.moveNode(trailingImage.id,subchapter.id,0).success);
+  QList<int> rootOrder;
+  int imageParent=-1;
+  for(const auto &node:DocumentService(manager.currentConnection()).nodes(3)){
+    if(node.parentId<0)rootOrder<<node.id;
+    if(node.id==trailingImage.id)imageParent=node.parentId;
+  }
+  QCOMPARE(rootOrder,QList<int>({chapter1.id,chapter2.id,chapter3.id}));
+  QCOMPARE(imageParent,subchapter.id);
   QVERIFY(query.exec("SELECT COUNT(*) FROM EVENT_LOG WHERE OBJECT_TYPE='DOCUMENT' AND EVENT_TYPE='COMPOSITION'"));
   QVERIFY(query.next()); QVERIFY(query.value(0).toInt() >= 7);
   query = QSqlQuery(); db = QSqlDatabase(); manager.close();

@@ -29,7 +29,8 @@ signals:
 private:
   void loadDocument(int id);
   void loadTree(int id);
-  int selectedParent() const;
+  int selectedContainer() const;
+  int selectedSiblingParent() const;
   QString m_connection;
   DocumentService m_service;
   int m_current = -1;
