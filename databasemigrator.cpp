@@ -212,6 +212,10 @@ bool DatabaseMigrator::migrate(QSqlDatabase db, QString *errorMessage) {
       {"REQ_TYPE", "CODE", "TEXT"},
       {"DOCUMENT", "REFERENCE", "TEXT"},
       {"DOCUMENT", "TEMPLATE_PATH", "TEXT"},
+      {"DOCUMENT_EXPORT", "TEMPLATE_PATH", "TEXT"},
+      {"DOCUMENT_EXPORT", "TEMPLATE_SHA256", "TEXT"},
+      {"DOCUMENT_EXPORT", "METADATA_JSON", "TEXT"},
+      {"DOCUMENT_EXPORT", "DRAFT_LABEL", "TEXT"},
       {"DOCUMENT", "METADATA_JSON", "TEXT"},
       {"INTERFACE", "CODE", "TEXT"},
       {"INTERFACE", "STATUS", "TEXT NOT NULL DEFAULT 'DRAFT'"},
@@ -325,6 +329,31 @@ bool DatabaseMigrator::migrate(QSqlDatabase db, QString *errorMessage) {
       db.rollback();
       return false;
     }
+  }
+
+  if (!execute(db,
+               "CREATE TRIGGER IF NOT EXISTS DOCUMENT_PUBLICATION_IMMUTABLE "
+               "BEFORE UPDATE ON DOCUMENT_EXPORT WHEN OLD.EXPORT_KIND='PUBLICATION' "
+               "AND (NEW.DOC_ID<>OLD.DOC_ID OR NEW.EXPORT_KIND<>OLD.EXPORT_KIND OR "
+               "IFNULL(NEW.VERSION,'')<>IFNULL(OLD.VERSION,'') OR "
+               "IFNULL(NEW.TITLE,'')<>IFNULL(OLD.TITLE,'') OR "
+               "IFNULL(NEW.AUTHOR,'')<>IFNULL(OLD.AUTHOR,'') OR "
+               "NEW.EXPORTED_AT<>OLD.EXPORTED_AT OR "
+               "IFNULL(NEW.FILE_PATH,'')<>IFNULL(OLD.FILE_PATH,'') OR "
+               "IFNULL(NEW.FILE_SHA256,'')<>IFNULL(OLD.FILE_SHA256,'') OR "
+               "IFNULL(NEW.SNAPSHOT_JSON,'')<>IFNULL(OLD.SNAPSHOT_JSON,'') OR "
+               "IFNULL(NEW.TEMPLATE_PATH,'')<>IFNULL(OLD.TEMPLATE_PATH,'') OR "
+               "IFNULL(NEW.TEMPLATE_SHA256,'')<>IFNULL(OLD.TEMPLATE_SHA256,'') OR "
+               "IFNULL(NEW.METADATA_JSON,'')<>IFNULL(OLD.METADATA_JSON,'')) "
+               "BEGIN SELECT RAISE(ABORT,'Une publication est immuable'); END",
+               errorMessage) ||
+      !execute(db,
+               "CREATE TRIGGER IF NOT EXISTS DOCUMENT_PUBLICATION_NODELETE "
+               "BEFORE DELETE ON DOCUMENT_EXPORT WHEN OLD.EXPORT_KIND='PUBLICATION' "
+               "BEGIN SELECT RAISE(ABORT,'Une publication est immuable'); END",
+               errorMessage)) {
+    db.rollback();
+    return false;
   }
 
   // Preserve the legacy single-parent relationship as an explicit decomposition

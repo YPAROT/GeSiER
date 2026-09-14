@@ -1,4 +1,5 @@
 #include "documentwidget.h"
+#include "docxexportservice.h"
 #include "producttreeservice.h"
 
 #include <QtWidgets>
@@ -14,6 +15,7 @@ DocumentWidget::DocumentWidget(QWidget *parent) : QWidget(parent) {
   m_tree->setDefaultDropAction(Qt::MoveAction);
   m_reference = new QLineEdit;
   m_title = new QLineEdit;
+  m_template = new QLineEdit;
   m_secondary = new QLineEdit;
   m_description = new QTextEdit;
   m_metadata = new QTableWidget(0, 2);
@@ -28,6 +30,11 @@ DocumentWidget::DocumentWidget(QWidget *parent) : QWidget(parent) {
   auto *addText = new QPushButton("Ajouter du texte");
   auto *addImage = new QPushButton("Ajouter une image");
   auto *preview = new QPushButton("Prévisualiser");
+  auto *chooseTemplate = new QPushButton("Parcourir…");
+  auto *validateTemplate = new QPushButton("Valider le template");
+  auto *draft = new QPushButton("Exporter un draft DOCX");
+  auto *publish = new QPushButton("Publier en DOCX");
+  auto *history = new QPushButton("Historique des exports");
   auto *addMetadata = new QPushButton("+ Métadonnée");
   auto *removeMetadata = new QPushButton("− Métadonnée");
   auto *remove = new QPushButton("Retirer");
@@ -42,6 +49,8 @@ DocumentWidget::DocumentWidget(QWidget *parent) : QWidget(parent) {
   properties->addRow("Type", m_type);
   properties->addRow("Product Tree", m_pt);
   properties->addRow("Description", m_description);
+  auto *templateRow=new QHBoxLayout;templateRow->addWidget(m_template);templateRow->addWidget(chooseTemplate);templateRow->addWidget(validateTemplate);
+  properties->addRow("Template DOCX",templateRow);
   auto *metadataActions = new QHBoxLayout;
   metadataActions->addWidget(addMetadata); metadataActions->addWidget(removeMetadata);
   auto *metadataBox = new QVBoxLayout; metadataBox->addWidget(m_metadata); metadataBox->addLayout(metadataActions);
@@ -54,6 +63,9 @@ DocumentWidget::DocumentWidget(QWidget *parent) : QWidget(parent) {
   treeActions->addWidget(remove);
   treeActions->addStretch();
   treeActions->addWidget(preview);
+  treeActions->addWidget(draft);
+  treeActions->addWidget(publish);
+  treeActions->addWidget(history);
   treeActions->addWidget(save);
   auto *right = new QWidget;
   auto *rightLayout = new QVBoxLayout(right);
@@ -73,7 +85,7 @@ DocumentWidget::DocumentWidget(QWidget *parent) : QWidget(parent) {
   connect(addDocument, &QPushButton::clicked, this, [this] {
     m_current = -1;
     m_reference->clear(); m_secondary->clear(); m_title->clear();
-    m_description->clear(); m_metadata->setRowCount(0); m_tree->clear();
+    m_description->clear(); m_template->clear(); m_metadata->setRowCount(0); m_tree->clear();
   });
   connect(addMetadata, &QPushButton::clicked, this, [this] { m_metadata->insertRow(m_metadata->rowCount()); });
   connect(removeMetadata, &QPushButton::clicked, this, [this] {
@@ -86,6 +98,7 @@ DocumentWidget::DocumentWidget(QWidget *parent) : QWidget(parent) {
     record.secondaryReferences = m_secondary->text().split(';', Qt::SkipEmptyParts);
     record.title = m_title->text();
     record.description = m_description->toPlainText();
+    record.templatePath = m_template->text().trimmed();
     record.typeId = m_type->currentData().toInt();
     record.ptId = m_pt->currentData().toInt();
     for (int row=0; row<m_metadata->rowCount(); ++row) {
@@ -138,6 +151,11 @@ DocumentWidget::DocumentWidget(QWidget *parent) : QWidget(parent) {
     if(m_current<0)return;
     QDialog dialog(this);dialog.setWindowTitle("Prévisualisation — "+m_title->text());dialog.resize(800,650);auto *browser=new QTextBrowser;browser->setHtml(m_service.previewHtml(m_current));auto *layout=new QVBoxLayout(&dialog);layout->addWidget(browser);dialog.exec();
   });
+  connect(chooseTemplate,&QPushButton::clicked,this,[this]{const QString p=QFileDialog::getOpenFileName(this,"Choisir un template DOCX",m_template->text(),"Documents Word (*.docx)");if(!p.isEmpty())m_template->setText(p);});
+  connect(validateTemplate,&QPushButton::clicked,this,[this]{DocxExportService s(m_connection);const auto v=s.validateTemplate(m_template->text());QString message=v.valid?"Template valide.":v.errors.join("\n");if(!v.warnings.isEmpty())message+="\n\nAvertissements :\n"+v.warnings.join("\n");if(v.valid)QMessageBox::information(this,"Template DOCX",message);else QMessageBox::warning(this,"Template DOCX",message);});
+  auto runExport=[this](bool publication){if(m_current<0)return;DocxExportService service(m_connection);const auto validation=service.validateTemplate(m_template->text());if(!validation.valid){QMessageBox::warning(this,"Export DOCX",validation.errors.join("\n"));return;}if(!validation.warnings.isEmpty()&&QMessageBox::warning(this,"Template DOCX",validation.warnings.join("\n")+"\n\nContinuer ?",QMessageBox::Yes|QMessageBox::No)!=QMessageBox::Yes)return;DocxExportRequest request;request.documentId=m_current;request.publication=publication;request.templatePath=m_template->text();request.author=qEnvironmentVariable("USERNAME");if(publication){bool ok=false;request.version=QInputDialog::getText(this,"Publication","Version",QLineEdit::Normal,{},&ok);if(!ok)return;request.title=QInputDialog::getText(this,"Publication","Titre publié",QLineEdit::Normal,m_title->text(),&ok);if(!ok)return;}else{bool ok=false;request.draftLabel=QInputDialog::getText(this,"Draft","Libellé provisoire",QLineEdit::Normal,m_title->text(),&ok);if(!ok)return;}request.outputPath=QFileDialog::getSaveFileName(this,publication?"Publier le document":"Exporter le draft",{},"Documents Word (*.docx)");if(request.outputPath.isEmpty())return;if(!request.outputPath.endsWith(".docx",Qt::CaseInsensitive))request.outputPath+=".docx";const auto result=service.exportDocument(request);if(!result.success)QMessageBox::critical(this,"Export DOCX",result.message);else QMessageBox::information(this,"Export DOCX",result.message);};
+  connect(draft,&QPushButton::clicked,this,[runExport]{runExport(false);});connect(publish,&QPushButton::clicked,this,[runExport]{runExport(true);});
+  connect(history,&QPushButton::clicked,this,[this]{if(m_current<0)return;DocxExportService service(m_connection);const auto rows=service.history(m_current);QDialog dialog(this);dialog.setWindowTitle("Historique des exports");dialog.resize(900,400);auto *table=new QTableWidget(rows.size(),7);table->setSelectionBehavior(QAbstractItemView::SelectRows);table->setHorizontalHeaderLabels({"Type","Version / libellé","Auteur","Date","SHA-256","GED","Fichier"});for(int i=0;i<rows.size();++i){const auto&r=rows[i];const QStringList values={r.kind,r.version.isEmpty()?r.title:r.version,r.author,r.exportedAt,r.sha256,r.gedReference,r.filePath};for(int c=0;c<values.size();++c)table->setItem(i,c,new QTableWidgetItem(values[c]));table->item(i,0)->setData(Qt::UserRole,r.id);table->item(i,0)->setData(Qt::UserRole+1,r.kind);}table->horizontalHeader()->setStretchLastSection(true);auto *ged=new QPushButton("Renseigner la GED");auto *verify=new QPushButton("Vérifier l'empreinte");auto *actions=new QHBoxLayout;actions->addWidget(ged);actions->addWidget(verify);actions->addStretch();auto *layout=new QVBoxLayout(&dialog);layout->addWidget(table);layout->addLayout(actions);connect(ged,&QPushButton::clicked,&dialog,[&]{const int row=table->currentRow();if(row<0||table->item(row,0)->data(Qt::UserRole+1).toString()!="PUBLICATION"){QMessageBox::warning(&dialog,"GED","Sélectionnez une publication.");return;}bool ok=false;const QString ref=QInputDialog::getText(&dialog,"GED","Identifiant GED",QLineEdit::Normal,{},&ok);if(!ok)return;const QString link=QInputDialog::getText(&dialog,"GED","Lien GED",QLineEdit::Normal,{},&ok);if(!ok)return;const auto result=service.setGedInformation(table->item(row,0)->data(Qt::UserRole).toInt(),ref,link);if(result.success)table->item(row,5)->setText(ref);else QMessageBox::warning(&dialog,"GED",result.message);});connect(verify,&QPushButton::clicked,&dialog,[&]{const int row=table->currentRow();if(row<0)return;QString error;const bool ok=service.verifyHash(table->item(row,0)->data(Qt::UserRole).toInt(),&error);if(ok)QMessageBox::information(&dialog,"Empreinte","Empreinte SHA-256 conforme.");else QMessageBox::warning(&dialog,"Empreinte",error);});dialog.exec();});
   connect(remove, &QPushButton::clicked, this, [this] {
     if (!m_tree->currentItem()) return;
     const int id = m_tree->currentItem()->data(0, Qt::UserRole).toInt();
@@ -218,6 +236,7 @@ void DocumentWidget::loadDocument(int id) {
   m_reference->setText(record.reference); m_title->setText(record.title);
   m_secondary->setText(record.secondaryReferences.join("; "));
   m_description->setPlainText(record.description);
+  m_template->setText(record.templatePath);
   m_metadata->setRowCount(0);
   for(auto it=record.metadata.cbegin();it!=record.metadata.cend();++it){const int row=m_metadata->rowCount();m_metadata->insertRow(row);m_metadata->setItem(row,0,new QTableWidgetItem(it.key()));m_metadata->setItem(row,1,new QTableWidgetItem(it.value()));}
   m_type->setCurrentIndex(m_type->findData(record.typeId));

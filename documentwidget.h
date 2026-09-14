@@ -37,6 +37,7 @@ private:
   QTreeWidget *m_tree;
   QLineEdit *m_reference;
   QLineEdit *m_title;
+  QLineEdit *m_template;
   QLineEdit *m_secondary;
   QTextEdit *m_description;
   QComboBox *m_type;

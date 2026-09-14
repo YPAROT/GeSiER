@@ -12,6 +12,7 @@ struct DocumentRecord {
   QString reference;
   QString title;
   QString description;
+  QString templatePath;
   QStringList secondaryReferences;
   QMap<QString, QString> metadata;
 };
@@ -26,6 +27,7 @@ struct DocumentNodeRecord {
   int requirementId = -1;
   QString requirementCode;
   QString requirementTitle;
+  QString requirementDescription;
   QString textContent;
   QByteArray imageData;
   QString imageLegend;

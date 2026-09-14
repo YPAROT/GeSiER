@@ -23,6 +23,7 @@ qt_add_executable(GeSiER WIN32
     requirementservice.cpp requirementservice.h
     requirementrelationservice.cpp requirementrelationservice.h
     documentservice.cpp documentservice.h
+    docxexportservice.cpp docxexportservice.h
     documentwidget.cpp documentwidget.h
     requirementwidget.cpp requirementwidget.h
     checkablecombobox.cpp checkablecombobox.h
@@ -71,12 +72,13 @@ if(BUILD_TESTING)
         requirementservice.cpp requirementservice.h
         requirementrelationservice.cpp requirementrelationservice.h
         documentservice.cpp documentservice.h
+        docxexportservice.cpp docxexportservice.h
         req_sqlmanager.cpp req_sqlmanager.h
         sqltreemodel.cpp sqltreemodel.h
         sqltreeitem.cpp sqltreeitem.h
         qressources.qrc
     )
-    target_link_libraries(database_migrator_test PRIVATE Qt6::Core Qt6::Widgets Qt6::Sql Qt6::Test)
+    target_link_libraries(database_migrator_test PRIVATE Qt6::Core Qt6::CorePrivate Qt6::Widgets Qt6::Sql Qt6::Test)
     target_include_directories(database_migrator_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     add_test(NAME database_migrator COMMAND database_migrator_test -txt)
 

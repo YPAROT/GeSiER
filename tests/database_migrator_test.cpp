@@ -3,6 +3,7 @@
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QTemporaryDir>
+#include <QXmlStreamReader>
 #include <QtTest>
 #include <algorithm>
 
@@ -12,7 +13,31 @@
 #include "requirementservice.h"
 #include "requirementrelationservice.h"
 #include "documentservice.h"
+#include "docxexportservice.h"
+#include <private/qzipreader_p.h>
+#include <private/qzipwriter_p.h>
 #include "sqltreemodel.h"
+
+namespace {
+QString writeDocxTemplate(const QString &path) {
+  const QByteArray document = R"(<?xml version="1.0" encoding="UTF-8"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body><w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText> TOC \o "1-6" \h </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>Sommaire existant</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p><w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText> DOCPROPERTY Title </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>Ancien titre</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p><w:p><w:r><w:t>Texte générique avant</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="Section3"/></w:pPr><w:r><w:t>3 Requirements</w:t></w:r></w:p><w:p><w:r><w:t>{{GESIER_CONTENT}}</w:t></w:r></w:p><w:p><w:r><w:t>Texte générique après</w:t></w:r></w:p><w:p><w:r><w:t>{{GESIER_REQUIREMENT_TEMPLATE_BEGIN}}</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblStyle w:val="ReqTable"/></w:tblPr><w:tr><w:tc><w:p><w:r><w:t>{{REQ_CODE}}</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>{{REQ_TITLE}}</w:t></w:r></w:p><w:p><w:r><w:t>{{REQ_DESCRIPTION}}</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Relations</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>{{REQ_RELATIONS}}</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>{{GESIER_REQUIREMENT_TEMPLATE_END}}</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="Custom4"/><w:keepNext/></w:pPr><w:r><w:rPr><w:b/><w:color w:val="123456"/></w:rPr><w:t>{{GESIER_CHAPTER_LEVEL_4}}</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="Custom5"/><w:ind w:left="720"/></w:pPr><w:r><w:rPr><w:i/></w:rPr><w:t>{{GESIER_CHAPTER_LEVEL_5}}</w:t></w:r></w:p><w:sectPr><w:headerReference w:type="default" r:id="rIdHeader"/></w:sectPr></w:body></w:document>)";
+  const QByteArray styles = R"(<?xml version="1.0" encoding="UTF-8"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="paragraph" w:styleId="Section3"><w:pPr><w:outlineLvl w:val="2"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="Custom4"><w:pPr><w:outlineLvl w:val="3"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="Custom5"><w:pPr><w:outlineLvl w:val="4"/></w:pPr></w:style></w:styles>)";
+  const QByteArray header = R"(<?xml version="1.0" encoding="UTF-8"?><w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:r><w:t>{{GESIER_</w:t></w:r><w:r><w:t>REFERENCE}}</w:t></w:r></w:p></w:hdr>)";
+  const QByteArray rels = R"(<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rIdHeader" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/></Relationships>)";
+  const QByteArray rootRels = R"(<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>)";
+  const QByteArray types = R"(<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/></Types>)";
+  QZipWriter writer(path);
+  writer.addFile("[Content_Types].xml", types);
+  writer.addFile("_rels/.rels", rootRels);
+  writer.addFile("word/document.xml", document);
+  writer.addFile("word/styles.xml", styles);
+  writer.addFile("word/header1.xml", header);
+  writer.addFile("docProps/core.xml", "<?xml version=\"1.0\" encoding=\"UTF-8\"?><cp:coreProperties xmlns:cp=\"http://schemas.openxmlformats.org/package/2006/metadata/core-properties\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\"><dc:title>{{GESIER_DOCUMENT_TITLE}}</dc:title></cp:coreProperties>");
+  writer.addFile("word/_rels/document.xml.rels", rels);
+  writer.close();
+  return path;
+}
+}
 
 class DatabaseMigratorTest : public QObject {
   Q_OBJECT
@@ -94,6 +119,35 @@ void DatabaseMigratorTest::managesRelationsAndDocumentOccurrences() {
   QVERIFY(foundText); QVERIFY(foundImage);
   for(auto values:positions){std::sort(values.begin(),values.end());for(int i=0;i<values.size();++i)QCOMPARE(values[i],i);}
   QVERIFY(reopened.previewHtml(1).contains("Texte modifié"));
+  const QString draftPath=directory.filePath("draft.docx");
+  DocxExportService exporter(manager.currentConnection());
+  DocxExportRequest draft;draft.documentId=1;draft.outputPath=draftPath;draft.draftLabel="Relecture interne";
+  const auto draftResult=exporter.exportDocument(draft);QVERIFY2(draftResult.success,qPrintable(draftResult.message));
+  QVERIFY(exporter.verifyHash(draftResult.id));
+  QZipReader draftZip(draftPath);QVERIFY(draftZip.exists());QVERIFY(QString::fromUtf8(draftZip.fileData("word/document.xml")).contains("Texte modifié"));QVERIFY(QString::fromUtf8(draftZip.fileData("word/headerGesier.xml")).contains("DRAFT"));
+  DocxExportRequest publication;publication.documentId=1;publication.outputPath=directory.filePath("publication.docx");publication.publication=true;publication.version="1.0";publication.title="Spécification publiée";publication.author="Test";
+  const auto published=exporter.exportDocument(publication);QVERIFY2(published.success,qPrintable(published.message));QVERIFY(exporter.verifyHash(published.id));
+  QVERIFY(query.exec(QString("SELECT LENGTH(SNAPSHOT_JSON),LENGTH(FILE_SHA256) FROM DOCUMENT_EXPORT WHERE ID=%1").arg(published.id)));QVERIFY(query.next());QVERIFY(query.value(0).toInt()>100);QCOMPARE(query.value(1).toInt(),64);
+  QVERIFY(!query.exec(QString("UPDATE DOCUMENT_EXPORT SET TITLE='Altéré' WHERE ID=%1").arg(published.id)));
+  QVERIFY(exporter.setGedInformation(published.id,"GED-001","https://ged.invalid/1").success);
+  QVERIFY(!exporter.setGedInformation(draftResult.id,"GED-DRAFT",{}).success);
+  QVERIFY(relations.add(1,3,3,"Interface critique").success);
+  const QString templatePath=writeDocxTemplate(directory.filePath("template.docx"));
+  const auto templateValidation=exporter.validateTemplate(templatePath);
+  QVERIFY2(templateValidation.valid,qPrintable(templateValidation.errors.join('\n')));
+  DocxExportRequest templated;templated.documentId=1;templated.templatePath=templatePath;templated.outputPath=directory.filePath("templated.docx");
+  const auto templatedResult=exporter.exportDocument(templated);QVERIFY2(templatedResult.success,qPrintable(templatedResult.message));
+  QZipReader templatedZip(templated.outputPath);const QString templatedDocument=QString::fromUtf8(templatedZip.fileData("word/document.xml"));const QString templatedHeader=QString::fromUtf8(templatedZip.fileData("word/header1.xml"));
+  QXmlStreamReader documentReader(templatedDocument);while(!documentReader.atEnd())documentReader.readNext();QVERIFY2(!documentReader.hasError(),qPrintable(documentReader.errorString()));
+  QXmlStreamReader headerReader(templatedHeader);while(!headerReader.atEnd())headerReader.readNext();QVERIFY2(!headerReader.hasError(),qPrintable(headerReader.errorString()));
+  QVERIFY(templatedDocument.contains("Texte générique avant"));QVERIFY(templatedDocument.contains("Texte générique après"));QVERIFY(templatedDocument.contains("3 Requirements"));
+  QVERIFY(templatedDocument.contains("Sommaire existant"));QVERIFY(templatedDocument.contains(" TOC "));
+  QVERIFY(templatedDocument.contains("Specification"));QVERIFY(!templatedDocument.contains("Ancien titre"));
+  QVERIFY(templatedDocument.contains("w:tblStyle w:val=\"ReqTable\""));QVERIFY(templatedDocument.contains("REQ-1"));QVERIFY(templatedDocument.contains("Dépend de REQ-3"));QVERIFY(templatedDocument.contains("Interface critique"));
+  QVERIFY(templatedDocument.contains("w:pStyle w:val=\"Custom4\""));QVERIFY(templatedDocument.contains("w:pStyle w:val=\"Custom5\""));QVERIFY(!templatedDocument.contains("GESIER_CHAPTER_LEVEL"));QVERIFY(!templatedDocument.contains("GESIER_REQUIREMENT_TEMPLATE"));
+  QVERIFY(templatedHeader.contains("SPEC-A"));QVERIFY(!templatedHeader.contains("GESIER_REFERENCE"));
+  const QString settings=QString::fromUtf8(templatedZip.fileData("word/settings.xml"));QVERIFY(settings.contains("w:updateFields w:val=\"true\""));
+  const QString coreProperties=QString::fromUtf8(templatedZip.fileData("docProps/core.xml"));QVERIFY(coreProperties.contains("<dc:title>Specification</dc:title>"));
   QVERIFY(query.exec(QString("INSERT INTO DOCUMENT(ID,PT_ID,TYPE,REFERENCE,TITLE) VALUES(2,%1,1,'SPEC-B','Autre')").arg(root)));
   QVERIFY(documents.placeRequirement(2,-1,1).success);
   QVERIFY(query.exec("SELECT COUNT(*) FROM EVENT_LOG WHERE OBJECT_TYPE='DOCUMENT' AND EVENT_TYPE='COMPOSITION'"));

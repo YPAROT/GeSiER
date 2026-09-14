@@ -94,16 +94,16 @@ QList<DocumentRecord> DocumentService::documents() const {
 }
 DocumentRecord DocumentService::document(int id) const {
   DocumentRecord r; QSqlQuery q(QSqlDatabase::database(m_connectionName));
-  q.prepare("SELECT ID,PT_ID,TYPE,COALESCE(REFERENCE,''),TITLE,COALESCE(DESCRIPTION,''),COALESCE(METADATA_JSON,'{}') FROM DOCUMENT WHERE ID=?");q.addBindValue(id);
+  q.prepare("SELECT ID,PT_ID,TYPE,COALESCE(REFERENCE,''),TITLE,COALESCE(DESCRIPTION,''),COALESCE(METADATA_JSON,'{}'),COALESCE(TEMPLATE_PATH,'') FROM DOCUMENT WHERE ID=?");q.addBindValue(id);
   if(!q.exec()||!q.next())return r;
   r.id=q.value(0).toInt();r.ptId=q.value(1).toInt();r.typeId=q.value(2).toInt();r.reference=q.value(3).toString();r.title=q.value(4).toString();r.description=q.value(5).toString();
-  const auto object=QJsonDocument::fromJson(q.value(6).toByteArray()).object();for(auto it=object.begin();it!=object.end();++it)r.metadata[it.key()]=it.value().toVariant().toString();
+  const auto object=QJsonDocument::fromJson(q.value(6).toByteArray()).object();for(auto it=object.begin();it!=object.end();++it)r.metadata[it.key()]=it.value().toVariant().toString();r.templatePath=q.value(7).toString();
   QSqlQuery refs(QSqlDatabase::database(m_connectionName));refs.prepare("SELECT REFERENCE FROM DOCUMENT_REFERENCE WHERE DOC_ID=? AND IS_PRIMARY=0 ORDER BY ID");refs.addBindValue(id);if(refs.exec())while(refs.next())r.secondaryReferences<<refs.value(0).toString();return r;
 }
 QList<DocumentNodeRecord> DocumentService::nodes(int doc) const {
   QList<DocumentNodeRecord> out;QSqlQuery q(QSqlDatabase::database(m_connectionName));
-  q.prepare("SELECT N.ID,N.DOC_ID,N.PARENT_ID,N.POSITION,N.NODE_TYPE,COALESCE(N.TITLE,''),N.REQ_ID,COALESCE(R.CODE,''),COALESCE(R.TITLE,''),COALESCE(N.TEXT_CONTENT,''),N.IMAGE_DATA,COALESCE(N.IMAGE_LEGEND,'') FROM DOCUMENT_NODE N LEFT JOIN REQUIREMENT R ON R.ID=N.REQ_ID WHERE N.DOC_ID=? ORDER BY N.PARENT_ID,N.POSITION,N.ID");q.addBindValue(doc);if(!q.exec())return out;
-  while(q.next()){DocumentNodeRecord n;n.id=q.value(0).toInt();n.documentId=q.value(1).toInt();n.parentId=q.value(2).isNull()?-1:q.value(2).toInt();n.position=q.value(3).toInt();n.type=q.value(4).toString();n.title=q.value(5).toString();n.requirementId=q.value(6).isNull()?-1:q.value(6).toInt();n.requirementCode=q.value(7).toString();n.requirementTitle=q.value(8).toString();n.textContent=q.value(9).toString();n.imageData=q.value(10).toByteArray();n.imageLegend=q.value(11).toString();out<<n;}return out;
+  q.prepare("SELECT N.ID,N.DOC_ID,N.PARENT_ID,N.POSITION,N.NODE_TYPE,COALESCE(N.TITLE,''),N.REQ_ID,COALESCE(R.CODE,''),COALESCE(R.TITLE,''),COALESCE(R.DESCRIPTION,''),COALESCE(N.TEXT_CONTENT,''),N.IMAGE_DATA,COALESCE(N.IMAGE_LEGEND,'') FROM DOCUMENT_NODE N LEFT JOIN REQUIREMENT R ON R.ID=N.REQ_ID WHERE N.DOC_ID=? ORDER BY N.PARENT_ID,N.POSITION,N.ID");q.addBindValue(doc);if(!q.exec())return out;
+  while(q.next()){DocumentNodeRecord n;n.id=q.value(0).toInt();n.documentId=q.value(1).toInt();n.parentId=q.value(2).isNull()?-1:q.value(2).toInt();n.position=q.value(3).toInt();n.type=q.value(4).toString();n.title=q.value(5).toString();n.requirementId=q.value(6).isNull()?-1:q.value(6).toInt();n.requirementCode=q.value(7).toString();n.requirementTitle=q.value(8).toString();n.requirementDescription=q.value(9).toString();n.textContent=q.value(10).toString();n.imageData=q.value(11).toByteArray();n.imageLegend=q.value(12).toString();out<<n;}return out;
 }
 RequirementResult DocumentService::saveDocument(const DocumentRecord&r){
   if(r.title.trimmed().isEmpty()||r.reference.trimmed().isEmpty())
@@ -111,8 +111,8 @@ RequirementResult DocumentService::saveDocument(const DocumentRecord&r){
   QSqlDatabase db=QSqlDatabase::database(m_connectionName);
   if(!db.transaction())return RequirementResult::failure(db.lastError().text());
   QJsonObject object;for(auto it=r.metadata.cbegin();it!=r.metadata.cend();++it)object[it.key()]=it.value();const QString json=QString::fromUtf8(QJsonDocument(object).toJson(QJsonDocument::Compact));int id=r.id;QSqlQuery q(db);
-  if(id<0){q.prepare("INSERT INTO DOCUMENT(PT_ID,TYPE,REFERENCE,TITLE,DESCRIPTION,METADATA_JSON) VALUES(?,?,?,?,?,?)");q.addBindValue(r.ptId);q.addBindValue(r.typeId);q.addBindValue(r.reference.trimmed());q.addBindValue(r.title.trimmed());q.addBindValue(r.description);q.addBindValue(json);if(q.exec())id=q.lastInsertId().toInt();}
-  else{q.prepare("UPDATE DOCUMENT SET PT_ID=?,TYPE=?,REFERENCE=?,TITLE=?,DESCRIPTION=?,METADATA_JSON=? WHERE ID=?");q.addBindValue(r.ptId);q.addBindValue(r.typeId);q.addBindValue(r.reference.trimmed());q.addBindValue(r.title.trimmed());q.addBindValue(r.description);q.addBindValue(json);q.addBindValue(id);q.exec();}
+  if(id<0){q.prepare("INSERT INTO DOCUMENT(PT_ID,TYPE,REFERENCE,TITLE,DESCRIPTION,METADATA_JSON,TEMPLATE_PATH) VALUES(?,?,?,?,?,?,?)");q.addBindValue(r.ptId);q.addBindValue(r.typeId);q.addBindValue(r.reference.trimmed());q.addBindValue(r.title.trimmed());q.addBindValue(r.description);q.addBindValue(json);q.addBindValue(r.templatePath);if(q.exec())id=q.lastInsertId().toInt();}
+  else{q.prepare("UPDATE DOCUMENT SET PT_ID=?,TYPE=?,REFERENCE=?,TITLE=?,DESCRIPTION=?,METADATA_JSON=?,TEMPLATE_PATH=? WHERE ID=?");q.addBindValue(r.ptId);q.addBindValue(r.typeId);q.addBindValue(r.reference.trimmed());q.addBindValue(r.title.trimmed());q.addBindValue(r.description);q.addBindValue(json);q.addBindValue(r.templatePath);q.addBindValue(id);q.exec();}
   if(q.lastError().isValid())return rollback(db,q.lastError().text());
   QSqlQuery clear(db);clear.prepare("DELETE FROM DOCUMENT_REFERENCE WHERE DOC_ID=?");clear.addBindValue(id);if(!clear.exec())return rollback(db,clear.lastError().text());QStringList refs=r.secondaryReferences;refs.prepend(r.reference.trimmed());
   for(int i=0;i<refs.size();++i){const QString ref=refs[i].trimmed();if(ref.isEmpty())continue;QSqlQuery add(db);add.prepare("INSERT INTO DOCUMENT_REFERENCE(DOC_ID,REFERENCE,IS_PRIMARY) VALUES(?,?,?)");add.addBindValue(id);add.addBindValue(ref);add.addBindValue(i==0);if(!add.exec())return rollback(db,add.lastError().text());}
