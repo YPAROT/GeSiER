@@ -1,5 +1,11 @@
 #include <QComboBox>
+#include <QCheckBox>
+#include <QGraphicsLineItem>
+#include <QGraphicsRectItem>
+#include <QGraphicsView>
 #include <QPushButton>
+#include <QSettings>
+#include <QSpinBox>
 #include <QSqlDatabase>
 #include <QSqlError>
 #include <QSqlQuery>
@@ -19,7 +25,136 @@ class RequirementWidgetTest : public QObject {
 private slots:
   void startsWithoutEditingAndConstrainsPrimaryAllocation();
   void checkableFiltersSupportMultipleValues();
+  void relationGraphLayersPlacementAndPreferences();
 };
+
+void RequirementWidgetTest::relationGraphLayersPlacementAndPreferences() {
+  QTemporaryDir directory;
+  QVERIFY(directory.isValid());
+  QSettings::setDefaultFormat(QSettings::IniFormat);
+  QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                     directory.path());
+  QSettings settings;
+  settings.remove("Requirements/graph/showDerivations");
+  settings.remove("Requirements/graph/showDependencies");
+  settings.sync();
+  REQ_SQLManager manager;
+  const QSqlError error = manager.newDB(directory.filePath("graph.db"));
+  QVERIFY2(error.type() == QSqlError::NoError, qPrintable(error.text()));
+  ProductTreeService tree(manager.currentConnection());
+  QVERIFY(tree.addNode(-1, "SYS").success);
+  QSqlQuery query(QSqlDatabase::database(manager.currentConnection()));
+  QVERIFY(query.exec("SELECT ID FROM PT WHERE SEGMENT='SYS'"));
+  QVERIFY(query.next());
+  const int ptId = query.value(0).toInt();
+  QVERIFY(query.exec(QString("INSERT INTO DOCUMENT(ID,PT_ID,TYPE,TITLE) "
+                             "VALUES(1,%1,1,'Graph')")
+                         .arg(ptId)));
+  QStringList values;
+  for (int requirementId = 1; requirementId <= 8; ++requirementId)
+    values << QString("(%1,%2,'REQ-%1',1,'Requirement %1',1,1,1)")
+                  .arg(requirementId)
+                  .arg(ptId);
+  QVERIFY(query.exec(
+      "INSERT INTO REQUIREMENT(ID,PT_ID,CODE,DOC_ID,TITLE,TYPE,STATUS,"
+      "VERIF_METHOD) VALUES" + values.join(',')));
+  QVERIFY(query.exec(
+      "INSERT INTO REQUIREMENT_RELATION(SOURCE_REQ_ID,TARGET_REQ_ID,TYPE_ID) "
+      "VALUES(2,1,1),(2,3,1),(3,4,1),(1,5,2),(5,6,2),(3,7,3),"
+      "(3,8,1),(6,8,3)"));
+
+  RequirementWidget widget;
+  widget.setConnectionName(manager.currentConnection());
+  auto *view = widget.findChild<QGraphicsView *>();
+  auto *depth = widget.findChild<QSpinBox *>("relationGraphDepth");
+  auto *derivations =
+      widget.findChild<QCheckBox *>("showRelationDerivations");
+  auto *dependencies =
+      widget.findChild<QCheckBox *>("showRelationDependencies");
+  QVERIFY(view); QVERIFY(depth); QVERIFY(derivations); QVERIFY(dependencies);
+  QVERIFY(derivations->isChecked());
+  QVERIFY(dependencies->isChecked());
+  depth->setValue(3);
+  widget.openRequirement(1);
+
+  auto node = [view](int requirementId) -> QGraphicsRectItem * {
+    for (QGraphicsItem *item : view->scene()->items()) {
+      if (item->data(1).toString() == "node" &&
+          item->data(0).toInt() == requirementId)
+        return qgraphicsitem_cast<QGraphicsRectItem *>(item);
+    }
+    return nullptr;
+  };
+  QVERIFY(node(1)); QVERIFY(node(2)); QVERIFY(node(3)); QVERIFY(node(4));
+  QVERIFY(node(5)); QVERIFY(node(6)); QVERIFY(node(7)); QVERIFY(node(8));
+  const QPointF focus = node(1)->sceneBoundingRect().center();
+  QVERIFY(node(2)->sceneBoundingRect().center().y() < focus.y());
+  QCOMPARE(node(3)->sceneBoundingRect().center().y(), focus.y());
+  QVERIFY(node(3)->sceneBoundingRect().center().x() != focus.x());
+  QVERIFY(node(4)->sceneBoundingRect().center().y() >
+          node(3)->sceneBoundingRect().center().y());
+  QVERIFY(node(5)->sceneBoundingRect().center().x() < focus.x());
+  QVERIFY(node(6)->sceneBoundingRect().center().x() <
+          node(5)->sceneBoundingRect().center().x());
+  QVERIFY(node(7)->sceneBoundingRect().center().x() >
+          node(3)->sceneBoundingRect().center().x());
+  QCOMPARE(node(7)->sceneBoundingRect().center().y(),
+           node(3)->sceneBoundingRect().center().y());
+
+  int edgesToSharedNode = 0;
+  int sharedNodeCount = 0;
+  for (QGraphicsItem *item : view->scene()->items())
+    if (item->data(1).toString() == "node" && item->data(0).toInt() == 8)
+      ++sharedNodeCount;
+  QCOMPARE(sharedNodeCount, 1);
+  for (QGraphicsItem *item : view->scene()->items()) {
+    if (item->data(1).toString() != "edge")
+      continue;
+    auto *line = qgraphicsitem_cast<QGraphicsLineItem *>(item);
+    QVERIFY(line);
+    QGraphicsRectItem *source = node(item->data(3).toInt());
+    QGraphicsRectItem *target = node(item->data(4).toInt());
+    QVERIFY(source); QVERIFY(target);
+    const QLineF edge = line->line();
+    auto onBoundary = [](const QPointF &point, const QRectF &box) {
+      const qreal epsilon = 0.01;
+      return (qAbs(point.x() - box.left()) < epsilon ||
+              qAbs(point.x() - box.right()) < epsilon ||
+              qAbs(point.y() - box.top()) < epsilon ||
+              qAbs(point.y() - box.bottom()) < epsilon) &&
+             box.adjusted(-epsilon, -epsilon, epsilon, epsilon).contains(point);
+    };
+    QVERIFY(onBoundary(edge.p1(), source->rect()));
+    QVERIFY(onBoundary(edge.p2(), target->rect()));
+    if (item->data(4).toInt() == 8)
+      ++edgesToSharedNode;
+    if (item->data(2).toString() == "DERIVES_FROM" &&
+        item->data(3).toInt() == 1)
+      QCOMPARE(item->data(4).toInt(), 5);
+    if (item->data(2).toString() == "DEPENDS_ON" &&
+        item->data(3).toInt() == 3)
+      QCOMPARE(item->data(4).toInt(), 7);
+  }
+  QCOMPARE(edgesToSharedNode, 2);
+
+  derivations->setChecked(false);
+  QVERIFY(!node(5)); QVERIFY(!node(6));
+  QVERIFY(node(2)); QVERIFY(node(3)); QVERIFY(node(4)); QVERIFY(node(8));
+  dependencies->setChecked(false);
+  QVERIFY(!node(7));
+  QVERIFY(node(2)); QVERIFY(node(3)); QVERIFY(node(4)); QVERIFY(node(8));
+  QCOMPARE(settings.value("Requirements/graph/showDerivations").toBool(),
+           false);
+  QCOMPARE(settings.value("Requirements/graph/showDependencies").toBool(),
+           false);
+
+  RequirementWidget restored;
+  QVERIFY(!restored.findChild<QCheckBox *>("showRelationDerivations")
+               ->isChecked());
+  QVERIFY(!restored.findChild<QCheckBox *>("showRelationDependencies")
+               ->isChecked());
+  manager.close();
+}
 
 void RequirementWidgetTest::checkableFiltersSupportMultipleValues() {
   CheckableComboBox combo("Types");

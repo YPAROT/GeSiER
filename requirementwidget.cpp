@@ -9,6 +9,7 @@
 #include <QSqlError>
 #include <QtWidgets>
 #include <algorithm>
+#include <limits>
 
 namespace {
 struct RelationChoice { int id = -1; QString comment; };
@@ -207,8 +208,22 @@ RequirementWidget::RequirementWidget(QWidget *p) : QWidget(p) {
   auto *graphControls = new QHBoxLayout;
   graphControls->addWidget(new QLabel("Profondeur"));
   m_graphDepth = new QSpinBox;
+  m_graphDepth->setObjectName("relationGraphDepth");
   m_graphDepth->setRange(1, 8); m_graphDepth->setValue(2);
-  graphControls->addWidget(m_graphDepth); graphControls->addStretch();
+  m_showDerivations = new QCheckBox("Afficher les dérivations");
+  m_showDerivations->setObjectName("showRelationDerivations");
+  m_showDependencies = new QCheckBox("Afficher les dépendances");
+  m_showDependencies->setObjectName("showRelationDependencies");
+  QSettings graphSettings;
+  m_showDerivations->setChecked(
+      graphSettings.value("Requirements/graph/showDerivations", true).toBool());
+  m_showDependencies->setChecked(
+      graphSettings.value("Requirements/graph/showDependencies", true).toBool());
+  graphControls->addWidget(m_graphDepth);
+  graphControls->addSpacing(12);
+  graphControls->addWidget(m_showDerivations);
+  graphControls->addWidget(m_showDependencies);
+  graphControls->addStretch();
   m_relationGraph = new QGraphicsView;
   m_relationGraph->setRenderHint(QPainter::Antialiasing);
   graphLayout->addLayout(graphControls); graphLayout->addWidget(m_relationGraph);
@@ -387,6 +402,18 @@ RequirementWidget::RequirementWidget(QWidget *p) : QWidget(p) {
     openRequirement(otherId);
   });
   connect(m_graphDepth, QOverload<int>::of(&QSpinBox::valueChanged), this, [this] { if (m_current >= 0) loadRelationGraph(m_current); });
+  connect(m_showDerivations, &QCheckBox::toggled, this, [this](bool checked) {
+    QSettings settings;
+    settings.setValue("Requirements/graph/showDerivations", checked);
+    settings.sync();
+    if (m_current >= 0) loadRelationGraph(m_current);
+  });
+  connect(m_showDependencies, &QCheckBox::toggled, this, [this](bool checked) {
+    QSettings settings;
+    settings.setValue("Requirements/graph/showDependencies", checked);
+    settings.sync();
+    if (m_current >= 0) loadRelationGraph(m_current);
+  });
   connect(m_configurations, &QListWidget::itemChanged, this, [this] { if (!m_loading) m_dirty = true; });
   connect(addToDocument, &QPushButton::clicked, this, [this] {
     if (m_current < 0) return;
@@ -1096,59 +1123,272 @@ void RequirementWidget::loadRelations(int id) {
 }
 
 void RequirementWidget::loadRelationGraph(int id) {
-  if (m_relationGraph->scene()) m_relationGraph->scene()->deleteLater();
+  if (m_relationGraph->scene())
+    m_relationGraph->scene()->deleteLater();
   auto *scene = new QGraphicsScene(m_relationGraph);
   m_relationGraph->setScene(scene);
-  if (id < 0) return;
-  struct Node { int id; QString code; int level; QString edgeType; int neighbour; };
-  QList<Node> nodes{{id, m_code->text(), 0, {}, -1}};
-  QSet<int> visited{id};
+  if (id < 0)
+    return;
+
+  enum GraphZone { DecompositionZone, DerivationZone, DependencyZone };
+  struct GraphNode {
+    int id = -1;
+    QString code;
+    int distance = 0;
+    GraphZone zone = DecompositionZone;
+    int predecessor = -1;
+    QString viaType;
+  };
+  struct GraphEdge {
+    int id = -1;
+    int source = -1;
+    int target = -1;
+    QString type;
+  };
+
+  QHash<int, GraphNode> nodes;
+  nodes.insert(id, GraphNode{id, m_code->text(), 0, DecompositionZone, -1, {}});
   QList<int> frontier{id};
+  QList<GraphEdge> edges;
+  QSet<int> edgeIds;
   QSqlDatabase db = QSqlDatabase::database(m_connection);
-  for (int depth = 1; depth <= m_graphDepth->value() && !frontier.isEmpty(); ++depth) {
+  for (int depth = 1;
+       depth <= m_graphDepth->value() && !frontier.isEmpty(); ++depth) {
     QList<int> next;
     for (int current : std::as_const(frontier)) {
       QSqlQuery query(db);
-      query.prepare("SELECT R.ID,R.CODE,T.CODE,CASE WHEN L.TARGET_REQ_ID=? THEN -1 ELSE 1 END FROM REQUIREMENT_RELATION L JOIN REQUIREMENT R ON R.ID=CASE WHEN L.TARGET_REQ_ID=? THEN L.SOURCE_REQ_ID ELSE L.TARGET_REQ_ID END JOIN REQUIREMENT_RELATION_TYPE T ON T.ID=L.TYPE_ID WHERE L.SOURCE_REQ_ID=? OR L.TARGET_REQ_ID=? ORDER BY R.CODE");
-      query.addBindValue(current); query.addBindValue(current);
-      query.addBindValue(current); query.addBindValue(current);
-      if (!query.exec()) continue;
+      query.prepare(
+          "SELECT L.ID,L.SOURCE_REQ_ID,L.TARGET_REQ_ID,T.CODE,"
+          "CASE WHEN L.SOURCE_REQ_ID=? THEN TR.ID ELSE SR.ID END,"
+          "CASE WHEN L.SOURCE_REQ_ID=? THEN TR.CODE ELSE SR.CODE END "
+          "FROM REQUIREMENT_RELATION L "
+          "JOIN REQUIREMENT_RELATION_TYPE T ON T.ID=L.TYPE_ID "
+          "JOIN REQUIREMENT SR ON SR.ID=L.SOURCE_REQ_ID "
+          "JOIN REQUIREMENT TR ON TR.ID=L.TARGET_REQ_ID "
+          "WHERE L.SOURCE_REQ_ID=? OR L.TARGET_REQ_ID=? "
+          "ORDER BY L.TYPE_ID,6,L.ID");
+      query.addBindValue(current);
+      query.addBindValue(current);
+      query.addBindValue(current);
+      query.addBindValue(current);
+      if (!query.exec())
+        continue;
       while (query.next()) {
-        const int other = query.value(0).toInt();
-        if (visited.contains(other)) continue;
-        visited.insert(other); next << other;
-        nodes << Node{other, query.value(1).toString(), depth * query.value(3).toInt(), query.value(2).toString(), current};
+        const QString type = query.value(3).toString();
+        if ((type == "DERIVES_FROM" && !m_showDerivations->isChecked()) ||
+            (type == "DEPENDS_ON" && !m_showDependencies->isChecked()))
+          continue;
+
+        const int relationId = query.value(0).toInt();
+        if (!edgeIds.contains(relationId)) {
+          edgeIds.insert(relationId);
+          edges << GraphEdge{relationId, query.value(1).toInt(),
+                             query.value(2).toInt(), type};
+        }
+
+        const int other = query.value(4).toInt();
+        if (nodes.contains(other))
+          continue;
+        const GraphNode currentNode = nodes.value(current);
+        GraphZone zone = currentNode.zone;
+        if (type == "DERIVES_FROM")
+          zone = DerivationZone;
+        else if (type == "DEPENDS_ON")
+          zone = DependencyZone;
+        nodes.insert(other, GraphNode{other, query.value(5).toString(), depth,
+                                      zone, current, type});
+        next << other;
       }
     }
     frontier = next;
   }
-  QMap<int, int> counts;
+
+  // A relation may have been seen from a displayed node while its other end
+  // fell outside the requested depth. Such an edge must not be drawn.
+  edges.erase(std::remove_if(edges.begin(), edges.end(), [&nodes](const auto &e) {
+                return !nodes.contains(e.source) || !nodes.contains(e.target);
+              }),
+              edges.end());
+
+  constexpr qreal nodeWidth = 190.0;
+  constexpr qreal nodeHeight = 64.0;
+  constexpr qreal horizontalStep = 245.0;
+  constexpr qreal verticalStep = 125.0;
+
+  // Establish vertical ranks from decomposition only. Walking through a
+  // parent and back down to one of its other children therefore places that
+  // sibling on the same row as the selected requirement.
+  QHash<int, int> hierarchyRanks{{id, 0}};
+  QList<int> hierarchyFrontier{id};
+  while (!hierarchyFrontier.isEmpty()) {
+    const int current = hierarchyFrontier.takeFirst();
+    for (const GraphEdge &edge : std::as_const(edges)) {
+      if (edge.type != "DECOMPOSE")
+        continue;
+      int other = -1;
+      int rank = 0;
+      if (edge.source == current) {
+        other = edge.target;
+        rank = hierarchyRanks.value(current) + 1;
+      } else if (edge.target == current) {
+        other = edge.source;
+        rank = hierarchyRanks.value(current) - 1;
+      }
+      if (other >= 0 && !hierarchyRanks.contains(other)) {
+        hierarchyRanks.insert(other, rank);
+        hierarchyFrontier << other;
+      }
+    }
+  }
+
+  QMap<int, QList<int>> hierarchyLayers;
+  for (auto it = hierarchyRanks.cbegin(); it != hierarchyRanks.cend(); ++it)
+    hierarchyLayers[it.value()] << it.key();
+  for (auto it = hierarchyLayers.begin(); it != hierarchyLayers.end(); ++it)
+    std::sort(it.value().begin(), it.value().end(), [&nodes](int a, int b) {
+      return nodes.value(a).code.localeAwareCompare(nodes.value(b).code) < 0;
+    });
+
   QHash<int, QPointF> positions;
-  for (const Node &node : std::as_const(nodes)) {
-    const int index = counts[node.level]++;
-    const qreal x = index * 180.0;
-    const qreal y = node.level * 110.0;
-    positions.insert(node.id, QPointF(x, y));
-    QColor color = node.edgeType == "DECOMPOSE" ? QColor("#d9ebff")
-                   : node.edgeType == "DERIVES_FROM" ? QColor("#e6f6df")
-                                                       : QColor("#fff0cf");
-    if (node.id == id) color = QColor("#ffe49a");
-    auto *rect = scene->addRect(x, y, 150, 55, QPen(Qt::darkGray), QBrush(color));
-    rect->setData(0, node.id); rect->setToolTip("Double-cliquer pour ouvrir");
+  for (auto it = hierarchyLayers.cbegin(); it != hierarchyLayers.cend(); ++it) {
+    QList<int> layer = it.value();
+    if (layer.contains(id)) {
+      positions.insert(id, QPointF(0, 0));
+      layer.removeAll(id);
+      for (int index = 0; index < layer.size(); ++index) {
+        const int column = index / 2 + 1;
+        const int direction = index % 2 == 0 ? -1 : 1;
+        positions.insert(layer[index],
+                         QPointF(direction * column * horizontalStep, 0));
+      }
+    } else {
+      for (int index = 0; index < layer.size(); ++index) {
+        const qreal x =
+            (index - (layer.size() - 1) / 2.0) * horizontalStep;
+        positions.insert(layer[index], QPointF(x, it.key() * verticalStep));
+      }
+    }
+  }
+
+  qreal hierarchyLeft = -nodeWidth / 2;
+  qreal hierarchyRight = nodeWidth / 2;
+  for (auto it = positions.cbegin(); it != positions.cend(); ++it) {
+    hierarchyLeft = qMin(hierarchyLeft, it.value().x() - nodeWidth / 2);
+    hierarchyRight = qMax(hierarchyRight, it.value().x() + nodeWidth / 2);
+  }
+
+  // Place non-hierarchical relations beside the node from which they were
+  // discovered. Their vertical coordinate follows that anchor; only
+  // decomposition changes vertical level.
+  for (int distance = 1; distance <= m_graphDepth->value(); ++distance) {
+    QMap<QPair<int, int>, QList<int>> lateralGroups;
+    for (const GraphNode &node : nodes) {
+      if (node.distance != distance || hierarchyRanks.contains(node.id) ||
+          !positions.contains(node.predecessor))
+        continue;
+      const int side = node.zone == DerivationZone ? -1 : 1;
+      lateralGroups[qMakePair(node.predecessor, side)] << node.id;
+    }
+    for (auto it = lateralGroups.begin(); it != lateralGroups.end(); ++it) {
+      QList<int> group = it.value();
+      std::sort(group.begin(), group.end(), [&nodes](int a, int b) {
+        return nodes.value(a).code.localeAwareCompare(nodes.value(b).code) < 0;
+      });
+      const QPointF anchor = positions.value(it.key().first);
+      for (int index = 0; index < group.size(); ++index) {
+        const GraphNode node = nodes.value(group[index]);
+        QPointF position;
+        if (node.viaType == "DECOMPOSE") {
+          const GraphEdge relation = *std::find_if(
+              edges.cbegin(), edges.cend(), [&node](const GraphEdge &edge) {
+                return edge.type == "DECOMPOSE" &&
+                       ((edge.source == node.predecessor &&
+                         edge.target == node.id) ||
+                        (edge.target == node.predecessor &&
+                         edge.source == node.id));
+              });
+          const int direction = relation.source == node.predecessor ? 1 : -1;
+          position = QPointF(anchor.x(), anchor.y() + direction * verticalStep);
+        } else {
+          const int side = node.zone == DerivationZone ? -1 : 1;
+          const qreal x = side < 0
+                              ? qMin(anchor.x() - horizontalStep,
+                                     hierarchyLeft - 80 - nodeWidth / 2)
+                              : qMax(anchor.x() + horizontalStep,
+                                     hierarchyRight + 80 + nodeWidth / 2);
+          const qreal y = anchor.y() +
+                          (index - (group.size() - 1) / 2.0) * 85.0;
+          position = QPointF(x, y);
+        }
+        positions.insert(node.id, position);
+      }
+    }
+  }
+
+  for (const GraphNode &node : nodes) {
+    const QPointF center = positions.value(node.id);
+    const QRectF box(center.x() - nodeWidth / 2, center.y() - nodeHeight / 2,
+                     nodeWidth, nodeHeight);
+    const QColor fill = node.id == id ? QColor("#ffe49a") : QColor("#f6f6f6");
+    auto *rect = scene->addRect(box, QPen(Qt::darkGray), QBrush(fill));
+    rect->setData(0, node.id);
+    rect->setData(1, "node");
+    rect->setData(2, static_cast<int>(node.zone));
+    rect->setData(3, node.distance);
+    rect->setToolTip("Cliquer pour ouvrir");
     rect->setFlag(QGraphicsItem::ItemIsSelectable);
     auto *textItem = scene->addText(node.code);
-    textItem->setPos(x + 8, y + 14); textItem->setData(0, node.id);
+    textItem->setTextWidth(nodeWidth - 12);
+    textItem->document()->setDefaultTextOption(
+        QTextOption(Qt::AlignCenter));
+    textItem->setPos(box.left() + 6, center.y() - textItem->boundingRect().height() / 2);
+    textItem->setAcceptedMouseButtons(Qt::NoButton);
   }
-  for (const Node &node : std::as_const(nodes)) {
-    if (node.neighbour < 0 || !positions.contains(node.neighbour)) continue;
-    const QPointF a = positions.value(node.neighbour) + QPointF(75, 27);
-    const QPointF b = positions.value(node.id) + QPointF(75, 27);
-    QPen pen(node.edgeType == "DECOMPOSE" ? QColor("#2878b5")
-             : node.edgeType == "DERIVES_FROM" ? QColor("#378a28")
-                                                 : QColor("#b87810"), 2);
-    if (node.edgeType == "DERIVES_FROM") pen.setStyle(Qt::DashLine);
-    if (node.edgeType == "DEPENDS_ON") pen.setStyle(Qt::DotLine);
-    auto *line = scene->addLine(QLineF(a, b), pen); line->setZValue(-1);
+
+  auto boxBoundary = [=](const QPointF &center, const QPointF &towards) {
+    const QPointF delta = towards - center;
+    if (qFuzzyIsNull(delta.x()) && qFuzzyIsNull(delta.y()))
+      return center;
+    const qreal xScale = qFuzzyIsNull(delta.x())
+                             ? std::numeric_limits<qreal>::max()
+                             : (nodeWidth / 2) / qAbs(delta.x());
+    const qreal yScale = qFuzzyIsNull(delta.y())
+                             ? std::numeric_limits<qreal>::max()
+                             : (nodeHeight / 2) / qAbs(delta.y());
+    return center + delta * qMin(xScale, yScale);
+  };
+  for (const GraphEdge &edge : std::as_const(edges)) {
+    const QPointF sourceCenter = positions.value(edge.source);
+    const QPointF targetCenter = positions.value(edge.target);
+    const QPointF sourcePoint = boxBoundary(sourceCenter, targetCenter);
+    const QPointF targetPoint = boxBoundary(targetCenter, sourceCenter);
+    QColor color = edge.type == "DECOMPOSE" ? QColor("#2878b5")
+                   : edge.type == "DERIVES_FROM" ? QColor("#378a28")
+                                                   : QColor("#b87810");
+    QPen pen(color, 2);
+    if (edge.type == "DERIVES_FROM")
+      pen.setStyle(Qt::DashLine);
+    else if (edge.type == "DEPENDS_ON")
+      pen.setStyle(Qt::DotLine);
+    auto *line = scene->addLine(QLineF(sourcePoint, targetPoint), pen);
+    line->setData(1, "edge");
+    line->setData(2, edge.type);
+    line->setData(3, edge.source);
+    line->setData(4, edge.target);
+    line->setZValue(-1);
+
+    QLineF direction(sourcePoint, targetPoint);
+    if (direction.length() > 0) {
+      const QPointF unit = (targetPoint - sourcePoint) / direction.length();
+      const QPointF perpendicular(-unit.y(), unit.x());
+      QPolygonF arrow;
+      arrow << targetPoint << targetPoint - unit * 12 + perpendicular * 5
+            << targetPoint - unit * 12 - perpendicular * 5;
+      auto *head = scene->addPolygon(arrow, QPen(color), QBrush(color));
+      head->setData(1, "arrow");
+      head->setData(2, edge.type);
+      head->setZValue(-0.5);
+    }
   }
   connect(scene, &QGraphicsScene::selectionChanged, this, [this, scene, id] {
     const auto selected = scene->selectedItems();
