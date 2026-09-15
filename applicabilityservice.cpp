@@ -1,61 +1,17 @@
 #include "applicabilityservice.h"
+#include "tabularservice.h"
 
-#include <QFileInfo>
 #include <QHash>
 #include <QSet>
 #include <QSqlDatabase>
 #include <QSqlError>
 #include <QSqlQuery>
-#include <QXmlStreamWriter>
-#include <private/qzipwriter_p.h>
 
 namespace {
-QString columnName(int column) {
-  QString result;
-  for (++column; column; column = (column - 1) / 26)
-    result.prepend(QChar('A' + (column - 1) % 26));
-  return result;
-}
-QByteArray sheetXml(const QList<QStringList> &rows) {
-  QByteArray data;
-  QXmlStreamWriter x(&data);
-  x.writeStartDocument();
-  x.writeStartElement("worksheet");
-  x.writeDefaultNamespace("http://schemas.openxmlformats.org/spreadsheetml/2006/main");
-  x.writeStartElement("sheetData");
-  for (int r = 0; r < rows.size(); ++r) {
-    x.writeStartElement("row"); x.writeAttribute("r", QString::number(r + 1));
-    for (int c = 0; c < rows[r].size(); ++c) {
-      x.writeStartElement("c"); x.writeAttribute("r", columnName(c) + QString::number(r + 1));
-      x.writeAttribute("t", "inlineStr"); x.writeStartElement("is"); x.writeTextElement("t", rows[r][c]);
-      x.writeEndElement(); x.writeEndElement();
-    }
-    x.writeEndElement();
-  }
-  x.writeEndElement(); x.writeEndElement(); x.writeEndDocument();
-  return data;
-}
 bool writeWorkbook(const QString &path, const QList<QPair<QString,QList<QStringList>>> &sheets,
                    QString *error) {
-  QZipWriter zip(path);
-  if (zip.status() != QZipWriter::NoError) { if (error) *error = "Impossible de créer le fichier XLSX."; return false; }
-  QByteArray types = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\"application/xml\"/><Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/>";
-  for (int i=0;i<sheets.size();++i) types += "<Override PartName=\"/xl/worksheets/sheet"+QByteArray::number(i+1)+".xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>";
-  types += "</Types>";
-  zip.addFile("[Content_Types].xml", types);
-  zip.addFile("_rels/.rels", "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"xl/workbook.xml\"/></Relationships>");
-  QByteArray workbook = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><sheets>";
-  QByteArray rels = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">";
-  for (int i=0;i<sheets.size();++i) {
-    QString safe=sheets[i].first.left(31); safe.replace('&',"&amp;").replace('<',"&lt;").replace('>',"&gt;").replace('"',"&quot;");
-    workbook += "<sheet name=\""+safe.toUtf8()+"\" sheetId=\""+QByteArray::number(i+1)+"\" r:id=\"rId"+QByteArray::number(i+1)+"\"/>";
-    rels += "<Relationship Id=\"rId"+QByteArray::number(i+1)+"\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet"+QByteArray::number(i+1)+".xml\"/>";
-    zip.addFile("xl/worksheets/sheet"+QByteArray::number(i+1)+".xml", sheetXml(sheets[i].second));
-  }
-  workbook += "</sheets></workbook>"; rels += "</Relationships>";
-  zip.addFile("xl/workbook.xml", workbook); zip.addFile("xl/_rels/workbook.xml.rels", rels); zip.close();
-  if (zip.status()!=QZipWriter::NoError || !QFileInfo(path).exists() || QFileInfo(path).size()==0) { if(error)*error="Échec de finalisation du XLSX."; return false; }
-  return true;
+  QList<TabularSheet> normalized; for (const auto &sheet : sheets) normalized << TabularSheet{sheet.first, sheet.second};
+  return TabularService::writeXlsx(path, normalized, error);
 }
 }
 

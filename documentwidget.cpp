@@ -1,6 +1,8 @@
 #include "documentwidget.h"
 #include "docxexportservice.h"
 #include "producttreeservice.h"
+#include "tabularservice.h"
+#include "tabularexportdialog.h"
 
 #include <QtWidgets>
 #include <QSqlDatabase>
@@ -42,6 +44,7 @@ DocumentWidget::DocumentWidget(QWidget *parent) : QWidget(parent) {
   auto *draft = new QPushButton("Exporter un draft DOCX");
   auto *publish = new QPushButton("Publier en DOCX");
   auto *history = new QPushButton("Historique des exports");
+  auto *exportTable = new QPushButton("Exporter CSV/XLSX");
   auto *addMetadata = new QPushButton("+ Métadonnée");
   auto *removeMetadata = new QPushButton("− Métadonnée");
   auto *remove = new QPushButton("Retirer");
@@ -76,6 +79,7 @@ DocumentWidget::DocumentWidget(QWidget *parent) : QWidget(parent) {
   treeActions->addWidget(draft);
   treeActions->addWidget(publish);
   treeActions->addWidget(history);
+  treeActions->addWidget(exportTable);
   treeActions->addWidget(save);
   auto *right = new QWidget;
   auto *rightLayout = new QVBoxLayout(right);
@@ -91,6 +95,38 @@ DocumentWidget::DocumentWidget(QWidget *parent) : QWidget(parent) {
   connect(m_documents, &QListWidget::currentRowChanged, this, [this](int row) {
     if (row >= 0)
       loadDocument(m_documents->item(row)->data(Qt::UserRole).toInt());
+  });
+  connect(exportTable, &QPushButton::clicked, this, [this] {
+    const QStringList available{"Référence", "Titre", "Description", "Références secondaires"};
+    TabularExportDialog options("documents-export", available, this);
+    if (options.exec() != QDialog::Accepted) return;
+    QString path = QFileDialog::getSaveFileName(this, "Exporter les documents",
+                                                "documents.xlsx",
+                                                "Classeur Excel (*.xlsx);;CSV (*.csv)");
+    if (path.isEmpty()) return;
+    const bool csv = path.endsWith(".csv", Qt::CaseInsensitive);
+    if (!csv && !path.endsWith(".xlsx", Qt::CaseInsensitive)) path += ".xlsx";
+    QList<QStringList> documents{options.outputHeaders()};
+    for (const auto &document : m_service.documents()) {
+      const QStringList complete{document.reference, document.title, document.description,
+                                 document.secondaryReferences.join(" ; ")};
+      QStringList selected;
+      for (int column : options.columns()) selected << complete.value(column);
+      documents << selected;
+    }
+    QList<QStringList> structure{{"Document", "Type", "Parent", "Position", "Contenu"}};
+    for (const auto &document : m_service.documents())
+      for (const auto &node : m_service.nodes(document.id))
+        structure << QStringList{document.reference, node.type,
+                                 QString::number(node.parentId), QString::number(node.position),
+                                 node.type == "REQUIREMENT" ? node.requirementCode + " — " + node.requirementTitle
+                                                            : node.type == "TEXT" ? node.textContent : node.title};
+    QString error;
+    const bool ok = csv ? TabularService::writeCsv(path, {options.sheetName(), documents}, ';', &error)
+                        : TabularService::writeXlsx(path, {{options.sheetName(), documents},
+                                                          {"Structure", structure}}, &error);
+    if (ok) QMessageBox::information(this, "Export tabulaire", "Export terminé.");
+    else QMessageBox::warning(this, "Export tabulaire", error);
   });
   connect(addDocument, &QPushButton::clicked, this, [this] {
     m_current = -1;

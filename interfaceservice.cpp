@@ -1,56 +1,24 @@
 #include "interfaceservice.h"
+#include "tabularservice.h"
 
-#include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSet>
 #include <QSqlDatabase>
 #include <QSqlError>
 #include <QSqlQuery>
-#include <QXmlStreamWriter>
-#include <private/qzipwriter_p.h>
 
 namespace {
 QSqlDatabase database(const QString &name) {
   return QSqlDatabase::contains(name) ? QSqlDatabase::database(name, false)
                                       : QSqlDatabase();
 }
-QByteArray sheetXml(const QList<QStringList> &rows) {
-  QByteArray data;
-  QXmlStreamWriter x(&data);
-  x.writeStartDocument();
-  x.writeStartElement("worksheet");
-  x.writeDefaultNamespace(
-      "http://schemas.openxmlformats.org/spreadsheetml/2006/main");
-  x.writeStartElement("sheetData");
-  for (int r = 0; r < rows.size(); ++r) {
-    x.writeStartElement("row");
-    x.writeAttribute("r", QString::number(r + 1));
-    for (int c = 0; c < rows[r].size(); ++c) {
-      QString col;
-      int n = c + 1;
-      while (n) {
-        col.prepend(QChar('A' + (n - 1) % 26));
-        n = (n - 1) / 26;
-      }
-      x.writeStartElement("c");
-      x.writeAttribute("r", col + QString::number(r + 1));
-      x.writeAttribute("t", "inlineStr");
-      x.writeStartElement("is");
-      x.writeTextElement("t", rows[r][c]);
-      x.writeEndElement();
-      x.writeEndElement();
-    }
-    x.writeEndElement();
-  }
-  x.writeEndElement();
-  x.writeEndElement();
-  x.writeEndDocument();
-  return data;
-}
 bool workbook(const QString &path,
               const QList<QPair<QString, QList<QStringList>>> &sheets,
               QString *error) {
+  QList<TabularSheet> normalized; for (const auto &sheet : sheets) normalized << TabularSheet{sheet.first, sheet.second};
+  return TabularService::writeXlsx(path, normalized, error);
+#if 0
   QZipWriter zip(path);
   if (zip.status() != QZipWriter::NoError) {
     if (error)
@@ -116,6 +84,7 @@ bool workbook(const QString &path,
     return false;
   }
   return true;
+#endif
 }
 QString json(const InterfaceRecord &r) {
   QJsonObject o{{"code", r.code},

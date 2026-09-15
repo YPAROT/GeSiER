@@ -40,6 +40,8 @@ qt_add_executable(GeSiER WIN32
     importvalidationdialog.cpp importvalidationdialog.h
     databasemigrator.cpp databasemigrator.h
     csvutility.cpp csvutility.h
+    tabularservice.cpp tabularservice.h
+    tabularexportdialog.cpp tabularexportdialog.h
     req_sqlmanager.cpp req_sqlmanager.h
     sqltableform.cpp sqltableform.h sqltableform.ui
     tableviewmanager.cpp tableviewmanager.h
@@ -83,6 +85,8 @@ if(BUILD_TESTING)
         interfaceservice.cpp interfaceservice.h
         changeservice.cpp changeservice.h
         xlsxreader.cpp xlsxreader.h
+        csvutility.cpp csvutility.h
+        tabularservice.cpp tabularservice.h
         requirementrelationservice.cpp requirementrelationservice.h
         documentservice.cpp documentservice.h
         docxexportservice.cpp docxexportservice.h
@@ -102,7 +106,10 @@ if(BUILD_TESTING)
         requirementimportdialog.cpp requirementimportdialog.h
         importvalidationdialog.cpp importvalidationdialog.h
         xlsxreader.cpp xlsxreader.h
+        csvutility.cpp csvutility.h
+        tabularservice.cpp tabularservice.h
         requirementservice.cpp requirementservice.h
+        tabularexportdialog.cpp tabularexportdialog.h
         requirementrelationservice.cpp requirementrelationservice.h
         documentservice.cpp documentservice.h
         producttreeservice.cpp producttreeservice.h
@@ -126,6 +133,8 @@ if(BUILD_TESTING)
     qt_add_executable(xlsxreader_test
         tests/xlsxreader_test.cpp
         xlsxreader.cpp xlsxreader.h
+        csvutility.cpp csvutility.h
+        tabularservice.cpp tabularservice.h
     )
     target_link_libraries(xlsxreader_test PRIVATE Qt6::Core Qt6::CorePrivate Qt6::Test)
     target_include_directories(xlsxreader_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

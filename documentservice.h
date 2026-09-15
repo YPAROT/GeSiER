@@ -41,14 +41,17 @@ public:
   QList<DocumentNodeRecord> nodes(int documentId) const;
   RequirementResult saveDocument(const DocumentRecord &record);
   RequirementResult addChapter(int documentId, int parentId,
-                               const QString &title);
+                               const QString &title,
+                               bool manageTransaction = true);
   RequirementResult addText(int documentId, int parentId,
                             const QString &html);
   RequirementResult addImage(int documentId, int parentId,
                              const QByteArray &data, const QString &legend);
   RequirementResult placeRequirement(int documentId, int parentId,
-                                     int requirementId);
-  RequirementResult moveNode(int nodeId, int parentId, int position);
+                                     int requirementId,
+                                     bool manageTransaction = true);
+  RequirementResult moveNode(int nodeId, int parentId, int position,
+                             bool manageTransaction = true);
   RequirementResult renameChapter(int nodeId, const QString &title);
   RequirementResult updateText(int nodeId, const QString &html);
   RequirementResult updateImage(int nodeId, const QByteArray &data,

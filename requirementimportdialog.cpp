@@ -45,14 +45,25 @@ QStringList splitValues(const QString &value) {
 RequirementImportDialog::RequirementImportDialog(const QString &connectionName,
                                                  QWidget *parent)
     : QDialog(parent), m_connection(connectionName) {
-  setWindowTitle("Importer des exigences depuis Excel");
+  setWindowTitle("Importer une spécification CSV/XLSX");
   resize(1050, 760);
-  auto *choose = new QPushButton("Choisir un fichier XLSX…");
+  auto *choose = new QPushButton("Choisir un fichier CSV/XLSX…");
   m_fileLabel = new QLabel("Aucun fichier sélectionné");
   m_sheet = new QComboBox;
+  m_separator = new QComboBox;
+  m_separator->addItem("Détection automatique", QString());
+  m_separator->addItem("Point-virgule ( ; )", ";");
+  m_separator->addItem("Virgule ( , )", ",");
+  m_separator->addItem("Tabulation", "\t");
+  m_encoding = new QComboBox;
+  m_encoding->addItem("Détection automatique", int(TabularEncoding::Auto));
+  m_encoding->addItem("UTF-8", int(TabularEncoding::Utf8));
+  m_encoding->addItem("Windows-1252", int(TabularEncoding::Windows1252));
   m_headerRow = new QSpinBox;
   m_headerRow->setMinimum(1);
   m_headerRow->setMaximum(10000);
+  m_ignoredRows = new QSpinBox;
+  m_ignoredRows->setRange(0, 1000000);
   m_external = new QCheckBox("Import d'exigences externes (préfixe EXTERNAL-)");
   m_rememberMapping = new QCheckBox("Mémoriser ces correspondances pour cet en-tête");
   m_duplicates = new QComboBox;
@@ -73,7 +84,10 @@ RequirementImportDialog::RequirementImportDialog(const QString &connectionName,
   auto *form = new QFormLayout;
   form->addRow(choose, m_fileLabel);
   form->addRow("Onglet", m_sheet);
+  form->addRow("Séparateur CSV", m_separator);
+  form->addRow("Encodage CSV", m_encoding);
   form->addRow("Ligne d'en-tête", m_headerRow);
+  form->addRow("Lignes ignorées après l'en-tête", m_ignoredRows);
   form->addRow(QString(), m_external);
   form->addRow(QString(), m_rememberMapping);
   form->addRow("Codes existants", m_duplicates);
@@ -84,9 +98,9 @@ RequirementImportDialog::RequirementImportDialog(const QString &connectionName,
   form->addRow("Description", m_documentDescription);
   m_preview = new QTableWidget;
   m_preview->setEditTriggers(QAbstractItemView::NoEditTriggers);
-  m_mapping = new QTableWidget(FieldCount, 2);
+  m_mapping = new QTableWidget(FieldCount, 3);
   m_mapping->setEditTriggers(QAbstractItemView::NoEditTriggers);
-  m_mapping->setHorizontalHeaderLabels({"Champ GeSiER", "Colonne Excel"});
+  m_mapping->setHorizontalHeaderLabels({"Champ GeSiER", "Colonne source", "Transformation"});
   m_mapping->horizontalHeader()->setStretchLastSection(true);
   for (int row = 0; row < FieldCount; ++row)
     m_mapping->setItem(row, 0, new QTableWidgetItem(fieldNames[row]));
@@ -106,6 +120,12 @@ RequirementImportDialog::RequirementImportDialog(const QString &connectionName,
           &RequirementImportDialog::refreshPreview);
   connect(m_headerRow, QOverload<int>::of(&QSpinBox::valueChanged), this,
           &RequirementImportDialog::refreshPreview);
+  connect(m_ignoredRows, QOverload<int>::of(&QSpinBox::valueChanged), this,
+          &RequirementImportDialog::refreshPreview);
+  connect(m_separator, &QComboBox::currentIndexChanged, this,
+          [this] { if (!m_filePath.isEmpty()) loadSource(); });
+  connect(m_encoding, &QComboBox::currentIndexChanged, this,
+          [this] { if (!m_filePath.isEmpty()) loadSource(); });
   connect(importButton, &QPushButton::clicked, this,
           &RequirementImportDialog::runImport);
   connect(buttons, &QDialogButtonBox::rejected, this,
@@ -122,22 +142,33 @@ RequirementImportDialog::RequirementImportDialog(const QString &connectionName,
 
 void RequirementImportDialog::chooseFile() {
   const QString fileName = QFileDialog::getOpenFileName(
-      this, "Classeur d'exigences", QString(), "Classeur Excel (*.xlsx)");
+      this, "Spécification tabulaire", QString(),
+      "Fichiers tabulaires (*.xlsx *.csv);;Classeur Excel (*.xlsx);;CSV (*.csv)");
   if (fileName.isEmpty())
     return;
+  m_filePath = fileName;
+  loadSource();
+}
+
+void RequirementImportDialog::loadSource() {
+  if (m_filePath.isEmpty()) return;
   QString error;
-  m_sheets = XlsxReader::read(fileName, &error);
+  TabularReadOptions options;
+  const QString separator = m_separator->currentData().toString();
+  if (!separator.isEmpty()) options.separator = separator.at(0);
+  options.encoding = TabularEncoding(m_encoding->currentData().toInt());
+  m_sheets = TabularService::read(m_filePath, options, &error).sheets;
   if (m_sheets.isEmpty()) {
-    QMessageBox::warning(this, "Import Excel", error);
+    QMessageBox::warning(this, "Import tabulaire", error);
     return;
   }
-  m_fileLabel->setText(fileName);
+  m_fileLabel->setText(m_filePath);
   m_sheet->clear();
-  for (const XlsxSheet &sheet : m_sheets)
+  for (const TabularSheet &sheet : m_sheets)
     m_sheet->addItem(sheet.name);
   if (m_sheets.first().rows.isEmpty())
     QMessageBox::information(
-        this, "Import Excel",
+        this, "Import tabulaire",
         "L'onglet sélectionné ne contient aucune cellule lisible. Vous pouvez "
         "essayer un autre onglet du classeur.");
   refreshPreview();
@@ -152,16 +183,17 @@ void RequirementImportDialog::refreshPreview() {
   if (header < 0 || header >= rows.size())
     return;
   int columns = rows[header].size();
-  for (int row = header + 1; row < qMin(rows.size(), header + 21); ++row)
+  const int firstData = header + 1 + m_ignoredRows->value();
+  for (int row = firstData; row < qMin(rows.size(), firstData + 20); ++row)
     columns = qMax(columns, rows[row].size());
   m_preview->setColumnCount(columns);
   m_preview->setHorizontalHeaderLabels(rows[header]);
-  m_preview->setRowCount(qMin(20, rows.size() - header - 1));
+  m_preview->setRowCount(qMax(0, qMin(20, rows.size() - firstData)));
   for (int row = 0; row < m_preview->rowCount(); ++row)
     for (int column = 0; column < columns; ++column)
       m_preview->setItem(row, column, new QTableWidgetItem(
-          column < rows[header + row + 1].size()
-              ? rows[header + row + 1][column]
+          column < rows[firstData + row].size()
+              ? rows[firstData + row][column]
               : QString()));
   rebuildMappings();
 }
@@ -181,15 +213,21 @@ void RequirementImportDialog::rebuildMappings() {
       {"NIVEAU", "VERIFICATION LEVEL"}, {"METHODE 1", "METHOD 1"},
       {"NIVEAU 1", "LEVEL 1"}, {"METHODE 2", "METHOD 2"},
       {"NIVEAU 2", "LEVEL 2"}, {"SECTION", "CHAPTER", "CHAPITRE"}};
-  const QString profile = "Requirements/importProfiles/" +
-                          normalized(headers.join("|"));
-  QSettings settings;
+  const QString profileScope = "requirements-import-" +
+                               normalized(headers.join("|"));
+  const TabularProfile savedProfile = TabularService::loadProfile(profileScope);
   for (int field = 0; field < FieldCount; ++field) {
     auto *combo = new QComboBox;
     combo->addItem("— Non importé —", -1);
     for (int column = 0; column < headers.size(); ++column)
       combo->addItem(headers[column], column);
-    const QString savedHeader = settings.value(profile + "/" + QString::number(field)).toString();
+    QString savedHeader;
+    TabularTransform savedTransform = TabularTransform::Trim;
+    for (const auto &mapping : savedProfile.mappings)
+      if (mapping.target == QString::number(field)) {
+        savedHeader = mapping.sourceHeader;
+        savedTransform = mapping.transform;
+      }
     int selectedColumn = savedHeader.isEmpty() ? -1 : headers.indexOf(savedHeader);
     if (selectedColumn < 0)
       for (int column = 0; column < headers.size(); ++column)
@@ -200,12 +238,29 @@ void RequirementImportDialog::rebuildMappings() {
     if (selectedColumn >= 0)
       combo->setCurrentIndex(selectedColumn + 1);
     m_mapping->setCellWidget(field, 1, combo);
+    auto *transformation = new QComboBox;
+    transformation->addItem("Nettoyer les espaces", int(TabularTransform::Trim));
+    transformation->addItem("Conserver", int(TabularTransform::None));
+    transformation->addItem("MAJUSCULES", int(TabularTransform::Uppercase));
+    transformation->addItem("minuscules", int(TabularTransform::Lowercase));
+    transformation->setCurrentIndex(qMax(0, transformation->findData(int(savedTransform))));
+    m_mapping->setCellWidget(field, 2, transformation);
   }
 }
 
 int RequirementImportDialog::mappedColumn(int field) const {
   auto *combo = qobject_cast<QComboBox *>(m_mapping->cellWidget(field, 1));
   return combo ? combo->currentData().toInt() : -1;
+}
+
+QString RequirementImportDialog::mappedValue(const QStringList &row,
+                                              int field) const {
+  const int column = mappedColumn(field);
+  QString value = column >= 0 && column < row.size() ? row[column] : QString();
+  auto *combo = qobject_cast<QComboBox *>(m_mapping->cellWidget(field, 2));
+  const auto transformation = combo ? TabularTransform(combo->currentData().toInt())
+                                    : TabularTransform::Trim;
+  return TabularService::transform(value, transformation);
 }
 
 int RequirementImportDialog::resolveLevel(const QString &value, int occurrences,
@@ -277,7 +332,7 @@ void RequirementImportDialog::runImport() {
   }
   const int rootId = rootQuery.value(0).toInt();
   const auto &rows = m_sheets[m_sheet->currentIndex()].rows;
-  const int firstDataRow = m_headerRow->value();
+  const int firstDataRow = m_headerRow->value() + m_ignoredRows->value();
   QMap<QString, int> levelDecisions;
   QMap<QString, int> levelOccurrences;
   struct PreparedRequirement {
@@ -288,19 +343,16 @@ void RequirementImportDialog::runImport() {
   };
   QList<PreparedRequirement> records;
   QStringList errors;
-  auto value = [](const QStringList &row, int column) {
-    return column >= 0 && column < row.size() ? row[column].trimmed() : QString();
-  };
   for (int index = firstDataRow; index < rows.size(); ++index) {
     const QStringList &row = rows[index];
-    const int listedMethods = splitValues(value(row, mappedColumn(Methods))).size();
-    const QString common = normalized(value(row, mappedColumn(VerificationLevel)));
+    const int listedMethods = splitValues(mappedValue(row, Methods)).size();
+    const QString common = normalized(mappedValue(row, VerificationLevel));
     if (!common.isEmpty())
       levelOccurrences[common] += listedMethods;
     for (const auto &pair :
          {qMakePair(Method1, Level1), qMakePair(Method2, Level2)}) {
-      if (!value(row, mappedColumn(pair.first)).isEmpty()) {
-        const QString level = normalized(value(row, mappedColumn(pair.second)));
+      if (!mappedValue(row, pair.first).isEmpty()) {
+        const QString level = normalized(mappedValue(row, pair.second));
         if (!level.isEmpty())
           ++levelOccurrences[level];
       }
@@ -343,20 +395,20 @@ void RequirementImportDialog::runImport() {
   };
   for (int index = firstDataRow; index < rows.size(); ++index) {
     const QStringList &row = rows[index];
-    const QString type = value(row, mappedColumn(Type));
+    const QString type = mappedValue(row, Type);
     if (!type.isEmpty() && lookup("REQ_TYPE", "CODE", type) < 0 &&
         lookup("REQ_TYPE", "TYPE", type) < 0)
       addConflict("TYPE", "Type inconnu", type, index + 1, typeChoices);
-    const QString applicability = value(row, mappedColumn(Applicability));
+    const QString applicability = mappedValue(row, Applicability);
     for (const QString &configuration : splitValues(applicability))
       if (lookup("CONFIGURATION", "CODE", configuration) < 0 &&
           lookup("CONFIGURATION", "LABEL", configuration) < 0)
         addConflict("CONFIGURATION", "Configuration inconnue", configuration,
                     index + 1, configurationChoices);
     QStringList importedMethods =
-        splitValues(value(row, mappedColumn(Methods)));
+        splitValues(mappedValue(row, Methods));
     for (Field field : {Method1, Method2}) {
-      const QString method = value(row, mappedColumn(field));
+      const QString method = mappedValue(row, field);
       if (!method.isEmpty())
         importedMethods << method;
     }
@@ -379,7 +431,7 @@ void RequirementImportDialog::runImport() {
   QList<ImportDuplicate> duplicateRows;
   for (int index = firstDataRow; index < rows.size(); ++index) {
     const QStringList &row = rows[index];
-    QString code = value(row, mappedColumn(Code));
+    QString code = mappedValue(row, Code);
     if (m_external->isChecked() && !code.startsWith("EXTERNAL-", Qt::CaseInsensitive))
       code.prepend("EXTERNAL-");
     QSqlQuery existing(db);
@@ -387,9 +439,9 @@ void RequirementImportDialog::runImport() {
     existing.addBindValue(code);
     if (existing.exec() && existing.next())
       duplicateRows << ImportDuplicate{code, existing.value(0).toString(),
-                                       value(row, mappedColumn(Title)),
+                                       mappedValue(row, Title),
                                        existing.value(1).toString(),
-                                       value(row, mappedColumn(Description))};
+                                       mappedValue(row, Description)};
   }
   QMap<QString, QString> duplicateDecisions;
   if (!duplicateRows.isEmpty()) {
@@ -401,26 +453,29 @@ void RequirementImportDialog::runImport() {
   }
   for (int index = firstDataRow; index < rows.size(); ++index) {
     const QStringList &row = rows[index];
-    QString code = value(row, mappedColumn(Code));
-    const QString title = value(row, mappedColumn(Title));
-    const QString description = value(row, mappedColumn(Description));
+    QString code = mappedValue(row, Code);
+    const bool codeWasEmpty = code.isEmpty();
+    const QString title = mappedValue(row, Title);
+    const QString description = mappedValue(row, Description);
     if (code.isEmpty() && title.isEmpty() && description.isEmpty())
       continue;
-    if (code.isEmpty() || title.isEmpty() || description.isEmpty()) {
-      errors << QString("Ligne %1 : code, titre ou descriptif absent.").arg(index + 1);
-      continue;
-    }
     if (m_external->isChecked() && !code.startsWith("EXTERNAL-", Qt::CaseInsensitive))
       code.prepend("EXTERNAL-");
+    QSqlQuery existing(db);
+    existing.prepare("SELECT ID FROM REQUIREMENT WHERE CODE=?");
+    existing.addBindValue(code);
+    const bool exists = existing.exec() && existing.next();
+    if (codeWasEmpty || (!exists && (title.isEmpty() || description.isEmpty()))) {
+      errors << QString("Ligne %1 : code absent ou titre/descriptif absent pour une création.")
+                    .arg(index + 1);
+      continue;
+    }
     RequirementService service(m_connection);
     RequirementRecord record;
     bool rowRejected = false;
     bool saveRecord = true;
     QStringList configurationsToCreate;
-    QSqlQuery existing(db);
-    existing.prepare("SELECT ID FROM REQUIREMENT WHERE CODE=?");
-    existing.addBindValue(code);
-    if (existing.exec() && existing.next()) {
+    if (exists) {
       const QString policy = duplicateDecisions.value(
           code, m_duplicates->currentData().toString());
       if (policy == "reject") {
@@ -441,9 +496,9 @@ void RequirementImportDialog::runImport() {
       record.title = title.isEmpty() ? record.title : title;
       record.description = description.isEmpty() ? record.description : description;
     }
-    const QString source = value(row, mappedColumn(Source));
+    const QString source = mappedValue(row, Source);
     if (saveRecord && !source.isEmpty()) record.source = source;
-    const QString type = value(row, mappedColumn(Type));
+    const QString type = mappedValue(row, Type);
     if (saveRecord && !type.isEmpty()) {
       int typeId = lookup("REQ_TYPE", "CODE", type);
       if (typeId < 0) typeId = lookup("REQ_TYPE", "TYPE", type);
@@ -457,7 +512,7 @@ void RequirementImportDialog::runImport() {
       else if (typeId >= 0)
         record.typeId = typeId;
     }
-    const QString applicability = value(row, mappedColumn(Applicability));
+    const QString applicability = mappedValue(row, Applicability);
     if (saveRecord && !applicability.isEmpty()) {
       QList<int> importedConfigurations;
       for (const QString &configuration : splitValues(applicability)) {
@@ -481,14 +536,14 @@ void RequirementImportDialog::runImport() {
       if (!importedConfigurations.isEmpty())
         record.configurationIds = importedConfigurations;
     }
-    QStringList methods = saveRecord ? splitValues(value(row, mappedColumn(Methods))) : QStringList();
+    QStringList methods = saveRecord ? splitValues(mappedValue(row, Methods)) : QStringList();
     QStringList levels;
-    const QString commonLevel = value(row, mappedColumn(VerificationLevel));
+    const QString commonLevel = mappedValue(row, VerificationLevel);
     for (int i = 0; i < methods.size(); ++i) levels << commonLevel;
     for (const auto &pair :
          {qMakePair(Method1, Level1), qMakePair(Method2, Level2)}) {
-      const QString method = value(row, mappedColumn(pair.first));
-      if (!method.isEmpty()) { methods << method; levels << value(row, mappedColumn(pair.second)); }
+      const QString method = mappedValue(row, pair.first);
+      if (!method.isEmpty()) { methods << method; levels << mappedValue(row, pair.second); }
     }
     QList<RequirementVerification> importedVerifications;
     for (int i = 0; i < methods.size(); ++i) {
@@ -522,7 +577,7 @@ void RequirementImportDialog::runImport() {
     if (!importedVerifications.isEmpty())
       record.verifications = importedVerifications;
     if (!rowRejected && !record.code.isEmpty())
-      records << PreparedRequirement{record, value(row, mappedColumn(Section)),
+      records << PreparedRequirement{record, mappedValue(row, Section),
                                      configurationsToCreate, saveRecord};
   }
   if (!errors.isEmpty()) {
@@ -539,14 +594,28 @@ void RequirementImportDialog::runImport() {
   }
   if (m_rememberMapping->isChecked()) {
     const QStringList headers = rows.value(m_headerRow->value() - 1);
-    const QString profile = "Requirements/importProfiles/" + normalized(headers.join("|"));
-    QSettings settings;
+    TabularProfile profile;
+    profile.name = "default";
+    profile.sheetName = m_sheet->currentText();
+    profile.headerRow = m_headerRow->value() - 1;
+    profile.ignoredRows = m_ignoredRows->value();
+    profile.format = m_filePath.endsWith(".csv", Qt::CaseInsensitive)
+                         ? TabularFormat::Csv : TabularFormat::Xlsx;
+    const QString separator = m_separator->currentData().toString();
+    if (!separator.isEmpty()) profile.separator = separator.at(0);
+    profile.encoding = TabularEncoding(m_encoding->currentData().toInt());
     for (int field = 0; field < FieldCount; ++field) {
       const int column = mappedColumn(field);
-      settings.setValue(profile + "/" + QString::number(field),
-                        column >= 0 && column < headers.size() ? headers[column]
-                                                              : QString());
+      auto *transformCombo = qobject_cast<QComboBox *>(m_mapping->cellWidget(field, 2));
+      profile.mappings << TabularColumnMapping{
+          QString::number(field),
+          column >= 0 && column < headers.size() ? headers[column] : QString(),
+          {}, column,
+          transformCombo ? TabularTransform(transformCombo->currentData().toInt())
+                         : TabularTransform::Trim};
     }
+    TabularService::saveProfile("requirements-import-" + normalized(headers.join("|")),
+                                profile);
   }
   if (!db.transaction()) {
     QMessageBox::warning(this, "Import Excel", db.lastError().text());
@@ -561,6 +630,11 @@ void RequirementImportDialog::runImport() {
     document.addBindValue(documentId);
     if (document.exec() && document.next())
       documentReference = document.value(0).toString();
+    else {
+      db.rollback();
+      QMessageBox::warning(this, "Import tabulaire", "La spécification cible n'existe plus.");
+      return;
+    }
   } else {
     documentReference = m_documentReference->text().trimmed();
     if (documentReference.isEmpty() || m_documentTitle->text().trimmed().isEmpty()) {
@@ -592,6 +666,7 @@ void RequirementImportDialog::runImport() {
     if (node.type == "CHAPTER")
       chapterTitles[normalized(node.title)] = node.id;
   QMap<QString, int> createdConfigurations;
+  int createdCount = 0, updatedCount = 0, attachedCount = 0;
   for (PreparedRequirement prepared : records) {
     for (const QString &configuration : prepared.configurationsToCreate) {
       const QString key = normalized(configuration);
@@ -613,6 +688,7 @@ void RequirementImportDialog::runImport() {
       prepared.record.source = documentReference;
     int requirementId = prepared.record.id;
     if (prepared.save) {
+      const bool creation = prepared.record.id < 0;
       const RequirementResult result = service.save(prepared.record, false);
       if (!result.success) {
         db.rollback();
@@ -621,6 +697,9 @@ void RequirementImportDialog::runImport() {
         return;
       }
       requirementId = result.id;
+      if (creation) ++createdCount; else ++updatedCount;
+    } else {
+      ++attachedCount;
     }
     int parentId = -1;
     QString section = prepared.section.trimmed();
@@ -636,7 +715,7 @@ void RequirementImportDialog::runImport() {
       if (!chapterIds.contains(key) && chapterTitles.contains(normalized(title)))
         chapterIds[key] = chapterTitles[normalized(title)];
       if (!chapterIds.contains(key)) {
-        const RequirementResult chapter = documents.addChapter(documentId, parentId, title);
+        const RequirementResult chapter = documents.addChapter(documentId, parentId, title, false);
         if (!chapter.success) { db.rollback(); QMessageBox::warning(this,"Import Excel",chapter.message); return; }
         chapterIds[key] = chapter.id;
       }
@@ -647,13 +726,13 @@ void RequirementImportDialog::runImport() {
       title = title.trimmed();
       cumulative += "/" + normalized(title);
       if (!chapterIds.contains(cumulative)) {
-        const RequirementResult chapter = documents.addChapter(documentId, parentId, title);
+        const RequirementResult chapter = documents.addChapter(documentId, parentId, title, false);
         if (!chapter.success) { db.rollback(); QMessageBox::warning(this,"Import Excel",chapter.message); return; }
         chapterIds[cumulative] = chapter.id;
       }
       parentId = chapterIds[cumulative];
     }
-    const RequirementResult placement = documents.placeRequirement(documentId, parentId, requirementId);
+    const RequirementResult placement = documents.placeRequirement(documentId, parentId, requirementId, false);
     if (!placement.success) {
       db.rollback();
       QMessageBox::warning(this, "Import Excel", placement.message +
@@ -666,8 +745,10 @@ void RequirementImportDialog::runImport() {
     QMessageBox::warning(this, "Import Excel", db.lastError().text());
     return;
   }
-  QMessageBox::information(this, "Import Excel",
-                           QString("%1 exigence(s) importée(s).").arg(records.size()));
+  QMessageBox::information(
+      this, "Import tabulaire",
+      QString("Import terminé : %1 créée(s), %2 mise(s) à jour, %3 conservée(s) et rattachée(s).")
+          .arg(createdCount).arg(updatedCount).arg(attachedCount));
   emit imported();
   accept();
 }

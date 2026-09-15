@@ -30,6 +30,8 @@ SOURCES += \
     changewidget.cpp \
     coveragedashboard.cpp \
     csvutility.cpp \
+    tabularservice.cpp \
+    tabularexportdialog.cpp \
     databasemigrator.cpp \
     verificationservice.cpp \
     verificationwidget.cpp \
@@ -62,6 +64,8 @@ HEADERS += \
     changewidget.h \
     coveragedashboard.h \
     csvutility.h \
+    tabularservice.h \
+    tabularexportdialog.h \
     databasemigrator.h \
     verificationservice.h \
     verificationwidget.h \

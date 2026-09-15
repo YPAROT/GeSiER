@@ -1,7 +1,7 @@
 #ifndef REQUIREMENTIMPORTDIALOG_H
 #define REQUIREMENTIMPORTDIALOG_H
 
-#include "xlsxreader.h"
+#include "tabularservice.h"
 #include <QDialog>
 
 class QCheckBox;
@@ -27,14 +27,20 @@ private slots:
 
 private:
   void rebuildMappings();
+  void loadSource();
   int mappedColumn(int field) const;
+  QString mappedValue(const QStringList &row, int field) const;
   int resolveLevel(const QString &value, int occurrences,
                    QMap<QString, int> &decisions, bool *rejected);
   QString m_connection;
-  QList<XlsxSheet> m_sheets;
+  QString m_filePath;
+  QList<TabularSheet> m_sheets;
   QLabel *m_fileLabel;
   QComboBox *m_sheet;
+  QComboBox *m_separator;
+  QComboBox *m_encoding;
   QSpinBox *m_headerRow;
+  QSpinBox *m_ignoredRows;
   QTableWidget *m_preview;
   QTableWidget *m_mapping;
   QCheckBox *m_external;

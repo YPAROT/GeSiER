@@ -2,6 +2,10 @@
 
 #include <QMap>
 #include <QDir>
+#include <QDateTime>
+#include <QSet>
+#include <QTimeZone>
+#include <QtMath>
 #include <QXmlStreamReader>
 #include <QtCore/private/qzipreader_p.h>
 
@@ -36,8 +40,50 @@ QStringList sharedStrings(const QByteArray &xml) {
   return result;
 }
 
+QSet<int> dateStyles(const QByteArray &xml) {
+  QSet<int> dateFormats{14, 15, 16, 17, 18, 19, 20, 21, 22, 45, 46, 47};
+  QSet<int> customDateFormats;
+  QXmlStreamReader reader(xml);
+  bool inCellFormats = false;
+  int style = 0;
+  QSet<int> result;
+  while (!reader.atEnd()) {
+    reader.readNext();
+    if (reader.isStartElement() && reader.name() == u"numFmt") {
+      const int id = reader.attributes().value("numFmtId").toInt();
+      const QString code = reader.attributes().value("formatCode").toString().toLower();
+      if (code.contains('d') || code.contains('y') || code.contains("yy") ||
+          code.contains("hh") || code.contains("ss"))
+        customDateFormats << id;
+    } else if (reader.isStartElement() && reader.name() == u"cellXfs") {
+      inCellFormats = true;
+      style = 0;
+    } else if (inCellFormats && reader.isStartElement() && reader.name() == u"xf") {
+      const int format = reader.attributes().value("numFmtId").toInt();
+      if (dateFormats.contains(format) || customDateFormats.contains(format))
+        result << style;
+      ++style;
+    } else if (reader.isEndElement() && reader.name() == u"cellXfs") {
+      inCellFormats = false;
+    }
+  }
+  return result;
+}
+
+QString excelDate(const QString &serial, bool date1904) {
+  bool ok = false;
+  const double value = serial.toDouble(&ok);
+  if (!ok) return serial;
+  const QDateTime epoch(date1904 ? QDate(1904, 1, 1) : QDate(1899, 12, 30),
+                        QTime(0, 0), QTimeZone::UTC);
+  const QDateTime date = epoch.addMSecs(qRound64(value * 86400000.0));
+  return value == qFloor(value) ? date.date().toString(Qt::ISODate)
+                                : date.toString(Qt::ISODate);
+}
+
 QVector<QStringList> sheetRows(const QByteArray &xml,
-                               const QStringList &shared) {
+                               const QStringList &shared,
+                               const QSet<int> &dates, bool date1904) {
   QVector<QStringList> result;
   QXmlStreamReader reader(xml);
   QStringList row;
@@ -49,6 +95,7 @@ QVector<QStringList> sheetRows(const QByteArray &xml,
     } else if (reader.isStartElement() && reader.name() == u"c") {
       column = columnNumber(reader.attributes().value("r").toString());
       const QString type = reader.attributes().value("t").toString();
+      const int style = reader.attributes().value("s").toInt();
       QString value;
       while (!(reader.isEndElement() && reader.name() == u"c") &&
              !reader.atEnd()) {
@@ -62,6 +109,10 @@ QVector<QStringList> sheetRows(const QByteArray &xml,
         const int index = value.toInt(&ok);
         value = ok && index >= 0 && index < shared.size() ? shared[index]
                                                           : QString();
+      } else if (type == "b") {
+        value = value == "1" ? "VRAI" : "FAUX";
+      } else if (dates.contains(style)) {
+        value = excelDate(value, date1904);
       }
       while (row.size() <= column)
         row << QString();
@@ -83,6 +134,7 @@ QList<XlsxSheet> XlsxReader::read(const QString &fileName, QString *error) {
   }
   const QStringList shared =
       sharedStrings(zip.fileData("xl/sharedStrings.xml"));
+  const QSet<int> dates = dateStyles(zip.fileData("xl/styles.xml"));
   QMap<QString, QString> targets;
   QXmlStreamReader relationships(
       zip.fileData("xl/_rels/workbook.xml.rels"));
@@ -101,6 +153,11 @@ QList<XlsxSheet> XlsxReader::read(const QString &fileName, QString *error) {
   }
   QList<XlsxSheet> result;
   QXmlStreamReader workbook(zip.fileData("xl/workbook.xml"));
+  const QByteArray workbookXml = zip.fileData("xl/workbook.xml");
+  const bool date1904 = workbookXml.contains("date1904=\"1\"") ||
+                        workbookXml.contains("date1904=\"true\"");
+  workbook.clear();
+  workbook.addData(workbookXml);
   while (!workbook.atEnd()) {
     workbook.readNext();
     if (!workbook.isStartElement() || workbook.name() != u"sheet")
@@ -118,7 +175,7 @@ QList<XlsxSheet> XlsxReader::read(const QString &fileName, QString *error) {
     }
     const QString target = targets.value(relationship);
     if (!target.isEmpty())
-      result << XlsxSheet{name, sheetRows(zip.fileData(target), shared)};
+      result << XlsxSheet{name, sheetRows(zip.fileData(target), shared, dates, date1904)};
   }
   if (result.isEmpty() && error)
     *error = "Aucun onglet lisible n'a été trouvé dans le classeur.";

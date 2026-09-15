@@ -57,7 +57,29 @@ private slots:
   void managesInterfacesAndExportsN2();
   void managesChangesAndExportsRegister();
   void opensVersion11ProjectWithRequiredLegacyIcd();
+  void composesDocumentsInsideCallerTransaction();
 };
+
+void DatabaseMigratorTest::composesDocumentsInsideCallerTransaction() {
+  QTemporaryDir directory;
+  REQ_SQLManager manager;
+  const auto creation = manager.newDB(directory.filePath("transaction.db"));
+  QVERIFY2(creation.type() == QSqlError::NoError, qPrintable(creation.text()));
+  QSqlDatabase db = QSqlDatabase::database(manager.currentConnection());
+  QSqlQuery query(db);
+  QVERIFY(query.exec("INSERT INTO PT(ID,NAME,SEGMENT) VALUES(1,'System','SYS')"));
+  QVERIFY(query.exec("INSERT INTO DOCUMENT(ID,PT_ID,TYPE,REFERENCE,TITLE) "
+                     "VALUES(1,1,1,'SPEC-1','Spécification')"));
+  DocumentService documents(manager.currentConnection());
+  QVERIFY(db.transaction());
+  const auto chapter = documents.addChapter(1, -1, "Chapitre importé", false);
+  QVERIFY2(chapter.success, qPrintable(chapter.message));
+  QVERIFY(db.rollback());
+  QVERIFY(query.exec("SELECT COUNT(*) FROM DOCUMENT_NODE WHERE DOC_ID=1"));
+  QVERIFY(query.next());
+  QCOMPARE(query.value(0).toInt(), 0);
+  manager.close();
+}
 
 void DatabaseMigratorTest::managesChangesAndExportsRegister() {
   QTemporaryDir directory;

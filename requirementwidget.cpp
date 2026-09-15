@@ -2,6 +2,8 @@
 #include "checkablecombobox.h"
 #include "requirementimportdialog.h"
 #include "requirementrelationservice.h"
+#include "tabularservice.h"
+#include "tabularexportdialog.h"
 #include "documentservice.h"
 #include "producttreeservice.h"
 #include <QSqlDatabase>
@@ -82,12 +84,15 @@ RequirementWidget::RequirementWidget(QWidget *p) : QWidget(p) {
   m_obsoleteButton = new QPushButton("Rendre obsolète");
   m_includeObsolete = new QCheckBox("Inclure les obsolètes");
   auto *importExcel = new QPushButton("Importer XLSX…");
+  importExcel->setText("Importer CSV/XLSX…");
+  auto *exportTable = new QPushButton("Exporter CSV/XLSX…");
   auto *changes = new QPushButton("Changements liés");
   auto toolbar = new QHBoxLayout;
   toolbar->addWidget(add);
   toolbar->addWidget(m_duplicate);
   toolbar->addWidget(m_obsoleteButton);
   toolbar->addWidget(importExcel);
+  toolbar->addWidget(exportTable);
   toolbar->addWidget(changes);
   toolbar->addStretch();
   toolbar->addWidget(m_includeObsolete);
@@ -290,6 +295,35 @@ RequirementWidget::RequirementWidget(QWidget *p) : QWidget(p) {
       emit dataChanged();
     });
     dialog.exec();
+  });
+  connect(exportTable, &QPushButton::clicked, this, [this] {
+    QStringList availableHeaders;
+    for (int column = 0; column < m_list->columnCount(); ++column)
+      availableHeaders << m_list->horizontalHeaderItem(column)->text();
+    TabularExportDialog options("requirements-export", availableHeaders, this);
+    if (options.exec() != QDialog::Accepted) return;
+    QString path = QFileDialog::getSaveFileName(
+        this, "Exporter les exigences filtrées", "exigences.xlsx",
+        "Classeur Excel (*.xlsx);;CSV (*.csv)");
+    if (path.isEmpty()) return;
+    const bool csv = path.endsWith(".csv", Qt::CaseInsensitive);
+    if (!csv && !path.endsWith(".xlsx", Qt::CaseInsensitive)) path += ".xlsx";
+    const QList<int> columns = options.columns();
+    QList<QStringList> rows;
+    rows << options.outputHeaders();
+    for (int row = 1; row < m_list->rowCount(); ++row) {
+      QStringList values;
+      for (int column : columns)
+        values << (m_list->item(row, column) ? m_list->item(row, column)->text()
+                                             : QString());
+      rows << values;
+    }
+    QString error;
+    const bool ok = csv ? TabularService::writeCsv(path, {options.sheetName(), rows}, ';', &error)
+                        : TabularService::writeXlsx(path, {{options.sheetName(), rows}}, &error);
+    if (ok) QMessageBox::information(this, "Export tabulaire",
+                                     QString("%1 exigence(s) exportée(s).").arg(rows.size() - 1));
+    else QMessageBox::warning(this, "Export tabulaire", error);
   });
   connect(m_duplicate, &QPushButton::clicked, this, [this] {
     if (m_current < 0)

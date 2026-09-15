@@ -1,6 +1,6 @@
 #include "changeservice.h"
+#include "tabularservice.h"
 #include <QDateTime>
-#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -9,8 +9,6 @@
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QUrl>
-#include <QXmlStreamWriter>
-#include <private/qzipwriter_p.h>
 
 namespace {
 QSqlDatabase dbFor(const QString &n) {
@@ -55,41 +53,12 @@ QString linkLabel(QSqlDatabase db, const QString &t, int id) {
   q.addBindValue(id);
   return q.exec() && q.next() ? q.value(0).toString() : QString();
 }
-QByteArray sheet(const QList<QStringList> &rows) {
-  QByteArray d;
-  QXmlStreamWriter x(&d);
-  x.writeStartDocument();
-  x.writeStartElement("worksheet");
-  x.writeDefaultNamespace(
-      "http://schemas.openxmlformats.org/spreadsheetml/2006/main");
-  x.writeStartElement("sheetData");
-  for (int r = 0; r < rows.size(); ++r) {
-    x.writeStartElement("row");
-    x.writeAttribute("r", QString::number(r + 1));
-    for (int c = 0; c < rows[r].size(); ++c) {
-      int n = c + 1;
-      QString col;
-      while (n) {
-        col.prepend(QChar('A' + (n - 1) % 26));
-        n = (n - 1) / 26;
-      }
-      x.writeStartElement("c");
-      x.writeAttribute("r", col + QString::number(r + 1));
-      x.writeAttribute("t", "inlineStr");
-      x.writeStartElement("is");
-      x.writeTextElement("t", rows[r][c]);
-      x.writeEndElement();
-      x.writeEndElement();
-    }
-    x.writeEndElement();
-  }
-  x.writeEndElement();
-  x.writeEndElement();
-  return d;
-}
 bool writeBook(const QString &p,
                const QList<QPair<QString, QList<QStringList>>> &ss,
                QString *e) {
+  QList<TabularSheet> normalized; for (const auto &sheet : ss) normalized << TabularSheet{sheet.first, sheet.second};
+  return TabularService::writeXlsx(p, normalized, e);
+#if 0
   QZipWriter z(p);
   if (z.status() != QZipWriter::NoError) {
     *e = "Impossible de créer le classeur.";
@@ -151,6 +120,7 @@ bool writeBook(const QString &p,
     return false;
   }
   return true;
+#endif
 }
 } // namespace
 
