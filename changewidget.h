@@ -8,7 +8,6 @@ class QLabel;
 class QLineEdit;
 class QPushButton;
 class QTableWidget;
-class QTextBrowser;
 class ChangeWidget : public QWidget {
   Q_OBJECT
 public:
@@ -39,7 +38,7 @@ private:
   QComboBox *m_type, *m_status;
   QCheckBox *m_archived, *m_incomplete;
   QTableWidget *m_table;
-  QTextBrowser *m_details;
+  QLabel *m_details;
   QLabel *m_summary;
   QPushButton *m_openLink;
 };

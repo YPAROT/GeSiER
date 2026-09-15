@@ -74,14 +74,21 @@ ChangeWidget::ChangeWidget(QWidget *p) : QWidget(p) {
   m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
   m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
   m_table->setSortingEnabled(true);
-  m_details = new QTextBrowser;
+  m_details = new QLabel;
+  m_details->setTextFormat(Qt::RichText);
+  m_details->setTextInteractionFlags(Qt::TextBrowserInteraction);
   m_details->setOpenExternalLinks(false);
+  m_details->setAlignment(Qt::AlignTop | Qt::AlignLeft);
+  m_details->setWordWrap(true);
   m_openLink = new QPushButton("Ouvrir le lien externe");
   m_summary = new QLabel;
   auto *right = new QWidget;
   auto *rl = new QVBoxLayout(right);
   rl->addWidget(new QLabel("Fiche et historique"));
-  rl->addWidget(m_details, 1);
+  auto *detailScroll = new QScrollArea;
+  detailScroll->setWidgetResizable(true);
+  detailScroll->setWidget(m_details);
+  rl->addWidget(detailScroll, 1);
   rl->addWidget(m_openLink);
   auto *split = new QSplitter;
   split->addWidget(m_table);
@@ -239,23 +246,27 @@ void ChangeWidget::showDetails() {
     h += "<li>" + q.value(0).toString().toHtmlEscaped() + " — " +
          q.value(1).toString().toHtmlEscaped() + "</li>";
   h += "</ul>";
-  m_details->setHtml(h);
+  m_details->setText(h);
   m_openLink->setEnabled(!r.externalLink.trimmed().isEmpty());
-  disconnect(m_details, &QTextBrowser::anchorClicked, nullptr, nullptr);
-  connect(m_details, &QTextBrowser::anchorClicked, this, [this](const QUrl &u) {
-    QStringList p = u.toString().split(':');
-    if (p.size() != 2)
+  disconnect(m_details, &QLabel::linkActivated, nullptr, nullptr);
+  connect(m_details, &QLabel::linkActivated, this, [this](const QString &link) {
+    const QUrl u(link);
+    const QString objectType = u.scheme().toUpper();
+    bool ok = false;
+    const int id = u.path().isEmpty()
+                       ? u.toString().section(':', 1).toInt(&ok)
+                       : u.path().section('/', -1).toInt(&ok);
+    if (!ok || id < 0)
       return;
-    int id = p[1].toInt();
-    if (p[0] == "REQUIREMENT")
+    if (objectType == "REQUIREMENT")
       emit openRequirementRequested(id);
-    else if (p[0] == "PT")
+    else if (objectType == "PT")
       emit openProductTreeRequested(id);
-    else if (p[0] == "CONFIGURATION")
+    else if (objectType == "CONFIGURATION")
       emit openConfigurationRequested(id);
-    else if (p[0] == "INTERFACE")
+    else if (objectType == "INTERFACE")
       emit openInterfaceRequested(id);
-    else if (p[0] == "DOCUMENT")
+    else if (objectType == "DOCUMENT")
       emit openDocumentRequested(id);
   });
 }
