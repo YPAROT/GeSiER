@@ -31,6 +31,7 @@ SOURCES += \
     coveragedashboard.cpp \
     csvutility.cpp \
     tabularservice.cpp \
+    reqifservice.cpp \
     tabularexportdialog.cpp \
     databasemigrator.cpp \
     verificationservice.cpp \
@@ -65,6 +66,7 @@ HEADERS += \
     coveragedashboard.h \
     csvutility.h \
     tabularservice.h \
+    reqifservice.h \
     tabularexportdialog.h \
     databasemigrator.h \
     verificationservice.h \

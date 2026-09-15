@@ -41,6 +41,7 @@ qt_add_executable(GeSiER WIN32
     databasemigrator.cpp databasemigrator.h
     csvutility.cpp csvutility.h
     tabularservice.cpp tabularservice.h
+    reqifservice.cpp reqifservice.h
     tabularexportdialog.cpp tabularexportdialog.h
     req_sqlmanager.cpp req_sqlmanager.h
     sqltableform.cpp sqltableform.h sqltableform.ui
@@ -87,6 +88,7 @@ if(BUILD_TESTING)
         xlsxreader.cpp xlsxreader.h
         csvutility.cpp csvutility.h
         tabularservice.cpp tabularservice.h
+        reqifservice.cpp reqifservice.h
         requirementrelationservice.cpp requirementrelationservice.h
         documentservice.cpp documentservice.h
         docxexportservice.cpp docxexportservice.h

@@ -21,6 +21,8 @@
 #include "verificationwidget.h"
 #include "interfacewidget.h"
 #include "changewidget.h"
+#include "reqifservice.h"
+#include <QAction>
 
 #include "csvutility.h"
 
@@ -714,6 +716,27 @@ void MainWindow::refreshTableSlot()
 
 void MainWindow::setupModernNavigation()
 {
+    QAction *importReqIf = ui->menuFiles->addAction(tr("Importer ReqIF…"));
+    QAction *exportReqIf = ui->menuFiles->addAction(tr("Exporter ReqIF…"));
+    connect(importReqIf, &QAction::triggered, this, [this] {
+        if (!hasOpenProject()) return;
+        const QString path=QFileDialog::getOpenFileName(this,tr("Importer ReqIF"),{},tr("ReqIF (*.reqif *.xml)"));if(path.isEmpty())return;
+        ReqIfService service(m_SQLManager->currentConnection());const ReqIfReport report=service.preview(path);
+        QString details=report.summary();if(!report.warnings.isEmpty())details+="\n\n"+report.warnings.join('\n');if(!report.errors.isEmpty()){details+="\n\n"+report.errors.join('\n');QMessageBox::critical(this,tr("Rapport ReqIF"),details);return;}
+        if(QMessageBox::question(this,tr("Aperçu avant import"),details+tr("\n\nAppliquer cet import transactionnel ?"))!=QMessageBox::Yes)return;
+        QString error;if(!service.importFile(path,report,&error)){QMessageBox::critical(this,tr("Import ReqIF"),error);return;}refreshTableSlot();QMessageBox::information(this,tr("Import ReqIF"),tr("Import terminé. ")+report.summary());
+    });
+    connect(exportReqIf, &QAction::triggered, this, [this] {
+        if (!hasOpenProject()) return;
+        QString path=QFileDialog::getSaveFileName(this,tr("Exporter ReqIF"),{},tr("ReqIF (*.reqif)"));
+        if (path.isEmpty()) return;
+        if (!path.endsWith(".reqif",Qt::CaseInsensitive)) path += ".reqif";
+        QString error;
+        if (!ReqIfService(m_SQLManager->currentConnection()).exportFile(path,&error))
+            QMessageBox::critical(this,tr("Export ReqIF"),error);
+        else
+            QMessageBox::information(this,tr("Export ReqIF"),tr("Fichier exporté."));
+    });
     QWidget *dashboardPage=new QWidget(this);
     QVBoxLayout *dashboardLayout=new QVBoxLayout(dashboardPage);
     QLabel *dashboardTitle=new QLabel(tr("Tableau de bord du projet"),dashboardPage);

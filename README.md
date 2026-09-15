@@ -36,3 +36,5 @@ anciens écrans SQL ne sont plus exposés.
   changements dans le schéma v2 ;
 - tableau de bord des taux de couverture ;
 - import/export CSV autonome, sans bibliothèque QtCSV externe.
+- import/export ReqIF transactionnel avec aperçu, conservation des identifiants
+  externes, hiérarchies, relations, allocations PT et attributs inconnus.

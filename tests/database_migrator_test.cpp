@@ -22,6 +22,7 @@
 #include <private/qzipreader_p.h>
 #include <private/qzipwriter_p.h>
 #include "sqltreemodel.h"
+#include "reqifservice.h"
 
 namespace {
 QString writeDocxTemplate(const QString &path) {
@@ -58,7 +59,22 @@ private slots:
   void managesChangesAndExportsRegister();
   void opensVersion11ProjectWithRequiredLegacyIcd();
   void composesDocumentsInsideCallerTransaction();
+  void importsExportsReqIfAndRejectsUnsafeXml();
 };
+
+void DatabaseMigratorTest::importsExportsReqIfAndRejectsUnsafeXml() {
+  QTemporaryDir directory; REQ_SQLManager manager;
+  const auto creation=manager.newDB(directory.filePath("reqif.db"));QVERIFY2(creation.type()==QSqlError::NoError,qPrintable(creation.text()));
+  QSqlDatabase db=QSqlDatabase::database(manager.currentConnection());QSqlQuery q(db);
+  QVERIFY(q.exec("INSERT INTO PT(ID,NAME,SEGMENT) VALUES(1,'System','SYS')"));
+  const QString input=directory.filePath("input.reqif");QFile file(input);QVERIFY(file.open(QIODevice::WriteOnly));
+  file.write(R"(<?xml version="1.0"?><REQ-IF><CORE-CONTENT><REQ-IF-CONTENT><DATATYPES/><SPEC-TYPES><SPEC-OBJECT-TYPE IDENTIFIER="T" LONG-NAME="Requirement"><SPEC-ATTRIBUTES><ATTRIBUTE-DEFINITION-STRING IDENTIFIER="A-CODE" LONG-NAME="Code"/><ATTRIBUTE-DEFINITION-STRING IDENTIFIER="A-DESC" LONG-NAME="Description"/></SPEC-ATTRIBUTES></SPEC-OBJECT-TYPE></SPEC-TYPES><SPEC-OBJECTS><SPEC-OBJECT IDENTIFIER="EXT-1" LONG-NAME="Titre"><VALUES><ATTRIBUTE-VALUE-STRING THE-VALUE="SYS-001"><DEFINITION><ATTRIBUTE-DEFINITION-STRING-REF>A-CODE</ATTRIBUTE-DEFINITION-STRING-REF></DEFINITION></ATTRIBUTE-VALUE-STRING><ATTRIBUTE-VALUE-STRING THE-VALUE="Texte"><DEFINITION><ATTRIBUTE-DEFINITION-STRING-REF>A-DESC</ATTRIBUTE-DEFINITION-STRING-REF></DEFINITION></ATTRIBUTE-VALUE-STRING></VALUES></SPEC-OBJECT></SPEC-OBJECTS><SPEC-RELATIONS/><SPECIFICATIONS/></REQ-IF-CONTENT></CORE-CONTENT></REQ-IF>)");file.close();
+  ReqIfService service(manager.currentConnection());ReqIfReport report=service.preview(input);QVERIFY2(report.valid(),qPrintable(report.errors.join('\n')));QCOMPARE(report.creates,1);QString error;QVERIFY2(service.importFile(input,report,&error),qPrintable(error));
+  QVERIFY(q.exec("SELECT COUNT(*) FROM REQIF_IDENTITY WHERE EXTERNAL_ID='EXT-1'"));QVERIFY(q.next());QCOMPARE(q.value(0).toInt(),1);
+  const QString output=directory.filePath("output.reqif");QVERIFY2(service.exportFile(output,&error),qPrintable(error));QVERIFY(QFileInfo(output).size()>0);ReqIfReport roundTrip=service.preview(output);QVERIFY2(roundTrip.valid(),qPrintable(roundTrip.errors.join('\n')));
+  QFile unsafe(directory.filePath("unsafe.reqif"));QVERIFY(unsafe.open(QIODevice::WriteOnly));unsafe.write("<!DOCTYPE x [<!ENTITY e SYSTEM 'file:///etc/passwd'>]><REQ-IF>&e;</REQ-IF>");unsafe.close();QVERIFY(!service.preview(unsafe.fileName()).valid());
+  q=QSqlQuery();db=QSqlDatabase();manager.close();
+}
 
 void DatabaseMigratorTest::composesDocumentsInsideCallerTransaction() {
   QTemporaryDir directory;
