@@ -2,7 +2,10 @@
 
 Créer le registre commun des changements de GeSiER.
 
-Gérer les types Change Request, waiver, dérogation et types configurables. Chaque
+Gérer les types Demande de changement, Déviation, Waiver / Dérogation et les
+types configurables. Une déviation autorise avant réalisation un écart
+temporaire à une exigence ; un waiver (dérogation en français) accepte après
+réalisation une non-conformité constatée. Chaque
 objet possède identifiant unique, statut, description, décision, dates,
 référence/lien externe et associations multiples vers exigences, PT,
 configurations, interfaces et documents. Les pièces jointes restent externes et

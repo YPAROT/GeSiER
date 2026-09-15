@@ -577,6 +577,17 @@ void DatabaseMigratorTest::initializesNewProjectCatalogs() {
   QVERIFY(query.exec("SELECT COUNT(*) FROM REQ_STATUS"));
   QVERIFY(query.next());
   QCOMPARE(query.value(0).toInt(), 8);
+  QVERIFY(query.exec("SELECT CODE,LABEL FROM CHANGE_TYPE WHERE CODE IN "
+                     "('CHANGE_REQUEST','DEVIATION','WAIVER') ORDER BY CODE"));
+  QVERIFY(query.next());
+  QCOMPARE(query.value(0).toString(), QString("CHANGE_REQUEST"));
+  QCOMPARE(query.value(1).toString(), QString("Demande de changement"));
+  QVERIFY(query.next());
+  QCOMPARE(query.value(0).toString(), QString("DEVIATION"));
+  QCOMPARE(query.value(1).toString(), QString("Déviation"));
+  QVERIFY(query.next());
+  QCOMPARE(query.value(0).toString(), QString("WAIVER"));
+  QCOMPARE(query.value(1).toString(), QString("Waiver / Dérogation"));
   query = QSqlQuery();
   db = QSqlDatabase();
   manager.close();
