@@ -26,6 +26,8 @@ DEFINES += QT_DEPRECATED_WARNINGS
 
 
 SOURCES += \
+    changeservice.cpp \
+    changewidget.cpp \
     coveragedashboard.cpp \
     csvutility.cpp \
     databasemigrator.cpp \
@@ -56,6 +58,8 @@ SOURCES += \
     importlogdialog.cpp
 
 HEADERS += \
+    changeservice.h \
+    changewidget.h \
     coveragedashboard.h \
     csvutility.h \
     databasemigrator.h \

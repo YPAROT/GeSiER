@@ -29,6 +29,7 @@ public slots:
 signals:
   void dataChanged();
   void openDocumentRequested(int id);
+  void openChangesRequested(int id);
 private slots:
   void selectRow(int, int);
   void save();

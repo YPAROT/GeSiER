@@ -213,6 +213,20 @@ bool DatabaseMigrator::migrate(QSqlDatabase db, QString *errorMessage) {
          "AUTOINCREMENT, EVENT_TIME TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, "
          "AUTHOR TEXT, EVENT_TYPE TEXT NOT NULL, OBJECT_TYPE TEXT NOT NULL, "
          "OBJECT_ID INTEGER, BEFORE_JSON TEXT, AFTER_JSON TEXT, COMMENT TEXT)"
+      << "CREATE TABLE IF NOT EXISTS CHANGE_TYPE (ID INTEGER PRIMARY KEY "
+         "AUTOINCREMENT, CODE TEXT UNIQUE NOT NULL, LABEL TEXT NOT NULL, "
+         "ACTIVE INTEGER NOT NULL DEFAULT 1 CHECK(ACTIVE IN (0,1)))"
+      << "INSERT OR IGNORE INTO CHANGE_TYPE(CODE,LABEL) VALUES "
+         "('CHANGE_REQUEST','Change Request'),('WAIVER','Waiver'),"
+         "('DEVIATION','Dérogation'),('OTHER','Autre')"
+      << "CREATE TABLE IF NOT EXISTS CHANGE_STATUS (ID INTEGER PRIMARY KEY "
+         "AUTOINCREMENT, CODE TEXT UNIQUE NOT NULL, LABEL TEXT NOT NULL, "
+         "IS_FINAL INTEGER NOT NULL DEFAULT 0 CHECK(IS_FINAL IN (0,1)), "
+         "POSITION INTEGER NOT NULL DEFAULT 0)"
+      << "INSERT OR IGNORE INTO CHANGE_STATUS(CODE,LABEL,IS_FINAL,POSITION) "
+         "VALUES ('OPEN','Ouvert',0,10),('IN_REVIEW','En instruction',0,20),"
+         "('APPROVED','Approuvé',1,30),('REJECTED','Rejeté',1,40),"
+         "('CLOSED','Clos',1,50)"
       << "CREATE INDEX IF NOT EXISTS IDX_REQ_REL_SOURCE ON "
          "REQUIREMENT_RELATION(SOURCE_REQ_ID)"
       << "CREATE INDEX IF NOT EXISTS IDX_REQ_REL_TARGET ON "
@@ -276,6 +290,20 @@ bool DatabaseMigrator::migrate(QSqlDatabase db, QString *errorMessage) {
          "JOIN D ON N.PARENT_ID=D.ID) SELECT 1 FROM D WHERE ID=NEW.PARENT_ID) "
          "BEGIN SELECT RAISE(ABORT,'Cycle de document interdit'); END";
 
+  for (const auto &guard : QList<QPair<QString, QString>>{
+           {"PT", "PT"},
+           {"CONFIGURATION", "CONFIGURATION"},
+           {"INTERFACE", "INTERFACE"},
+           {"DOCUMENT", "DOCUMENT"}}) {
+    statements << QString(
+                      "CREATE TRIGGER IF NOT EXISTS CHANGE_%1_DELETE_GUARD "
+                      "BEFORE DELETE ON %1 WHEN EXISTS(SELECT 1 FROM "
+                      "CHANGE_LINK WHERE OBJECT_TYPE='%2' AND OBJECT_ID=OLD.ID) "
+                      "BEGIN SELECT RAISE(ABORT,'Objet lié à un changement : "
+                      "archivez-le ou retirez d''abord l''association.'); END")
+                      .arg(guard.first, guard.second);
+  }
+
   for (const QString &statement : statements) {
     if (!execute(db, statement, errorMessage)) {
       db.rollback();
@@ -320,13 +348,54 @@ bool DatabaseMigrator::migrate(QSqlDatabase db, QString *errorMessage) {
        "INTEGER REFERENCES PT(ID)"},
       {"CONFIGURATION", "POSITION", "INTEGER NOT NULL DEFAULT 0"},
       {"CONFIGURATION", "CREATED_AT", "TEXT"},
-      {"CONFIGURATION", "UPDATED_AT", "TEXT"}};
+      {"CONFIGURATION", "UPDATED_AT", "TEXT"},
+      {"CHANGE_ITEM", "TYPE_ID", "INTEGER REFERENCES CHANGE_TYPE(ID)"},
+      {"CHANGE_ITEM", "STATUS_ID", "INTEGER REFERENCES CHANGE_STATUS(ID)"},
+      {"CHANGE_ITEM", "ARCHIVED",
+       "INTEGER NOT NULL DEFAULT 0 CHECK(ARCHIVED IN (0,1))"},
+      {"CHANGE_ITEM", "UPDATED_AT", "TEXT"}};
   for (const Column &column : columns) {
     if (!addColumnIfMissing(db, column.table, column.name, column.definition,
                             errorMessage)) {
       db.rollback();
       return false;
     }
+  }
+
+  // Le schéma historique stockait type et statut comme textes contraints.
+  // Les colonnes restent présentes pour la compatibilité, tandis que les
+  // catalogues deviennent la source de vérité du registre des changements.
+  if (!execute(db,
+               "UPDATE CHANGE_ITEM SET TYPE_ID=(SELECT ID FROM CHANGE_TYPE "
+               "WHERE CODE=CHANGE_ITEM.TYPE) WHERE TYPE_ID IS NULL",
+               errorMessage) ||
+      !execute(db,
+               "UPDATE CHANGE_ITEM SET STATUS_ID=(SELECT ID FROM "
+               "CHANGE_STATUS WHERE CODE=UPPER(REPLACE(CHANGE_ITEM.STATUS,' "
+               "','_'))) WHERE STATUS_ID IS NULL",
+               errorMessage) ||
+      !execute(db,
+               "UPDATE CHANGE_ITEM SET TYPE_ID=(SELECT ID FROM CHANGE_TYPE "
+               "WHERE CODE='OTHER') WHERE TYPE_ID IS NULL",
+               errorMessage) ||
+      !execute(db,
+               "UPDATE CHANGE_ITEM SET STATUS_ID=(SELECT ID FROM "
+               "CHANGE_STATUS WHERE CODE='OPEN') WHERE STATUS_ID IS NULL",
+               errorMessage) ||
+      !execute(db,
+               "UPDATE CHANGE_ITEM SET "
+               "UPDATED_AT=COALESCE(UPDATED_AT,OPENED_AT,CURRENT_TIMESTAMP)",
+               errorMessage) ||
+      !execute(db,
+               "CREATE INDEX IF NOT EXISTS IDX_CHANGE_STATUS ON "
+               "CHANGE_ITEM(ARCHIVED,STATUS_ID,TYPE_ID)",
+               errorMessage) ||
+      !execute(db,
+               "CREATE INDEX IF NOT EXISTS IDX_CHANGE_LINK_OBJECT ON "
+               "CHANGE_LINK(OBJECT_TYPE,OBJECT_ID)",
+               errorMessage)) {
+    db.rollback();
+    return false;
   }
 
   // Conserve les liens ICD des anciens fichiers dont le document était porté

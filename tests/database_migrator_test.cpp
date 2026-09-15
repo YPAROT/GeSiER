@@ -17,6 +17,7 @@
 #include "applicabilityservice.h"
 #include "verificationservice.h"
 #include "interfaceservice.h"
+#include "changeservice.h"
 #include "xlsxreader.h"
 #include <private/qzipreader_p.h>
 #include <private/qzipwriter_p.h>
@@ -54,8 +55,68 @@ private slots:
   void managesApplicabilityAndExportsMatrix();
   void managesVerificationMatrixAndExport();
   void managesInterfacesAndExportsN2();
+  void managesChangesAndExportsRegister();
   void opensVersion11ProjectWithRequiredLegacyIcd();
 };
+
+void DatabaseMigratorTest::managesChangesAndExportsRegister() {
+  QTemporaryDir directory;
+  REQ_SQLManager manager;
+  const auto creation = manager.newDB(directory.filePath("changes.db"));
+  QVERIFY2(creation.type() == QSqlError::NoError, qPrintable(creation.text()));
+  QSqlDatabase db = QSqlDatabase::database(manager.currentConnection());
+  QSqlQuery q(db);
+  QVERIFY(q.exec("INSERT INTO PT(ID,NAME,SEGMENT) VALUES(1,'System','SYS')"));
+  ChangeService service(manager.currentConnection());
+  auto custom = service.saveType(-1, "PROBLEM_REPORT", "Problem Report");
+  QVERIFY2(custom.success, qPrintable(custom.message));
+  auto decided = service.saveStatus(-1, "DECIDED", "Décidé", true, 35);
+  QVERIFY2(decided.success, qPrintable(decided.message));
+  ChangeRecord record;
+  record.code = "PR-001";
+  record.typeId = custom.id;
+  record.statusId = decided.id;
+  record.description = "Écart détecté en revue";
+  record.links = {{"PT", "System", 1}};
+  QVERIFY(!service.save(record).success); // un statut final impose une décision
+  record.decision = "Accepté avec action de clôture";
+  record.externalReference = "REDMINE-42";
+  record.externalLink = "https://example.invalid/issues/42";
+  auto saved = service.save(record);
+  QVERIFY2(saved.success, qPrintable(saved.message));
+  auto loaded = service.get(saved.id);
+  QCOMPARE(loaded.typeCode, QString("PROBLEM_REPORT"));
+  QCOMPARE(loaded.links.size(), 1);
+  QCOMPARE(loaded.links[0].objectType, QString("PT"));
+  QVERIFY(!q.exec("DELETE FROM PT WHERE ID=1"));
+  ChangeFilter byPt;
+  byPt.objectType = "PT";
+  byPt.objectId = 1;
+  QCOMPARE(service.find(byPt).size(), 1);
+  auto coverage = service.coverage();
+  QCOMPARE(coverage.total, 1);
+  QCOMPARE(coverage.complete, 1);
+  QVERIFY(service.setArchived(saved.id, true).success);
+  QCOMPARE(service.find({}).size(), 0);
+  ChangeFilter archived;
+  archived.includeArchived = true;
+  QCOMPARE(service.find(archived).size(), 1);
+  const QString path = directory.filePath("changes.xlsx");
+  QVERIFY(service.exportXlsx(path, archived).success);
+  QString error;
+  const auto sheets = XlsxReader::read(path, &error);
+  QVERIFY2(error.isEmpty(), qPrintable(error));
+  QCOMPARE(sheets.size(), 3);
+  QCOMPARE(sheets[0].name, QString("Synthèse"));
+  QCOMPARE(sheets[1].name, QString("Changements"));
+  QCOMPARE(sheets[2].name, QString("Associations"));
+  QVERIFY(q.exec("SELECT COUNT(*) FROM EVENT_LOG WHERE OBJECT_TYPE='CHANGE'"));
+  QVERIFY(q.next());
+  QVERIFY(q.value(0).toInt() >= 2);
+  q = QSqlQuery();
+  db = QSqlDatabase();
+  manager.close();
+}
 
 void DatabaseMigratorTest::opensVersion11ProjectWithRequiredLegacyIcd() {
   QTemporaryDir directory;

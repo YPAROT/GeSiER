@@ -28,6 +28,7 @@ class DocumentWidget;
 class ApplicabilityWidget;
 class VerificationWidget;
 class InterfaceWidget;
+class ChangeWidget;
 class QListWidget;
 class QStackedWidget;
 
@@ -130,6 +131,7 @@ private:
     ApplicabilityWidget* m_applicabilityWidget = nullptr;
     VerificationWidget* m_verificationWidget = nullptr;
     InterfaceWidget* m_interfaceWidget = nullptr;
+    ChangeWidget* m_changeWidget = nullptr;
     QListWidget* m_projectNavigation = nullptr;
     QStackedWidget* m_projectPages = nullptr;
     //SqlTreeReqModel* m_Req_Arbo;

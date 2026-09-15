@@ -20,6 +20,7 @@
 #include "applicabilitywidget.h"
 #include "verificationwidget.h"
 #include "interfacewidget.h"
+#include "changewidget.h"
 
 #include "csvutility.h"
 
@@ -175,6 +176,7 @@ void MainWindow::releaseProjectViews()
     if (m_applicabilityWidget) m_applicabilityWidget->setConnectionName({});
     if (m_verificationWidget) m_verificationWidget->setConnectionName({});
     if (m_interfaceWidget) m_interfaceWidget->setConnectionName({});
+    if (m_changeWidget) m_changeWidget->setConnectionName({});
     if (m_coverageDashboard) m_coverageDashboard->setConnectionName({});
     if (m_traceabilityWidget) m_traceabilityWidget->setConnectionName({});
     if (m_n2MatrixWidget) m_n2MatrixWidget->setConnectionName({});
@@ -205,6 +207,7 @@ void MainWindow::bindProjectViews()
     if (m_applicabilityWidget) m_applicabilityWidget->setConnectionName(connection);
     if (m_verificationWidget) m_verificationWidget->setConnectionName(connection);
     if (m_interfaceWidget) m_interfaceWidget->setConnectionName(connection);
+    if (m_changeWidget) m_changeWidget->setConnectionName(connection);
     refreshEditTables();
     refreshViewTables();
     updateProjectUi();
@@ -702,6 +705,8 @@ void MainWindow::refreshTableSlot()
         m_verificationWidget->refresh();
     if (m_interfaceWidget)
         m_interfaceWidget->refresh();
+    if (m_changeWidget)
+        m_changeWidget->refresh();
     m_coverageDashboard->refresh();
     m_traceabilityWidget->refresh();
     m_n2MatrixWidget->refresh();
@@ -724,6 +729,7 @@ void MainWindow::setupModernNavigation()
     m_applicabilityWidget=new ApplicabilityWidget(projectPage);
     m_verificationWidget=new VerificationWidget(projectPage);
     m_interfaceWidget=new InterfaceWidget(projectPage);
+    m_changeWidget=new ChangeWidget(projectPage);
     const QStringList sections={tr("Product Tree"),tr("Exigences"),tr("Documents"),tr("Applicabilité"),tr("Interfaces"),tr("Vérification"),tr("Changements"),tr("Historique")};
     m_projectNavigation->addItems(sections);
     m_projectPages->addWidget(m_productTreeWidget);
@@ -732,7 +738,7 @@ void MainWindow::setupModernNavigation()
     m_projectPages->addWidget(m_applicabilityWidget);
     m_projectPages->addWidget(m_interfaceWidget);
     m_projectPages->addWidget(m_verificationWidget);
-    m_projectPages->addWidget(ui->tab_ConfChange_edit);
+    m_projectPages->addWidget(m_changeWidget);
     m_projectPages->addWidget(ui->tab_Logs);
     projectLayout->addWidget(m_projectNavigation);projectLayout->addWidget(m_projectPages,1);
     connect(m_projectNavigation,&QListWidget::currentRowChanged,m_projectPages,&QStackedWidget::setCurrentIndex);
@@ -756,11 +762,21 @@ void MainWindow::setupModernNavigation()
     connect(m_interfaceWidget,&InterfaceWidget::openRequirementRequested,this,[this](int id){m_requirementWidget->openRequirement(id);m_projectNavigation->setCurrentRow(1);});
     connect(m_interfaceWidget,&InterfaceWidget::openDocumentRequested,this,[this](int id){m_documentWidget->openDocument(id);m_projectNavigation->setCurrentRow(2);});
     connect(m_interfaceWidget,&InterfaceWidget::openProductTreeRequested,this,[this](int){m_projectNavigation->setCurrentRow(0);});
-    connect(m_productTreeWidget,&ProductTreeWidget::openChangesForPt,this,[this](int){ui->mainTabWidget->setCurrentIndex(1);m_projectNavigation->setCurrentRow(6);});
+    connect(m_productTreeWidget,&ProductTreeWidget::openChangesForPt,this,[this](int id){m_changeWidget->applyObjectFilter("PT",id);ui->mainTabWidget->setCurrentIndex(1);m_projectNavigation->setCurrentRow(6);});
+    connect(m_requirementWidget,&RequirementWidget::openChangesRequested,this,[this](int id){m_changeWidget->applyObjectFilter("REQUIREMENT",id);m_projectNavigation->setCurrentRow(6);});
+    connect(m_documentWidget,&DocumentWidget::openChangesRequested,this,[this](int id){m_changeWidget->applyObjectFilter("DOCUMENT",id);m_projectNavigation->setCurrentRow(6);});
+    connect(m_interfaceWidget,&InterfaceWidget::openChangesRequested,this,[this](int id){m_changeWidget->applyObjectFilter("INTERFACE",id);m_projectNavigation->setCurrentRow(6);});
+    connect(m_applicabilityWidget,&ApplicabilityWidget::openChangesRequested,this,[this](int id){m_changeWidget->applyObjectFilter("CONFIGURATION",id);m_projectNavigation->setCurrentRow(6);});
+    connect(m_changeWidget,&ChangeWidget::dataChanged,this,&MainWindow::refreshTableSlot);
+    connect(m_changeWidget,&ChangeWidget::openRequirementRequested,this,[this](int id){m_requirementWidget->openRequirement(id);m_projectNavigation->setCurrentRow(1);});
+    connect(m_changeWidget,&ChangeWidget::openProductTreeRequested,this,[this](int){m_projectNavigation->setCurrentRow(0);});
+    connect(m_changeWidget,&ChangeWidget::openInterfaceRequested,this,[this](int id){m_interfaceWidget->openInterface(id);m_projectNavigation->setCurrentRow(4);});
+    connect(m_changeWidget,&ChangeWidget::openDocumentRequested,this,[this](int id){m_documentWidget->openDocument(id);m_projectNavigation->setCurrentRow(2);});
+    connect(m_changeWidget,&ChangeWidget::openConfigurationRequested,this,[this](int){m_projectNavigation->setCurrentRow(3);});
     connect(m_coverageDashboard,&CoverageDashboard::navigateRequested,this,[this](int page,const QString&filter){if(page==1){RequirementFilter f;if(filter=="unallocated")f.allocated=0;else if(filter=="untraced")f.traced=0;else if(filter=="undocumented")f.documented=0;else if(filter=="unverified")f.verified=0;m_requirementWidget->applyFilter(f);}ui->mainTabWidget->setCurrentIndex(1);m_projectNavigation->setCurrentRow(page);});
     m_projectNavigation->setCurrentRow(0);
     if (hasOpenProject())
-    { m_productTreeWidget->setConnectionName(m_SQLManager->currentConnection());m_requirementWidget->setConnectionName(m_SQLManager->currentConnection());m_documentWidget->setConnectionName(m_SQLManager->currentConnection());m_applicabilityWidget->setConnectionName(m_SQLManager->currentConnection());m_interfaceWidget->setConnectionName(m_SQLManager->currentConnection());m_verificationWidget->setConnectionName(m_SQLManager->currentConnection()); }
+    { m_productTreeWidget->setConnectionName(m_SQLManager->currentConnection());m_requirementWidget->setConnectionName(m_SQLManager->currentConnection());m_documentWidget->setConnectionName(m_SQLManager->currentConnection());m_applicabilityWidget->setConnectionName(m_SQLManager->currentConnection());m_interfaceWidget->setConnectionName(m_SQLManager->currentConnection());m_verificationWidget->setConnectionName(m_SQLManager->currentConnection());m_changeWidget->setConnectionName(m_SQLManager->currentConnection()); }
 
     ui->mainTabWidget->clear();
     ui->mainTabWidget->addTab(dashboardPage,tr("Tableau de bord"));

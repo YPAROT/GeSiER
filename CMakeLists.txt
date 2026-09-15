@@ -19,6 +19,8 @@ qt_add_executable(GeSiER WIN32
     n2matrixwidget.cpp n2matrixwidget.h
     interfaceservice.cpp interfaceservice.h
     interfacewidget.cpp interfacewidget.h
+    changeservice.cpp changeservice.h
+    changewidget.cpp changewidget.h
     producttreeservice.cpp producttreeservice.h
     producttreemodel.cpp producttreemodel.h
     producttreewidget.cpp producttreewidget.h
@@ -79,6 +81,7 @@ if(BUILD_TESTING)
         applicabilityservice.cpp applicabilityservice.h
         verificationservice.cpp verificationservice.h
         interfaceservice.cpp interfaceservice.h
+        changeservice.cpp changeservice.h
         xlsxreader.cpp xlsxreader.h
         requirementrelationservice.cpp requirementrelationservice.h
         documentservice.cpp documentservice.h

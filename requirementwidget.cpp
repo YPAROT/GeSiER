@@ -81,13 +81,19 @@ RequirementWidget::RequirementWidget(QWidget *p) : QWidget(p) {
   m_obsoleteButton = new QPushButton("Rendre obsolète");
   m_includeObsolete = new QCheckBox("Inclure les obsolètes");
   auto *importExcel = new QPushButton("Importer XLSX…");
+  auto *changes = new QPushButton("Changements liés");
   auto toolbar = new QHBoxLayout;
   toolbar->addWidget(add);
   toolbar->addWidget(m_duplicate);
   toolbar->addWidget(m_obsoleteButton);
   toolbar->addWidget(importExcel);
+  toolbar->addWidget(changes);
   toolbar->addStretch();
   toolbar->addWidget(m_includeObsolete);
+  connect(changes, &QPushButton::clicked, this, [this] {
+    if (m_current >= 0)
+      emit openChangesRequested(m_current);
+  });
   m_list = new QTableWidget(1, ColumnCount);
   m_list->setObjectName("requirementList");
   m_list->setHorizontalHeaderLabels(

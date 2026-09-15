@@ -113,7 +113,7 @@ void CoverageDashboard::refresh() {
       {"Interfaces couvertes ICD",
        scalar("SELECT COUNT(*) FROM INTERFACE I WHERE EXISTS(SELECT 1 FROM "
               "INTERFACE_DOCUMENT X WHERE X.INTERFACE_ID=I.ID)"),
-       interfaces, 3, "uncovered"},
+       interfaces, 4, "uncovered"},
       {"Documents", scalar("SELECT COUNT(*) FROM DOCUMENT"),
        scalar("SELECT COUNT(*) FROM DOCUMENT"), 2, "all"},
       {"Publications récentes",
@@ -123,10 +123,12 @@ void CoverageDashboard::refresh() {
        scalar("SELECT COUNT(*) FROM DOCUMENT_EXPORT WHERE "
               "EXPORT_KIND='PUBLICATION'"),
        2, "publications"},
-      {"Changements ouverts",
-       scalar("SELECT COUNT(*) FROM CHANGE_ITEM WHERE UPPER(STATUS) NOT "
-              "IN('CLOSED','CLOSE','CLOTURE','CLOTURÉ','APPROVED','REJECTED')"),
-       scalar("SELECT COUNT(*) FROM CHANGE_ITEM"), 5, "open"}};
+      {"Changements décidés et finalisés",
+       scalar("SELECT COUNT(*) FROM CHANGE_ITEM C JOIN CHANGE_STATUS S ON "
+              "S.ID=C.STATUS_ID WHERE C.ARCHIVED=0 AND S.IS_FINAL=1 AND "
+              "TRIM(COALESCE(C.DECISION,''))<>''"),
+       scalar("SELECT COUNT(*) FROM CHANGE_ITEM WHERE ARCHIVED=0"), 6,
+       "incomplete"}};
   m_state->setText(
       req == 0 ? "Le projet ne contient encore aucune exigence."
                : QString("%1 exigence(s) dans le périmètre courant.").arg(req));
