@@ -1,157 +1,36 @@
 #include "coveragedashboard.h"
+#include <QDateTime>
+#include <QPainter>
 #include <QSqlDatabase>
 #include <QSqlQuery>
 #include <QtWidgets>
-CoverageDashboard::CoverageDashboard(QWidget *p) : QWidget(p) {
-  m_status = new QComboBox;
-  m_obsolete = new QCheckBox("Inclure les exigences obsolètes");
-  auto refreshButton = new QPushButton("Actualiser");
-  auto top = new QHBoxLayout;
-  top->addWidget(new QLabel("Périmètre :"));
-  top->addWidget(m_status);
-  top->addWidget(m_obsolete);
-  top->addStretch();
-  top->addWidget(refreshButton);
-  m_state = new QLabel;
-  m_grid = new QGridLayout;
-  auto cards = new QWidget;
-  cards->setLayout(m_grid);
-  auto scroll = new QScrollArea;
-  scroll->setWidgetResizable(true);
-  scroll->setWidget(cards);
-  auto root = new QVBoxLayout(this);
-  root->addLayout(top);
-  root->addWidget(m_state);
-  root->addWidget(scroll);
-  connect(refreshButton, &QPushButton::clicked, this,
-          &CoverageDashboard::refresh);
-  connect(m_status, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
-          &CoverageDashboard::refresh);
-  connect(m_obsolete, &QCheckBox::toggled, this, &CoverageDashboard::refresh);
+#include <functional>
+
+namespace {
+const QColor Blue("#2878c8"),Green("#2e9d67"),Orange("#e59a2f"),Red("#d6534d"),Grey("#98a2ae"),Ink("#12345b");
+QColor colorAt(int i){static const QList<QColor> c{Grey,Orange,Green,Red,QColor("#b7c2ce"),Blue,QColor("#725bb5")};return c[i%c.size()];}
+class Donut:public QWidget{
+public: Donut(QString t,int v,int n,QColor c,std::function<void()> a,QWidget*p=nullptr):QWidget(p),title(std::move(t)),value(v),total(n),color(c),action(std::move(a)){setMinimumSize(135,145);setCursor(Qt::PointingHandCursor);setToolTip("Afficher les éléments manquants");}
+protected:void paintEvent(QPaintEvent*)override{QPainter p(this);p.setRenderHint(QPainter::Antialiasing);int side=qMin(width()-24,96),x=(width()-side)/2;QRectF r(x,8,side,side);QPen pen(QColor("#dce5ee"),11);p.setPen(pen);p.drawArc(r,0,360*16);int pct=total?qRound(100.0*value/total):0;pen.setColor(color);p.setPen(pen);p.drawArc(r,90*16,-pct*360*16/100);p.setPen(Ink);QFont f=p.font();f.setBold(true);f.setPointSize(13);p.setFont(f);p.drawText(r,Qt::AlignCenter,QString::number(pct)+" %");f.setBold(false);f.setPointSize(9);p.setFont(f);p.drawText(QRectF(0,82,width(),24),Qt::AlignCenter,QString("%1 / %2").arg(value).arg(total));f.setPointSize(10);p.setFont(f);p.drawText(QRectF(3,111,width()-6,32),Qt::AlignHCenter|Qt::AlignTop|Qt::TextWordWrap,title);}
+void mouseReleaseEvent(QMouseEvent*)override{if(action)action();}
+private:QString title;int value,total;QColor color;std::function<void()> action;};
+class Bars:public QWidget{
+public:Bars(QList<CoverageSlice> r,bool s,QWidget*p=nullptr):QWidget(p),rows(std::move(r)),stacked(s){setMinimumHeight(stacked?102:qMax(120,rows.size()*31+12));}
+protected:void paintEvent(QPaintEvent*)override{QPainter p(this);p.setRenderHint(QPainter::Antialiasing);int maximum=1,total=0;for(const auto&r:rows){maximum=qMax(maximum,r.value);total+=r.value;}if(stacked){int x=8,y=12,w=width()-16,h=34,used=0;for(int i=0;i<rows.size();++i){auto&r=rows[i];int part=i==rows.size()-1?w-used:qRound(double(w)*r.value/qMax(1,total));p.fillRect(QRect(x+used,y,part,h),colorAt(i));if(part>28){p.setPen(Qt::white);p.drawText(QRect(x+used,y,part,h),Qt::AlignCenter,QString::number(r.value));}used+=part;}int lx=8,ly=62;for(int i=0;i<rows.size();++i){p.setBrush(colorAt(i));p.setPen(Qt::NoPen);p.drawEllipse(lx,ly,10,10);p.setPen(Ink);p.drawText(QRect(lx+15,ly-3,125,18),Qt::AlignLeft|Qt::AlignVCenter,rows[i].label);lx+=140;if(lx+125>width()){lx=8;ly+=20;}}}else for(int i=0;i<rows.size();++i){int y=8+i*31;p.setPen(Ink);p.drawText(QRect(4,y,185,22),Qt::AlignLeft|Qt::AlignVCenter,rows[i].label);int bw=qRound((width()-240.0)*rows[i].value/maximum);p.fillRect(190,y+2,qMax(2,bw),17,colorAt(i+1));p.setPen(Ink);p.drawText(QRect(200+bw,y,38,22),Qt::AlignLeft|Qt::AlignVCenter,QString::number(rows[i].value));}}
+private:QList<CoverageSlice> rows;bool stacked;};
+QFrame*panel(const QString&t){auto*f=new QFrame;f->setObjectName("dashboardPanel");auto*l=new QVBoxLayout(f);l->setContentsMargins(16,12,16,12);auto*h=new QLabel(t);h->setObjectName("sectionTitle");l->addWidget(h);return f;}
+QVBoxLayout*body(QFrame*p){return qobject_cast<QVBoxLayout*>(p->layout());}
+QLabel*kpi(const QString&n,const QString&l,const QColor&c){auto*w=new QLabel(QString("<span style='font-size:25px;font-weight:700;color:%1'>%2</span><br><span style='color:#29496c'>%3</span>").arg(c.name(),n,l));w->setObjectName("kpi");w->setMinimumHeight(78);w->setAlignment(Qt::AlignCenter);return w;}
+void fill(QComboBox*c,const QSqlDatabase&db,const QString&q,const QString&a){c->blockSignals(true);c->clear();c->addItem(a,-1);QSqlQuery x(q,db);while(x.next())c->addItem(x.value(1).toString(),x.value(0));c->blockSignals(false);}
+CoverageMetric findMetric(const QList<CoverageMetric>&ms,const QString&key){for(const auto&m:ms)if(m.key==key)return m;return {};}
 }
-void CoverageDashboard::setConnectionName(const QString &n) {
-  m_connection = n;
-  filters();
-  refresh();
-}
-int CoverageDashboard::scalar(const QString &s) const {
-  const QSqlDatabase db = QSqlDatabase::database(m_connection, false);
-  if (!db.isValid() || !db.isOpen())
-    return 0;
-  QSqlQuery q(s, db);
-  return q.next() ? q.value(0).toInt() : 0;
-}
-QString CoverageDashboard::scope() const {
-  QStringList w;
-  if (!m_obsolete->isChecked())
-    w << "NOT EXISTS(SELECT 1 FROM REQ_STATUS S WHERE S.ID=R.STATUS AND "
-         "(UPPER(S.STATUS)='OBSOLETE' OR UPPER(S.SHORTCUT)='O'))";
-  if (m_status->currentData().toInt() >= 0)
-    w << QString("R.STATUS=%1").arg(m_status->currentData().toInt());
-  return w.isEmpty() ? "1=1" : w.join(" AND ");
-}
-void CoverageDashboard::filters() {
-  m_status->blockSignals(true);
-  m_status->clear();
-  m_status->addItem("Tous les statuts", -1);
-  const QSqlDatabase db = QSqlDatabase::database(m_connection, false);
-  if (!db.isValid() || !db.isOpen()) {
-    m_status->blockSignals(false);
-    return;
-  }
-  QSqlQuery q("SELECT ID,STATUS FROM REQ_STATUS ORDER BY ID", db);
-  while (q.next())
-    m_status->addItem(q.value(1).toString(), q.value(0));
-  m_status->blockSignals(false);
-}
-void CoverageDashboard::clearCards() {
-  while (auto item = m_grid->takeAt(0)) {
-    delete item->widget();
-    delete item;
-  }
-}
-void CoverageDashboard::refresh() {
-  clearCards();
-  QSqlDatabase db = QSqlDatabase::database(m_connection, false);
-  if (!db.isValid() || !db.isOpen()) {
-    m_state->setText("Aucun projet ouvert.");
-    return;
-  }
-  QString s = scope();
-  int req = scalar("SELECT COUNT(*) FROM REQUIREMENT R WHERE " + s),
-      traceable = scalar("SELECT COUNT(*) FROM REQUIREMENT R WHERE " + s +
-                         " AND COALESCE(IS_TRACE_ROOT,0)=0"),
-      interfaces = scalar("SELECT COUNT(*) FROM INTERFACE");
-  m_metrics = {
-      {"Exigences", req, req, 1, "all"},
-      {"Allocation Product Tree",
-       scalar(
-           "SELECT COUNT(*) FROM REQUIREMENT R WHERE " + s +
-           " AND EXISTS(SELECT 1 FROM REQUIREMENT_PT X WHERE X.REQ_ID=R.ID)"),
-       req, 1, "unallocated"},
-      {"Traçabilité amont",
-       scalar("SELECT COUNT(*) FROM REQUIREMENT R WHERE " + s +
-              " AND COALESCE(IS_TRACE_ROOT,0)=0 AND EXISTS(SELECT 1 FROM "
-              "REQUIREMENT_RELATION X WHERE X.TARGET_REQ_ID=R.ID AND X.TYPE_ID "
-              "IN(1,2))"),
-       traceable, 1, "untraced"},
-      {"Couverture documentaire",
-       scalar("SELECT COUNT(*) FROM REQUIREMENT R WHERE " + s +
-              " AND EXISTS(SELECT 1 FROM DOCUMENT_NODE N WHERE N.REQ_ID=R.ID)"),
-       req, 1, "undocumented"},
-      {"Planification vérification",
-       scalar("SELECT COUNT(*) FROM REQUIREMENT R WHERE " + s +
-              " AND EXISTS(SELECT 1 FROM REQUIREMENT_VERIFICATION V "
-              "WHERE V.REQ_ID=R.ID AND V.METHOD_ID IS NOT NULL AND "
-              "V.VERIFICATION_LEVEL_PT_ID IS NOT NULL)"),
-       req, 1, "unverified"},
-      {"Applicabilité définie",
-       scalar("SELECT COUNT(*) FROM REQUIREMENT R WHERE " + s +
-              " AND EXISTS(SELECT 1 FROM REQUIREMENT_APPLICABILITY A WHERE "
-              "A.REQ_ID=R.ID)"),
-       req, 1, "no-applicability"},
-      {"Interfaces couvertes ICD",
-       scalar("SELECT COUNT(*) FROM INTERFACE I WHERE EXISTS(SELECT 1 FROM "
-              "INTERFACE_DOCUMENT X WHERE X.INTERFACE_ID=I.ID)"),
-       interfaces, 4, "uncovered"},
-      {"Documents", scalar("SELECT COUNT(*) FROM DOCUMENT"),
-       scalar("SELECT COUNT(*) FROM DOCUMENT"), 2, "all"},
-      {"Publications récentes",
-       scalar("SELECT COUNT(*) FROM DOCUMENT_EXPORT WHERE "
-              "EXPORT_KIND='PUBLICATION' AND EXPORTED_AT>=DATETIME('now','-30 "
-              "day')"),
-       scalar("SELECT COUNT(*) FROM DOCUMENT_EXPORT WHERE "
-              "EXPORT_KIND='PUBLICATION'"),
-       2, "publications"},
-      {"Changements décidés et finalisés",
-       scalar("SELECT COUNT(*) FROM CHANGE_ITEM C JOIN CHANGE_STATUS S ON "
-              "S.ID=C.STATUS_ID WHERE C.ARCHIVED=0 AND S.IS_FINAL=1 AND "
-              "TRIM(COALESCE(C.DECISION,''))<>''"),
-       scalar("SELECT COUNT(*) FROM CHANGE_ITEM WHERE ARCHIVED=0"), 6,
-       "incomplete"}};
-  m_state->setText(
-      req == 0 ? "Le projet ne contient encore aucune exigence."
-               : QString("%1 exigence(s) dans le périmètre courant.").arg(req));
-  for (int i = 0; i < m_metrics.size(); ++i) {
-    auto &m = m_metrics[i];
-    int pct = m.total ? qRound(100.0 * m.covered / m.total) : 0;
-    auto button = new QToolButton;
-    button->setToolButtonStyle(Qt::ToolButtonTextOnly);
-    button->setText(QString("%1\n\n%2 %\n%3 / %4")
-                        .arg(m.label)
-                        .arg(pct)
-                        .arg(m.covered)
-                        .arg(m.total));
-    button->setMinimumSize(210, 125);
-    button->setStyleSheet(QString("QToolButton{font-size:14px;text-align:left;"
-                                  "padding:16px;border:1px solid "
-                                  "#bbb;border-radius:8px;background:%1}"
-                                  "QToolButton:hover{border:2px solid #4080c0}")
-                              .arg(pct >= 90   ? "#e3f3e8"
-                                   : pct >= 60 ? "#fff4d6"
-                                               : "#fbe4e2"));
-    connect(button, &QToolButton::clicked, this,
-            [this, m] { emit navigateRequested(m.page, m.filter); });
-    m_grid->addWidget(button, i / 3, i % 3);
-  }
-}
+
+CoverageDashboard::CoverageDashboard(QWidget*parent):QWidget(parent){auto*root=new QVBoxLayout(this);root->setContentsMargins(12,8,12,8);auto*head=new QHBoxLayout;auto*titles=new QVBoxLayout;auto*title=new QLabel("Tableau de bord du projet");title->setObjectName("dashboardTitle");m_state=new QLabel("Aucun projet ouvert.");m_state->setObjectName("dashboardState");titles->addWidget(title);titles->addWidget(m_state);head->addLayout(titles);head->addStretch();auto*reload=new QPushButton("Actualiser");head->addWidget(reload);root->addLayout(head);auto*filters=new QHBoxLayout;m_pt=new QComboBox;m_document=new QComboBox;m_configuration=new QComboBox;m_status=new QComboBox;m_type=new QComboBox;m_search=new QLineEdit;m_search->setPlaceholderText("Rechercher…");m_obsolete=new QCheckBox("Inclure les obsolètes");for(auto p:QList<QPair<QString,QComboBox*>>{{"Product Tree",m_pt},{"Document",m_document},{"Configuration",m_configuration},{"Statut",m_status},{"Type",m_type}}){filters->addWidget(new QLabel(p.first+" :"));filters->addWidget(p.second);}filters->addWidget(m_search,1);filters->addWidget(m_obsolete);root->addLayout(filters);auto*host=new QWidget;m_content=new QVBoxLayout(host);m_content->setContentsMargins(0,5,0,0);auto*scroll=new QScrollArea;scroll->setWidgetResizable(true);scroll->setFrameShape(QFrame::NoFrame);scroll->setWidget(host);root->addWidget(scroll,1);setStyleSheet("#dashboardTitle{font-size:24px;font-weight:700;color:#12345b}#dashboardState{color:#687b91}#sectionTitle{font-size:18px;font-weight:700;color:#0862ad}#dashboardPanel,#kpi{background:white;border:1px solid #d5e0ea;border-radius:7px}QComboBox,QLineEdit{min-height:25px}QScrollArea{background:#f3f7fa}");connect(reload,&QPushButton::clicked,this,&CoverageDashboard::refresh);for(auto*c:{m_pt,m_document,m_configuration,m_status,m_type})connect(c,QOverload<int>::of(&QComboBox::currentIndexChanged),this,&CoverageDashboard::refresh);connect(m_search,&QLineEdit::returnPressed,this,&CoverageDashboard::refresh);connect(m_obsolete,&QCheckBox::toggled,this,&CoverageDashboard::refresh);}
+void CoverageDashboard::setConnectionName(const QString&n){m_connection=n;m_service.setConnectionName(n);loadFilters();refresh();}
+void CoverageDashboard::loadFilters(){auto db=QSqlDatabase::database(m_connection,false);if(!db.isValid()||!db.isOpen())return;fill(m_pt,db,"SELECT ID,NAME FROM PT WHERE COALESCE(ARCHIVED,0)=0 ORDER BY POSITION,NAME","Tous");fill(m_document,db,"SELECT ID,COALESCE(NULLIF(REFERENCE,''),TITLE) FROM DOCUMENT ORDER BY TITLE","Tous");fill(m_configuration,db,"SELECT ID,CODE FROM CONFIGURATION WHERE ACTIVE=1 ORDER BY POSITION,CODE","Toutes");fill(m_status,db,"SELECT ID,STATUS FROM REQ_STATUS ORDER BY ID","Tous");fill(m_type,db,"SELECT ID,TYPE FROM REQ_TYPE ORDER BY TYPE","Tous");}
+void CoverageDashboard::clearContent(){while(auto*i=m_content->takeAt(0)){delete i->widget();delete i;}}
+CoverageScope CoverageDashboard::scope()const{CoverageScope s;s.ptId=m_pt->currentData().toInt();s.documentId=m_document->currentData().toInt();s.configurationId=m_configuration->currentData().toInt();s.typeId=m_type->currentData().toInt();if(m_status->currentData().toInt()>=0)s.statusIds<<m_status->currentData().toInt();s.search=m_search->text();s.includeObsolete=m_obsolete->isChecked();return s;}
+void CoverageDashboard::refresh(){clearContent();QString error;auto s=m_service.snapshot(scope(),&error);if(!error.isEmpty()){m_state->setText(error);emit statusMessage(error);return;}m_state->setText(QString("%1 exigence(s) dans le périmètre — actualisé %2").arg(s.requirements).arg(QDateTime::currentDateTime().toString("dd/MM/yyyy HH:mm")));auto*kpis=new QHBoxLayout;int avg=0,n=0;for(auto key:{"allocation","traceability","documentation","verification","applicability"}){auto m=findMetric(s.metrics,key);if(m.total){avg+=m.percent();++n;}}kpis->addWidget(kpi(QString::number(s.requirements),"Exigences",Blue));kpis->addWidget(kpi(QString::number(n?avg/n:0)+" %","Couverture moyenne",Green));kpis->addWidget(kpi(QString::number(s.openChanges),"Changements non finalisés",Orange));kpis->addWidget(kpi(QString::number(s.documents),"Documents",Blue));kpis->addWidget(kpi(QString::number(s.activeConfigurations),"Configurations actives",Grey));m_content->addLayout(kpis);
+auto*req=panel("Exigences");auto*rr=new QHBoxLayout;auto*sb=new QVBoxLayout;sb->addWidget(new QLabel("Répartition par statut"));sb->addWidget(new Bars(s.requirementStatuses,true));rr->addLayout(sb,5);auto*rings=new QHBoxLayout;for(auto spec:QList<QPair<QString,QColor>>{{"allocation",Green},{"traceability",Blue},{"documentation",Orange},{"verification",Orange},{"applicability",Green}}){auto m=findMetric(s.metrics,spec.first);rings->addWidget(new Donut(m.label,m.covered,m.total,spec.second,[this,m]{emit navigateRequested(m.page,m.missingFilter);}));}rr->addLayout(rings,7);body(req)->addLayout(rr);m_content->addWidget(req);
+auto*mid=new QHBoxLayout;auto*changes=panel("Changements");auto*cr=new QHBoxLayout;auto*ct=new QVBoxLayout;ct->addWidget(new QLabel(QString("Par type (%1 changements)").arg(s.changes)));ct->addWidget(new Bars(s.changeTypes,false));cr->addLayout(ct,1);auto*cs=new QVBoxLayout;cs->addWidget(new QLabel("Par statut"));cs->addWidget(new Bars(s.changeStatuses,false));auto*pending=new QLabel(QString("%1 non finalisé(s)").arg(s.openChanges));pending->setStyleSheet("background:#fff4e5;color:#d66b00;padding:8px;font-weight:700;border:1px solid #efbd78;border-radius:4px");cs->addWidget(pending);cr->addLayout(cs,1);body(changes)->addLayout(cr);mid->addWidget(changes,1);auto*docs=panel("Documents");auto*dr=new QHBoxLayout;dr->addWidget(kpi(QString::number(s.documents),"documents",Blue));auto*dt=new QVBoxLayout;dt->addWidget(new QLabel("Par type"));dt->addWidget(new Bars(s.documentTypes,false));dr->addLayout(dt,1);body(docs)->addLayout(dr);auto*ds=new QHBoxLayout;ds->addWidget(kpi(QString::number(s.recentPublications),"publications sur 30 jours",Blue));ds->addWidget(kpi(QString::number(s.neverPublishedDocuments),"jamais publiés",Orange));body(docs)->addLayout(ds);mid->addWidget(docs,1);m_content->addLayout(mid);
+auto*apps=panel("Applicabilité par configuration");if(s.configurations.isEmpty())body(apps)->addWidget(new QLabel("Aucune configuration définie."));for(const auto&c:s.configurations){auto*r=new QHBoxLayout;r->addWidget(new QLabel(c.code+" — "+c.label),2);auto*b=new QProgressBar;b->setRange(0,100);b->setValue(c.percent());b->setFormat(QString("%1 / %2 — %3 %").arg(c.applicable).arg(c.total).arg(c.percent()));b->setStyleSheet(QString("QProgressBar{border:0;background:#e5ebf1;height:19px;text-align:center}QProgressBar::chunk{background:%1}").arg(c.percent()>=80?Green.name():c.percent()>=60?Orange.name():Red.name()));r->addWidget(b,7);auto*a=new QLabel(c.active?"Active":"Archivée");a->setAlignment(Qt::AlignCenter);a->setStyleSheet(QString("color:white;background:%1;padding:3px;border-radius:4px").arg(c.active?Green.name():Grey.name()));r->addWidget(a);body(apps)->addLayout(r);}m_content->addWidget(apps);auto*hint=new QLabel("ⓘ Cliquez sur un indicateur de couverture pour ouvrir la liste filtrée.");hint->setStyleSheet("color:#476887;padding:6px");m_content->addWidget(hint);m_content->addStretch();}

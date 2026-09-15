@@ -170,3 +170,41 @@ Depuis la matrice, cliquer sur **Exporter XLSX…**. Le classeur contient :
 
 Conseiller à l'utilisateur de vérifier les anomalies et les exigences sans
 configuration avant une revue ou une livraison documentaire.
+
+## Tableau de bord et couverture moyenne
+
+Le tableau de bord présente séparément les indicateurs détaillés de couverture
+des exigences. La carte **Couverture moyenne** est une synthèse de cinq taux :
+
+1. allocation au Product Tree ;
+2. traçabilité amont ;
+3. couverture documentaire ;
+4. planification de la vérification ;
+5. applicabilité définie.
+
+Chaque indicateur ayant le même poids, la valeur affichée est leur moyenne
+arithmétique. Un indicateur dont le dénominateur est nul est exclu du calcul.
+
+Exemple :
+
+```text
+Allocation PT       : 91 %
+Traçabilité amont   : 84 %
+Documentation       : 78 %
+Vérification        : 73 %
+Applicabilité       : 86 %
+
+Couverture moyenne = (91 + 84 + 78 + 73 + 86) / 5
+                   = 82,4 %, affiché 82 %
+```
+
+Les taux individuels sont arrondis à l'entier avant le calcul de la moyenne,
+puis le résultat est affiché sous forme d'un pourcentage entier. La couverture
+ICD des interfaces et la complétude des changements ne participent pas à cette
+moyenne. Le dénominateur de la traçabilité peut également différer de celui des
+autres indicateurs, car les exigences déclarées comme racines de traçabilité en
+sont exclues.
+
+La couverture moyenne doit être utilisée comme un repère de synthèse. Pour
+identifier les actions à mener, consulter les cinq anneaux détaillés et cliquer
+sur l'indicateur concerné afin d'afficher les exigences manquantes.

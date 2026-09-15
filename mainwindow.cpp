@@ -40,7 +40,6 @@ MainWindow::MainWindow(QWidget *parent)
 {
     ui->setupUi(this);
     m_coverageDashboard = new CoverageDashboard(this);
-    ui->ViewTabWidget->addTab(m_coverageDashboard, tr("Couverture"));
     m_traceabilityWidget = new TraceabilityWidget(this);
     ui->ViewTabWidget->addTab(m_traceabilityWidget, tr("Traçabilité"));
     m_n2MatrixWidget = new N2MatrixWidget(this);
@@ -155,8 +154,8 @@ void MainWindow::updateProjectUi()
         m_projectNavigation->setEnabled(open);
     if (m_projectPages)
         m_projectPages->setEnabled(open);
-    if (m_coverageDashboard)
-        m_coverageDashboard->setEnabled(open);
+    // Le tableau de bord reste visible sans projet afin d'afficher son état
+    // vide et l'action attendue. Seules les pages métier sont désactivées.
     if (!open)
         emit statusMessage(tr("Aucun projet ouvert. Créez ou ouvrez un projet pour commencer."));
 }
@@ -739,9 +738,10 @@ void MainWindow::setupModernNavigation()
     });
     QWidget *dashboardPage=new QWidget(this);
     QVBoxLayout *dashboardLayout=new QVBoxLayout(dashboardPage);
-    QLabel *dashboardTitle=new QLabel(tr("Tableau de bord du projet"),dashboardPage);
-    QFont titleFont=dashboardTitle->font();titleFont.setPointSize(titleFont.pointSize()+4);titleFont.setBold(true);dashboardTitle->setFont(titleFont);
-    dashboardLayout->addWidget(dashboardTitle);dashboardLayout->addWidget(m_coverageDashboard);
+    dashboardLayout->setContentsMargins(0,0,0,0);
+    m_coverageDashboard->setSizePolicy(QSizePolicy::Expanding,
+                                       QSizePolicy::Expanding);
+    dashboardLayout->addWidget(m_coverageDashboard,1);
 
     QWidget *projectPage=new QWidget(this);QHBoxLayout *projectLayout=new QHBoxLayout(projectPage);
     m_projectNavigation=new QListWidget(projectPage);m_projectNavigation->setMaximumWidth(210);
@@ -793,7 +793,7 @@ void MainWindow::setupModernNavigation()
     connect(m_changeWidget,&ChangeWidget::openInterfaceRequested,this,[this](int id){m_interfaceWidget->openInterface(id);m_projectNavigation->setCurrentRow(4);});
     connect(m_changeWidget,&ChangeWidget::openDocumentRequested,this,[this](int id){m_documentWidget->openDocument(id);m_projectNavigation->setCurrentRow(2);});
     connect(m_changeWidget,&ChangeWidget::openConfigurationRequested,this,[this](int){m_projectNavigation->setCurrentRow(3);});
-    connect(m_coverageDashboard,&CoverageDashboard::navigateRequested,this,[this](int page,const QString&filter){if(page==1){RequirementFilter f;if(filter=="unallocated")f.allocated=0;else if(filter=="untraced")f.traced=0;else if(filter=="undocumented")f.documented=0;else if(filter=="unverified")f.verified=0;m_requirementWidget->applyFilter(f);}ui->mainTabWidget->setCurrentIndex(1);m_projectNavigation->setCurrentRow(page);});
+    connect(m_coverageDashboard,&CoverageDashboard::navigateRequested,this,[this](int page,const QString&filter){if(page==1){RequirementFilter f;if(filter=="unallocated")f.allocated=0;else if(filter=="allocated")f.allocated=1;else if(filter=="untraced")f.traced=0;else if(filter=="traced")f.traced=1;else if(filter=="undocumented")f.documented=0;else if(filter=="documented")f.documented=1;else if(filter=="unverified")f.verified=0;else if(filter=="verified")f.verified=1;m_requirementWidget->applyFilter(f);}ui->mainTabWidget->setCurrentIndex(1);m_projectNavigation->setCurrentRow(page);});
     m_projectNavigation->setCurrentRow(0);
     if (hasOpenProject())
     { m_productTreeWidget->setConnectionName(m_SQLManager->currentConnection());m_requirementWidget->setConnectionName(m_SQLManager->currentConnection());m_documentWidget->setConnectionName(m_SQLManager->currentConnection());m_applicabilityWidget->setConnectionName(m_SQLManager->currentConnection());m_interfaceWidget->setConnectionName(m_SQLManager->currentConnection());m_verificationWidget->setConnectionName(m_SQLManager->currentConnection());m_changeWidget->setConnectionName(m_SQLManager->currentConnection()); }

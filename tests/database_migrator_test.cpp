@@ -18,6 +18,7 @@
 #include "verificationservice.h"
 #include "interfaceservice.h"
 #include "changeservice.h"
+#include "coverageservice.h"
 #include "xlsxreader.h"
 #include <private/qzipreader_p.h>
 #include <private/qzipwriter_p.h>
@@ -60,7 +61,60 @@ private slots:
   void opensVersion11ProjectWithRequiredLegacyIcd();
   void composesDocumentsInsideCallerTransaction();
   void importsExportsReqIfAndRejectsUnsafeXml();
+  void calculatesDashboardCoverageFromOneService();
 };
+
+void DatabaseMigratorTest::calculatesDashboardCoverageFromOneService() {
+  QTemporaryDir directory;
+  REQ_SQLManager manager;
+  const auto creation = manager.newDB(directory.filePath("coverage.db"));
+  QVERIFY2(creation.type() == QSqlError::NoError, qPrintable(creation.text()));
+  QSqlDatabase db = QSqlDatabase::database(manager.currentConnection());
+  QSqlQuery q(db);
+  QVERIFY(q.exec("INSERT INTO PT(ID,NAME,SEGMENT) VALUES(1,'System','SYS')"));
+  QVERIFY(q.exec("INSERT INTO DOCUMENT(ID,PT_ID,TYPE,TITLE) "
+                 "VALUES(1,1,1,'Spécification')"));
+  QVERIFY(q.exec("INSERT INTO REQUIREMENT(ID,PT_ID,CODE,DOC_ID,TITLE,TYPE,"
+                 "STATUS,VERIF_METHOD,IS_TRACE_ROOT) VALUES"
+                 "(1,1,'SYS-001',1,'Couverte',1,1,1,1),"
+                 "(2,1,'SYS-002',1,'À compléter',1,1,1,0)"));
+  QVERIFY(q.exec("INSERT INTO REQUIREMENT_PT(REQ_ID,PT_ID,IS_PRIMARY) "
+                 "VALUES(1,1,1)"));
+  QVERIFY(q.exec("INSERT INTO DOCUMENT_NODE(DOC_ID,PARENT_ID,NODE_TYPE,TITLE,"
+                 "POSITION,REQ_ID) VALUES(1,NULL,'REQUIREMENT','Occurrence',1,1)"));
+
+  CoverageService service(manager.currentConnection());
+  QString error;
+  const auto metrics = service.metrics({}, &error);
+  QVERIFY2(error.isEmpty(), qPrintable(error));
+  auto metric = [&metrics](const QString &key) {
+    return *std::find_if(metrics.cbegin(), metrics.cend(),
+                         [&key](const CoverageMetric &m) { return m.key == key; });
+  };
+  QCOMPARE(metric("requirements").total, 2);
+  QCOMPARE(metric("allocation").covered, 1);
+  QCOMPARE(metric("allocation").percent(), 50);
+  QCOMPARE(metric("traceability").total, 1); // la racine est hors dénominateur
+  QCOMPARE(metric("documentation").covered, 1);
+  QCOMPARE(metric("interfaces").total, 0);
+  QCOMPARE(metric("interfaces").percent(), 0);
+  const auto snapshot = service.snapshot({}, &error);
+  QVERIFY2(error.isEmpty(), qPrintable(error));
+  QCOMPARE(snapshot.requirements, 2);
+  QCOMPARE(snapshot.documents, 1);
+  QCOMPARE(snapshot.documentTypes.size(), 2);
+  QCOMPARE(snapshot.documentTypes[0].code, QString("SP"));
+  QCOMPARE(snapshot.documentTypes[0].value, 1);
+  QCOMPARE(snapshot.documentTypes[1].code, QString("ICD"));
+  QCOMPARE(snapshot.changeTypes.size(), 4);
+  QCOMPARE(snapshot.changeTypes[0].label, QString("Demande de changement"));
+  QCOMPARE(snapshot.changeTypes[1].label, QString("Waiver / Dérogation"));
+  QCOMPARE(snapshot.changeTypes[2].label, QString("Déviation"));
+  QCOMPARE(snapshot.changeStatuses.size(), 5);
+  q = QSqlQuery();
+  db = QSqlDatabase();
+  manager.close();
+}
 
 void DatabaseMigratorTest::importsExportsReqIfAndRejectsUnsafeXml() {
   QTemporaryDir directory; REQ_SQLManager manager;
