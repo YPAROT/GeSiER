@@ -25,7 +25,6 @@ public slots:
 signals:
   void dataChanged();
   void openRequirement(int id);
-  void openChangesRequested(int id);
 
 private:
   void loadDocument(int id);

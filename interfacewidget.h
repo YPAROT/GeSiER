@@ -26,7 +26,6 @@ signals:
   void openProductTreeRequested(int id);
   void openRequirementRequested(int id);
   void openDocumentRequested(int id);
-  void openChangesRequested(int id);
 
 private:
   InterfaceFilter filter() const;

@@ -9,7 +9,7 @@ public:
   explicit ApplicabilityWidget(QWidget *parent=nullptr);
   void setConnectionName(const QString &name);
 public slots: void refresh();
-signals: void dataChanged(); void openRequirementRequested(int id); void openChangesRequested(int id);
+signals: void dataChanged(); void openRequirementRequested(int id);
 private:
   void editConfiguration(int id=-1); void refreshConfigurations(); void refreshMatrix();
   QString m_connection; ApplicabilityService m_service;

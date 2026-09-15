@@ -764,9 +764,6 @@ void MainWindow::setupModernNavigation()
     connect(m_interfaceWidget,&InterfaceWidget::openProductTreeRequested,this,[this](int){m_projectNavigation->setCurrentRow(0);});
     connect(m_productTreeWidget,&ProductTreeWidget::openChangesForPt,this,[this](int id){m_changeWidget->applyObjectFilter("PT",id);ui->mainTabWidget->setCurrentIndex(1);m_projectNavigation->setCurrentRow(6);});
     connect(m_requirementWidget,&RequirementWidget::openChangesRequested,this,[this](int id){m_changeWidget->applyObjectFilter("REQUIREMENT",id);m_projectNavigation->setCurrentRow(6);});
-    connect(m_documentWidget,&DocumentWidget::openChangesRequested,this,[this](int id){m_changeWidget->applyObjectFilter("DOCUMENT",id);m_projectNavigation->setCurrentRow(6);});
-    connect(m_interfaceWidget,&InterfaceWidget::openChangesRequested,this,[this](int id){m_changeWidget->applyObjectFilter("INTERFACE",id);m_projectNavigation->setCurrentRow(6);});
-    connect(m_applicabilityWidget,&ApplicabilityWidget::openChangesRequested,this,[this](int id){m_changeWidget->applyObjectFilter("CONFIGURATION",id);m_projectNavigation->setCurrentRow(6);});
     connect(m_changeWidget,&ChangeWidget::dataChanged,this,&MainWindow::refreshTableSlot);
     connect(m_changeWidget,&ChangeWidget::openRequirementRequested,this,[this](int id){m_requirementWidget->openRequirement(id);m_projectNavigation->setCurrentRow(1);});
     connect(m_changeWidget,&ChangeWidget::openProductTreeRequested,this,[this](int){m_projectNavigation->setCurrentRow(0);});

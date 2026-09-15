@@ -250,12 +250,10 @@ void InterfaceWidget::edit(int id) {
   auto *go2 = new QPushButton("Ouvrir PT 2");
   auto *goReq = new QPushButton("Ouvrir l'exigence cochée");
   auto *goDoc = new QPushButton("Ouvrir le document coché");
-  auto *goChanges = new QPushButton("Changements liés");
   nav->addWidget(go1);
   nav->addWidget(go2);
   nav->addWidget(goReq);
   nav->addWidget(goDoc);
-  nav->addWidget(goChanges);
   form->addRow(nav);
   connect(go1, &QPushButton::clicked, &d, [this, p1] {
     emit openProductTreeRequested(p1->currentData().toInt());
@@ -273,8 +271,6 @@ void InterfaceWidget::edit(int id) {
     if (!ids.isEmpty())
       emit openDocumentRequested(ids.first());
   });
-  connect(goChanges, &QPushButton::clicked, &d,
-          [this, id] { if (id >= 0) emit openChangesRequested(id); });
   auto *buttons =
       new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel);
   QPushButton *archive = nullptr;

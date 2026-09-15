@@ -225,7 +225,7 @@ void ChangeWidget::showDetails() {
               r.statusLabel.toHtmlEscaped() + "</b></p><p>" +
               r.description.toHtmlEscaped().replace("\n", "<br>") +
               "</p><p><b>Décision :</b> " + r.decision.toHtmlEscaped() +
-              "</p><p><b>Objets liés</b></p><ul>";
+      "</p><p><b>Exigences concernées</b></p><ul>";
   for (auto &l : r.links)
     h += "<li><a href=\"" + l.objectType + ":" + QString::number(l.objectId) +
          "\">" + l.objectType + " — " + l.label.toHtmlEscaped() + "</a></li>";
@@ -296,25 +296,7 @@ void ChangeWidget::edit(int id) {
   auto *req =
       choices(db, "SELECT ID,CODE||' — '||TITLE FROM REQUIREMENT ORDER BY CODE",
               "REQUIREMENT", r.links, &d);
-  auto *pt =
-      choices(db, "SELECT ID,NAME FROM PT ORDER BY NAME", "PT", r.links, &d);
-  auto *conf = choices(
-      db, "SELECT ID,CODE||' — '||LABEL FROM CONFIGURATION ORDER BY CODE",
-      "CONFIGURATION", r.links, &d);
-  auto *inter = choices(
-      db, "SELECT ID,COALESCE(CODE,'IF-'||ID) FROM INTERFACE ORDER BY CODE",
-      "INTERFACE", r.links, &d);
-  auto *doc = choices(db,
-                      "SELECT ID,COALESCE(NULLIF(REFERENCE,''),TITLE) FROM "
-                      "DOCUMENT ORDER BY TITLE",
-                      "DOCUMENT", r.links, &d);
-  auto *tabs = new QTabWidget;
-  tabs->addTab(req, "Exigences");
-  tabs->addTab(pt, "Product Tree");
-  tabs->addTab(conf, "Configurations");
-  tabs->addTab(inter, "Interfaces");
-  tabs->addTab(doc, "Documents");
-  tabs->setMaximumHeight(190);
+  req->setMaximumHeight(190);
   f->addRow("Identifiant *", code);
   f->addRow("Type *", type);
   f->addRow("Statut *", status);
@@ -324,7 +306,7 @@ void ChangeWidget::edit(int id) {
   f->addRow("Clôture", closed);
   f->addRow("Référence externe", ref);
   f->addRow("Lien externe", url);
-  f->addRow("Associations multiples", tabs);
+  f->addRow("Exigences concernées", req);
   auto *b =
       new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel);
   if (id >= 0) {
@@ -352,12 +334,12 @@ void ChangeWidget::edit(int id) {
     r.closedAt = closed->dateTime().toString(Qt::ISODate);
     r.externalReference = ref->text();
     r.externalLink = url->text();
-    r.links.clear();
+    QList<ChangeLink> legacyLinks;
+    for (const auto &link : r.links)
+      if (link.objectType != "REQUIREMENT")
+        legacyLinks << link;
+    r.links = legacyLinks;
     collect(req, "REQUIREMENT", r.links);
-    collect(pt, "PT", r.links);
-    collect(conf, "CONFIGURATION", r.links);
-    collect(inter, "INTERFACE", r.links);
-    collect(doc, "DOCUMENT", r.links);
     auto x = m_service.save(r);
     if (!x.success) {
       QMessageBox::warning(this, "Changement", x.message);

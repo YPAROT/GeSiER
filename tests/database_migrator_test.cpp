@@ -67,6 +67,13 @@ void DatabaseMigratorTest::managesChangesAndExportsRegister() {
   QSqlDatabase db = QSqlDatabase::database(manager.currentConnection());
   QSqlQuery q(db);
   QVERIFY(q.exec("INSERT INTO PT(ID,NAME,SEGMENT) VALUES(1,'System','SYS')"));
+  QVERIFY(q.exec("INSERT INTO DOCUMENT(ID,PT_ID,TYPE,TITLE) "
+                 "VALUES(1,1,1,'Spécification système')"));
+  QVERIFY(q.exec("INSERT INTO REQUIREMENT(ID,PT_ID,CODE,DOC_ID,TITLE,TYPE,"
+                 "STATUS,VERIF_METHOD) VALUES(1,1,'SYS-001',1,'Exigence "
+                 "système',1,1,1)"));
+  QVERIFY(q.exec("INSERT INTO REQUIREMENT_PT(REQ_ID,PT_ID,IS_PRIMARY) "
+                 "VALUES(1,1,1)"));
   ChangeService service(manager.currentConnection());
   auto custom = service.saveType(-1, "PROBLEM_REPORT", "Problem Report");
   QVERIFY2(custom.success, qPrintable(custom.message));
@@ -77,7 +84,7 @@ void DatabaseMigratorTest::managesChangesAndExportsRegister() {
   record.typeId = custom.id;
   record.statusId = decided.id;
   record.description = "Écart détecté en revue";
-  record.links = {{"PT", "System", 1}};
+  record.links = {{"REQUIREMENT", "SYS-001", 1}};
   QVERIFY(!service.save(record).success); // un statut final impose une décision
   record.decision = "Accepté avec action de clôture";
   record.externalReference = "REDMINE-42";
@@ -87,12 +94,18 @@ void DatabaseMigratorTest::managesChangesAndExportsRegister() {
   auto loaded = service.get(saved.id);
   QCOMPARE(loaded.typeCode, QString("PROBLEM_REPORT"));
   QCOMPARE(loaded.links.size(), 1);
-  QCOMPARE(loaded.links[0].objectType, QString("PT"));
-  QVERIFY(!q.exec("DELETE FROM PT WHERE ID=1"));
+  QCOMPARE(loaded.links[0].objectType, QString("REQUIREMENT"));
+  ChangeFilter byRequirement;
+  byRequirement.objectType = "REQUIREMENT";
+  byRequirement.objectId = 1;
+  QCOMPARE(service.find(byRequirement).size(), 1);
   ChangeFilter byPt;
   byPt.objectType = "PT";
   byPt.objectId = 1;
-  QCOMPARE(service.find(byPt).size(), 1);
+  QCOMPARE(service.find(byPt).size(), 1); // contexte déduit de l'exigence
+  ChangeRecord invalid = loaded;
+  invalid.links << ChangeLink{"PT", "System", 1};
+  QVERIFY(!service.save(invalid).success);
   auto coverage = service.coverage();
   QCOMPARE(coverage.total, 1);
   QCOMPARE(coverage.complete, 1);

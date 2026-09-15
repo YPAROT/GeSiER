@@ -7,8 +7,9 @@ types configurables. Une déviation autorise avant réalisation un écart
 temporaire à une exigence ; un waiver (dérogation en français) accepte après
 réalisation une non-conformité constatée. Chaque
 objet possède identifiant unique, statut, description, décision, dates,
-référence/lien externe et associations multiples vers exigences, PT,
-configurations, interfaces et documents. Les pièces jointes restent externes et
+référence/lien externe et associations multiples vers les exigences concernées.
+Le contexte Product Tree, configuration, interface et document est déduit des
+exigences, qui restent la source de vérité. Les pièces jointes restent externes et
 sont représentées par des références ou liens.
 
 Créer liste filtrable, fiche latérale, catalogues de statuts finaux, navigation

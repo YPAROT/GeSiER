@@ -42,7 +42,6 @@ DocumentWidget::DocumentWidget(QWidget *parent) : QWidget(parent) {
   auto *draft = new QPushButton("Exporter un draft DOCX");
   auto *publish = new QPushButton("Publier en DOCX");
   auto *history = new QPushButton("Historique des exports");
-  auto *changes = new QPushButton("Changements liés");
   auto *addMetadata = new QPushButton("+ Métadonnée");
   auto *removeMetadata = new QPushButton("− Métadonnée");
   auto *remove = new QPushButton("Retirer");
@@ -77,7 +76,6 @@ DocumentWidget::DocumentWidget(QWidget *parent) : QWidget(parent) {
   treeActions->addWidget(draft);
   treeActions->addWidget(publish);
   treeActions->addWidget(history);
-  treeActions->addWidget(changes);
   treeActions->addWidget(save);
   auto *right = new QWidget;
   auto *rightLayout = new QVBoxLayout(right);
@@ -93,10 +91,6 @@ DocumentWidget::DocumentWidget(QWidget *parent) : QWidget(parent) {
   connect(m_documents, &QListWidget::currentRowChanged, this, [this](int row) {
     if (row >= 0)
       loadDocument(m_documents->item(row)->data(Qt::UserRole).toInt());
-  });
-  connect(changes, &QPushButton::clicked, this, [this] {
-    if (m_current >= 0)
-      emit openChangesRequested(m_current);
   });
   connect(addDocument, &QPushButton::clicked, this, [this] {
     m_current = -1;

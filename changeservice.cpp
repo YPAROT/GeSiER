@@ -189,9 +189,33 @@ QList<ChangeRecord> ChangeService::find(const ChangeFilter &f,
   if (f.onlyIncomplete)
     sql += " AND (TRIM(C.DECISION)='' OR S.IS_FINAL=0)";
   if (f.objectId >= 0 && !f.objectType.isEmpty()) {
-    sql += " AND EXISTS(SELECT 1 FROM CHANGE_LINK L WHERE L.CHANGE_ID=C.ID AND "
-           "L.OBJECT_TYPE=? AND L.OBJECT_ID=?)";
-    b << f.objectType << f.objectId;
+    if (f.objectType == "PT") {
+      sql += " AND EXISTS(SELECT 1 FROM CHANGE_LINK L JOIN REQUIREMENT_PT P "
+             "ON P.REQ_ID=L.OBJECT_ID WHERE L.CHANGE_ID=C.ID AND "
+             "L.OBJECT_TYPE='REQUIREMENT' AND P.PT_ID=?)";
+      b << f.objectId;
+    } else if (f.objectType == "CONFIGURATION") {
+      sql += " AND EXISTS(SELECT 1 FROM CHANGE_LINK L JOIN "
+             "REQUIREMENT_APPLICABILITY A ON A.REQ_ID=L.OBJECT_ID WHERE "
+             "L.CHANGE_ID=C.ID AND L.OBJECT_TYPE='REQUIREMENT' AND "
+             "A.CONFIG_ID=?)";
+      b << f.objectId;
+    } else if (f.objectType == "INTERFACE") {
+      sql += " AND EXISTS(SELECT 1 FROM CHANGE_LINK L JOIN "
+             "INTERFACE_REQUIREMENT I ON I.REQ_ID=L.OBJECT_ID WHERE "
+             "L.CHANGE_ID=C.ID AND L.OBJECT_TYPE='REQUIREMENT' AND "
+             "I.INTERFACE_ID=?)";
+      b << f.objectId;
+    } else if (f.objectType == "DOCUMENT") {
+      sql += " AND EXISTS(SELECT 1 FROM CHANGE_LINK L JOIN DOCUMENT_NODE N "
+             "ON N.REQ_ID=L.OBJECT_ID WHERE L.CHANGE_ID=C.ID AND "
+             "L.OBJECT_TYPE='REQUIREMENT' AND N.DOC_ID=?)";
+      b << f.objectId;
+    } else {
+      sql += " AND EXISTS(SELECT 1 FROM CHANGE_LINK L WHERE L.CHANGE_ID=C.ID "
+             "AND L.OBJECT_TYPE='REQUIREMENT' AND L.OBJECT_ID=?)";
+      b << f.objectId;
+    }
   }
   if (!f.text.trimmed().isEmpty()) {
     sql += " AND (C.CODE LIKE ? OR C.DESCRIPTION LIKE ? OR C.DECISION LIKE ? "
@@ -274,19 +298,30 @@ RequirementResult ChangeService::save(const ChangeRecord &r) {
     if (!u.isValid() || u.scheme().isEmpty())
       return RequirementResult::failure("Le lien externe n'est pas valide.");
   }
+  ChangeRecord before;
+  if (r.id >= 0)
+    before = get(r.id);
   QSet<QString> unique;
   for (const auto &l : r.links) {
     QString key = l.objectType + ":" + QString::number(l.objectId);
     if (unique.contains(key))
       continue;
     unique << key;
+    if (l.objectType != "REQUIREMENT") {
+      bool legacy = false;
+      for (const auto &old : before.links)
+        if (old.objectType == l.objectType && old.objectId == l.objectId) {
+          legacy = true;
+          break;
+        }
+      if (!legacy)
+        return RequirementResult::failure(
+            "Un changement ne peut être associé qu'à des exigences.");
+    }
     if (linkLabel(db, l.objectType, l.objectId).isEmpty())
       return RequirementResult::failure("Un objet associé n'existe plus : " +
                                         key);
   }
-  ChangeRecord before;
-  if (r.id >= 0)
-    before = get(r.id);
   if (!db.transaction())
     return RequirementResult::failure(db.lastError().text());
   QSqlQuery q(db);
