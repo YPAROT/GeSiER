@@ -21,6 +21,8 @@
 #include "verificationwidget.h"
 #include "interfacewidget.h"
 #include "changewidget.h"
+#include "historywidget.h"
+#include "historyservice.h"
 #include "reqifservice.h"
 #include <QAction>
 
@@ -178,6 +180,7 @@ void MainWindow::releaseProjectViews()
     if (m_verificationWidget) m_verificationWidget->setConnectionName({});
     if (m_interfaceWidget) m_interfaceWidget->setConnectionName({});
     if (m_changeWidget) m_changeWidget->setConnectionName({});
+    if (m_historyWidget) m_historyWidget->setConnectionName({});
     if (m_coverageDashboard) m_coverageDashboard->setConnectionName({});
     if (m_traceabilityWidget) m_traceabilityWidget->setConnectionName({});
     if (m_n2MatrixWidget) m_n2MatrixWidget->setConnectionName({});
@@ -209,6 +212,8 @@ void MainWindow::bindProjectViews()
     if (m_verificationWidget) m_verificationWidget->setConnectionName(connection);
     if (m_interfaceWidget) m_interfaceWidget->setConnectionName(connection);
     if (m_changeWidget) m_changeWidget->setConnectionName(connection);
+    if (m_historyWidget) m_historyWidget->setConnectionName(connection);
+    HistoryService(connection).setAuthor(qEnvironmentVariable("USERNAME", "Utilisateur"));
     refreshEditTables();
     refreshViewTables();
     updateProjectUi();
@@ -725,6 +730,33 @@ void MainWindow::setupModernNavigation()
         if(QMessageBox::question(this,tr("Aperçu avant import"),details+tr("\n\nAppliquer cet import transactionnel ?"))!=QMessageBox::Yes)return;
         QString error;if(!service.importFile(path,report,&error)){QMessageBox::critical(this,tr("Import ReqIF"),error);return;}refreshTableSlot();QMessageBox::information(this,tr("Import ReqIF"),tr("Import terminé. ")+report.summary());
     });
+    ui->menuFiles->addSeparator();
+    QAction *backupProject = ui->menuFiles->addAction(tr("Créer une sauvegarde…"));
+    QAction *restoreProject = ui->menuFiles->addAction(tr("Restaurer une sauvegarde…"));
+    QAction *diagnoseProject = ui->menuFiles->addAction(tr("Diagnostiquer le projet"));
+    connect(backupProject,&QAction::triggered,this,[this]{
+        if(!hasOpenProject())return;
+        QString suggested=QFileInfo(m_SQLManager->filename()).completeBaseName()+"-backup.db";
+        QString file=QFileDialog::getSaveFileName(this,tr("Sauvegarder le projet"),suggested,tr("Projet GeSiER (*.db)"));
+        if(file.isEmpty())return;
+        if(m_SQLManager->manualBackup(file))QMessageBox::information(this,tr("Sauvegarde"),tr("Sauvegarde créée avec succès."));
+        else QMessageBox::warning(this,tr("Sauvegarde"),m_SQLManager->lastError());
+    });
+    connect(restoreProject,&QAction::triggered,this,[this]{
+        if(!hasOpenProject())return;
+        QString file=QFileDialog::getOpenFileName(this,tr("Restaurer une sauvegarde"),{},tr("Projet GeSiER (*.db)"));
+        if(file.isEmpty())return;
+        if(QMessageBox::warning(this,tr("Restaurer"),tr("Le projet courant sera remplacé après création d'une copie de sécurité. Continuer ?"),QMessageBox::Yes|QMessageBox::No)!=QMessageBox::Yes)return;
+        releaseProjectViews();
+        if(m_SQLManager->restoreFromBackup(file)){bindProjectViews();QMessageBox::information(this,tr("Restaurer"),tr("Sauvegarde restaurée."));}
+        else {bindProjectViews();QMessageBox::warning(this,tr("Restaurer"),m_SQLManager->lastError());}
+    });
+    connect(diagnoseProject,&QAction::triggered,this,[this]{
+        if(!hasOpenProject())return;
+        const auto d=HistoryService(m_SQLManager->currentConnection()).diagnose();
+        if(d.ok)QMessageBox::information(this,tr("Diagnostic du projet"),d.summary());
+        else QMessageBox::warning(this,tr("Diagnostic du projet"),d.summary());
+    });
     connect(exportReqIf, &QAction::triggered, this, [this] {
         if (!hasOpenProject()) return;
         QString path=QFileDialog::getSaveFileName(this,tr("Exporter ReqIF"),{},tr("ReqIF (*.reqif)"));
@@ -753,6 +785,7 @@ void MainWindow::setupModernNavigation()
     m_verificationWidget=new VerificationWidget(projectPage);
     m_interfaceWidget=new InterfaceWidget(projectPage);
     m_changeWidget=new ChangeWidget(projectPage);
+    m_historyWidget=new HistoryWidget(projectPage);
     const QStringList sections={tr("Product Tree"),tr("Exigences"),tr("Documents"),tr("Applicabilité"),tr("Interfaces"),tr("Vérification"),tr("Changements"),tr("Historique")};
     m_projectNavigation->addItems(sections);
     m_projectPages->addWidget(m_productTreeWidget);
@@ -762,7 +795,7 @@ void MainWindow::setupModernNavigation()
     m_projectPages->addWidget(m_interfaceWidget);
     m_projectPages->addWidget(m_verificationWidget);
     m_projectPages->addWidget(m_changeWidget);
-    m_projectPages->addWidget(ui->tab_Logs);
+    m_projectPages->addWidget(m_historyWidget);
     projectLayout->addWidget(m_projectNavigation);projectLayout->addWidget(m_projectPages,1);
     connect(m_projectNavigation,&QListWidget::currentRowChanged,m_projectPages,&QStackedWidget::setCurrentIndex);
     connect(m_productTreeWidget,&ProductTreeWidget::dataChanged,this,&MainWindow::refreshTableSlot);
@@ -793,10 +826,18 @@ void MainWindow::setupModernNavigation()
     connect(m_changeWidget,&ChangeWidget::openInterfaceRequested,this,[this](int id){m_interfaceWidget->openInterface(id);m_projectNavigation->setCurrentRow(4);});
     connect(m_changeWidget,&ChangeWidget::openDocumentRequested,this,[this](int id){m_documentWidget->openDocument(id);m_projectNavigation->setCurrentRow(2);});
     connect(m_changeWidget,&ChangeWidget::openConfigurationRequested,this,[this](int){m_projectNavigation->setCurrentRow(3);});
+    connect(m_historyWidget,&HistoryWidget::openObjectRequested,this,[this](const QString&type,int id){
+        if(type=="REQUIREMENT"){m_requirementWidget->openRequirement(id);m_projectNavigation->setCurrentRow(1);}
+        else if(type=="DOCUMENT"){m_documentWidget->openDocument(id);m_projectNavigation->setCurrentRow(2);}
+        else if(type=="INTERFACE"){m_interfaceWidget->openInterface(id);m_projectNavigation->setCurrentRow(4);}
+        else if(type=="CHANGE"){m_changeWidget->applyObjectFilter(type,id);m_projectNavigation->setCurrentRow(6);}
+        else if(type=="CONFIGURATION")m_projectNavigation->setCurrentRow(3);
+        else if(type=="PT")m_projectNavigation->setCurrentRow(0);
+    });
     connect(m_coverageDashboard,&CoverageDashboard::navigateRequested,this,[this](int page,const QString&filter){if(page==1){RequirementFilter f;if(filter=="unallocated")f.allocated=0;else if(filter=="allocated")f.allocated=1;else if(filter=="untraced")f.traced=0;else if(filter=="traced")f.traced=1;else if(filter=="undocumented")f.documented=0;else if(filter=="documented")f.documented=1;else if(filter=="unverified")f.verified=0;else if(filter=="verified")f.verified=1;m_requirementWidget->applyFilter(f);}ui->mainTabWidget->setCurrentIndex(1);m_projectNavigation->setCurrentRow(page);});
     m_projectNavigation->setCurrentRow(0);
     if (hasOpenProject())
-    { m_productTreeWidget->setConnectionName(m_SQLManager->currentConnection());m_requirementWidget->setConnectionName(m_SQLManager->currentConnection());m_documentWidget->setConnectionName(m_SQLManager->currentConnection());m_applicabilityWidget->setConnectionName(m_SQLManager->currentConnection());m_interfaceWidget->setConnectionName(m_SQLManager->currentConnection());m_verificationWidget->setConnectionName(m_SQLManager->currentConnection());m_changeWidget->setConnectionName(m_SQLManager->currentConnection()); }
+    { m_productTreeWidget->setConnectionName(m_SQLManager->currentConnection());m_requirementWidget->setConnectionName(m_SQLManager->currentConnection());m_documentWidget->setConnectionName(m_SQLManager->currentConnection());m_applicabilityWidget->setConnectionName(m_SQLManager->currentConnection());m_interfaceWidget->setConnectionName(m_SQLManager->currentConnection());m_verificationWidget->setConnectionName(m_SQLManager->currentConnection());m_changeWidget->setConnectionName(m_SQLManager->currentConnection());m_historyWidget->setConnectionName(m_SQLManager->currentConnection()); }
 
     ui->mainTabWidget->clear();
     ui->mainTabWidget->addTab(dashboardPage,tr("Tableau de bord"));

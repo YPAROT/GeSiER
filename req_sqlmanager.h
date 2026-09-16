@@ -25,6 +25,8 @@ public:
     QSqlError openDB(QString filename, bool backupBeforeMigration = true);
     void close();
     bool saveAs(QString filename);
+    bool manualBackup(const QString &destination);
+    bool restoreFromBackup(const QString &backupFilename);
     QString currentConnection() const;
     bool execQuery(QString queryStr);
     QVector<QStringList> execQueryAndGetResults(QString queryStr);

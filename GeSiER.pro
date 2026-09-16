@@ -26,6 +26,8 @@ DEFINES += QT_DEPRECATED_WARNINGS
 
 
 SOURCES += \
+    historyservice.cpp \
+    historywidget.cpp \
     changeservice.cpp \
     changewidget.cpp \
     coveragedashboard.cpp \
@@ -61,6 +63,8 @@ SOURCES += \
     importlogdialog.cpp
 
 HEADERS += \
+    historyservice.h \
+    historywidget.h \
     changeservice.h \
     changewidget.h \
     coveragedashboard.h \

@@ -22,6 +22,8 @@ qt_add_executable(GeSiER WIN32
     interfacewidget.cpp interfacewidget.h
     changeservice.cpp changeservice.h
     changewidget.cpp changewidget.h
+    historyservice.cpp historyservice.h
+    historywidget.cpp historywidget.h
     producttreeservice.cpp producttreeservice.h
     producttreemodel.cpp producttreemodel.h
     producttreewidget.cpp producttreewidget.h
@@ -94,6 +96,7 @@ if(BUILD_TESTING)
         documentservice.cpp documentservice.h
         docxexportservice.cpp docxexportservice.h
         coverageservice.cpp coverageservice.h
+        historyservice.cpp historyservice.h
         req_sqlmanager.cpp req_sqlmanager.h
         sqltreemodel.cpp sqltreemodel.h
         sqltreeitem.cpp sqltreeitem.h

@@ -126,6 +126,26 @@ QSqlError REQ_SQLManager::openDB(QString filename, bool backupBeforeMigration) {
     return error(
         "Impossible de créer la sauvegarde de sécurité avant ouverture.");
   }
+  if (schemaVersion < DatabaseMigrator::CurrentVersion) {
+    QFile report(filename + ".migration-report.txt");
+    if (report.open(QIODevice::WriteOnly | QIODevice::Text)) {
+      QTextStream stream(&report);
+      stream << "GeSiER - rapport préalable de migration\n"
+             << "Projet: " << QFileInfo(filename).absoluteFilePath() << "\n"
+             << "Schéma source: " << schemaVersion << "\n"
+             << "Schéma cible: " << DatabaseMigrator::CurrentVersion << "\n";
+      QSqlQuery check("PRAGMA foreign_key_check", db);
+      int issues = 0;
+      while (check.next()) {
+        ++issues;
+        stream << "Ambiguïté FK: table=" << check.value(0).toString()
+               << " ligne=" << check.value(1).toString()
+               << " parent=" << check.value(2).toString() << "\n";
+      }
+      stream << (issues ? "Migration à surveiller: anomalies listées ci-dessus."
+                        : "Aucune ambiguïté détectée avant migration.") << "\n";
+    }
+  }
   // La migration v12 reconstruit la table INTERFACE sur les anciens projets.
   // Toute requête encore active sur le schéma empêcherait alors le DROP TABLE
   // avec l'erreur SQLite "database table is locked".
@@ -161,14 +181,67 @@ bool REQ_SQLManager::saveAs(QString filename) {
                             QUuid::createUuid().toString(QUuid::WithoutBraces);
   close();
   bool copied = QFile::copy(source, temporary);
-  if (copied && QFile::exists(filename))
-    copied = QFile::remove(filename);
+  QString replacedBackup;
+  if (copied && QFile::exists(filename)) {
+    replacedBackup = filename + ".replaced-" +
+                     QDateTime::currentDateTime().toString("yyyyMMdd-hhmmsszzz");
+    copied = QFile::rename(filename, replacedBackup);
+  }
   if (copied)
     copied = QFile::rename(temporary, filename);
-  if (!copied)
+  if (!copied) {
     QFile::remove(temporary);
+    if (!replacedBackup.isEmpty() && !QFile::exists(filename))
+      QFile::rename(replacedBackup, filename);
+  } else if (!replacedBackup.isEmpty()) {
+    QFile::remove(replacedBackup);
+  }
   const QSqlError reopenError = openDB(copied ? filename : source, false);
   return copied && reopenError.type() == QSqlError::NoError;
+}
+
+bool REQ_SQLManager::manualBackup(const QString &destination) {
+  if (m_filename.isEmpty() || destination.isEmpty()) return false;
+  QSqlDatabase db = QSqlDatabase::database(m_DBConnectionName, false);
+  QSqlQuery checkpoint(db);
+  if (!checkpoint.exec("PRAGMA wal_checkpoint(FULL)")) {
+    m_lastError = checkpoint.lastError().text(); return false;
+  }
+  if (QFile::exists(destination) && !QFile::remove(destination)) {
+    m_lastError = "Impossible de remplacer la sauvegarde choisie."; return false;
+  }
+  if (!QFile::copy(m_filename, destination)) {
+    m_lastError = "Impossible de copier le fichier projet."; return false;
+  }
+  return true;
+}
+
+bool REQ_SQLManager::restoreFromBackup(const QString &backupFilename) {
+  if (m_filename.isEmpty() || backupFilename.isEmpty() ||
+      !QFileInfo::exists(backupFilename)) return false;
+  const QString destination = m_filename;
+  const QString safety = destination + ".before-restore-" +
+      QDateTime::currentDateTime().toString("yyyyMMdd-hhmmsszzz");
+  close();
+  if (!QFile::copy(destination, safety)) {
+    openDB(destination, false); m_lastError = "Sauvegarde de sécurité impossible."; return false;
+  }
+  const QString staged = destination + ".restore-" + QUuid::createUuid().toString(QUuid::WithoutBraces);
+  bool ok = QFile::copy(backupFilename, staged);
+  if (ok) ok = QFile::remove(destination);
+  if (ok) ok = QFile::rename(staged, destination);
+  if (!ok) {
+    QFile::remove(staged);
+    if (!QFile::exists(destination)) QFile::copy(safety, destination);
+  }
+  QSqlError opened = openDB(destination, false);
+  if (!ok || opened.type()!=QSqlError::NoError) {
+    close(); QFile::remove(destination); QFile::copy(safety, destination);
+    opened = openDB(destination, false);
+    m_lastError = "Restauration annulée; le projet initial a été récupéré.";
+    return false;
+  }
+  return true;
 }
 
 QString REQ_SQLManager::currentConnection() const { return m_DBConnectionName; }

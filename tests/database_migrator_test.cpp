@@ -24,6 +24,7 @@
 #include <private/qzipwriter_p.h>
 #include "sqltreemodel.h"
 #include "reqifservice.h"
+#include "historyservice.h"
 
 namespace {
 QString writeDocxTemplate(const QString &path) {
@@ -62,7 +63,46 @@ private slots:
   void composesDocumentsInsideCallerTransaction();
   void importsExportsReqIfAndRejectsUnsafeXml();
   void calculatesDashboardCoverageFromOneService();
+  void auditsDiagnosesBacksUpAndRestoresProject();
 };
+
+void DatabaseMigratorTest::auditsDiagnosesBacksUpAndRestoresProject() {
+  QTemporaryDir directory;
+  QVERIFY(directory.isValid());
+  const QString project = directory.filePath("project.db");
+  const QString backup = directory.filePath("manual-backup.db");
+  REQ_SQLManager manager;
+  QVERIFY(manager.newDB(project).type() == QSqlError::NoError);
+  HistoryService history(manager.currentConnection());
+  QVERIFY(history.setAuthor("Ingénieur test"));
+  {
+    QSqlDatabase db=QSqlDatabase::database(manager.currentConnection(),false);
+    QSqlQuery q(db);
+    QVERIFY(q.exec("INSERT INTO PT(ID,NAME,SEGMENT) VALUES(1,'System','SYS')"));
+    QVERIFY(q.exec("UPDATE PT SET NAME='Système' WHERE ID=1"));
+    const auto events=history.find({},"PT",{});
+    QCOMPARE(events.size(),2);
+    QCOMPARE(events.first().author,QString("Ingénieur test"));
+    QVERIFY(events.first().beforeJson.contains("System"));
+    QVERIFY(events.first().afterJson.contains("Système"));
+  }
+  const ProjectDiagnostic diagnostic=history.diagnose();
+  QVERIFY2(diagnostic.ok,qPrintable(diagnostic.summary()));
+  QCOMPARE(diagnostic.schemaVersion,DatabaseMigrator::CurrentVersion);
+  QVERIFY(manager.manualBackup(backup));
+  {
+    QSqlQuery q(QSqlDatabase::database(manager.currentConnection(),false));
+    QVERIFY(q.exec("DELETE FROM PT WHERE ID=1"));
+  }
+  QVERIFY(manager.restoreFromBackup(backup));
+  {
+    QSqlQuery q(QSqlDatabase::database(manager.currentConnection(),false));
+    QVERIFY(q.exec("SELECT NAME FROM PT WHERE ID=1")); QVERIFY(q.next());
+    QCOMPARE(q.value(0).toString(),QString("Système"));
+    QVERIFY(q.exec("PRAGMA foreign_key_check")); QVERIFY(!q.next());
+  }
+  manager.close();
+}
 
 void DatabaseMigratorTest::calculatesDashboardCoverageFromOneService() {
   QTemporaryDir directory;
