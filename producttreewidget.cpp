@@ -117,6 +117,11 @@ void ProductTreeWidget::refresh() {
   const QSqlDatabase db = QSqlDatabase::database(m_connection, false);
   if (m_connection.isEmpty() || !db.isValid() || !db.isOpen()) {
     m_root->setEnabled(false);
+    m_segment->clear();
+    m_description->clear();
+    m_code->clear();
+    m_links->setRowCount(0);
+    m_metrics->clearContents();
     return;
   }
   QSqlQuery q("SELECT COUNT(*) FROM PT WHERE PARENT IS NULL AND ARCHIVED=0",
@@ -175,8 +180,13 @@ void ProductTreeWidget::showResult(const ProductTreeResult &r) {
 void ProductTreeWidget::selectNode() {
   int id = selectedId();
   m_links->setRowCount(0);
-  if (id < 0)
+  if (id < 0) {
+    m_segment->clear();
+    m_description->clear();
+    m_code->clear();
+    m_metrics->clearContents();
     return;
+  }
   QSqlQuery q(QSqlDatabase::database(m_connection, false));
   q.prepare("SELECT SEGMENT,DESCRIPTION FROM PT WHERE ID=?");
   q.addBindValue(id);

@@ -304,7 +304,18 @@ void DocumentWidget::setConnectionName(const QString &connectionName) {
 }
 
 void DocumentWidget::releaseDatabase() {
-  m_documents->clear(); m_tree->clear(); m_connection.clear(); m_current = -1;
+  m_documents->clear();
+  m_tree->clear();
+  m_reference->clear();
+  m_secondary->clear();
+  m_title->clear();
+  m_description->clear();
+  m_template->clear();
+  m_metadata->setRowCount(0);
+  m_type->clear();
+  m_pt->clear();
+  m_connection.clear();
+  m_current = -1;
 }
 
 void DocumentWidget::refresh() {
@@ -323,6 +334,12 @@ void DocumentWidget::refresh() {
   }
   if (selectedDocument >= 0)
     openDocument(selectedDocument);
+  if (m_documents->currentRow() < 0) {
+    m_current = -1;
+    m_reference->clear(); m_secondary->clear(); m_title->clear();
+    m_description->clear(); m_template->clear();
+    m_metadata->setRowCount(0); m_tree->clear();
+  }
 }
 
 void DocumentWidget::openDocument(int id) {

@@ -48,8 +48,8 @@ MainWindow::MainWindow(QWidget *parent)
     ui->ViewTabWidget->addTab(m_n2MatrixWidget, tr("Matrice N²"));
     connect(m_coverageDashboard, &CoverageDashboard::statusMessage,
             this, &MainWindow::statusMessage);
-    connect(m_traceabilityWidget, &TraceabilityWidget::dataChanged,
-            m_coverageDashboard, &CoverageDashboard::refresh);
+    connect(m_traceabilityWidget, &TraceabilityWidget::dataChanged, this,
+            &MainWindow::refreshTableSlot);
     m_SQLManager = new REQ_SQLManager();
     m_tableViewManager = new TableViewManager();
     m_tableViewManager->loadConfFromFile(QApplication::applicationDirPath()+"\\defaultConf.ini");
@@ -60,6 +60,22 @@ MainWindow::MainWindow(QWidget *parent)
     ui->mainTabWidget->setCurrentIndex(0);
     ui->ViewTabWidget->setCurrentIndex(0);
     ui->editTabWidget->setCurrentIndex(0);
+
+    // A commit in any editable reference table can affect several screens
+    // (labels, filters, coverage, trees, ...). Keep this list in one place and
+    // install the connections even when the application starts without a
+    // project open.
+    const QList<SQLTableForm *> editableTables = {
+        ui->editPTSqlTableWidget,       ui->editReqSqlTableWidget,
+        ui->editreqmethodSqlTableWidget, ui->editreqstatusSqlTableWidget,
+        ui->editreqtypeSqlTableWidget, ui->editDocumentSqlTableWidget,
+        ui->editDocTypeSqlTableWidget, ui->editReqChapterSqlTableWidget,
+        ui->editConfChangeWidget,      ui->editIFWidget,
+        ui->editIFChaptersWidget,      ui->editModelWidget,
+        ui->editPartsWidget};
+    for (SQLTableForm *table : editableTables)
+        connect(table, &SQLTableForm::comitOccured, this,
+                &MainWindow::refreshTableSlot);
 
 
     QString filename = qEnvironmentVariable("GESIER_PROJECT_PATH");
@@ -99,28 +115,9 @@ MainWindow::MainWindow(QWidget *parent)
 
             refreshEditTables();
 
-            //connection des commits au refresh
-            connect(ui->editPTSqlTableWidget,SIGNAL(comitOccured()),this,SLOT(refreshTableSlot()));
-            connect(ui->editReqSqlTableWidget,SIGNAL(comitOccured()),this,SLOT(refreshTableSlot()));
-            connect(ui->editreqmethodSqlTableWidget,SIGNAL(comitOccured()),this,SLOT(refreshTableSlot()));
-            connect(ui->editreqstatusSqlTableWidget,SIGNAL(comitOccured()),this,SLOT(refreshTableSlot()));
-            connect(ui->editreqtypeSqlTableWidget,SIGNAL(comitOccured()),this,SLOT(refreshTableSlot()));
-            connect(ui->editDocumentSqlTableWidget,SIGNAL(comitOccured()),this,SLOT(refreshTableSlot()));
-            connect(ui->editDocTypeSqlTableWidget,SIGNAL(comitOccured()),this,SLOT(refreshTableSlot()));
-            connect(ui->editReqChapterSqlTableWidget,SIGNAL(comitOccured()),this,SLOT(refreshTableSlot()));
-            connect(ui->editConfChangeWidget,SIGNAL(comitOccured()),this,SLOT(refreshTableSlot()));
-            connect(ui->editIFWidget,SIGNAL(comitOccured()),this,SLOT(refreshTableSlot()));
-            connect(ui->editIFChaptersWidget,SIGNAL(comitOccured()),this,SLOT(refreshTableSlot()));
-            connect(ui->editModelWidget,SIGNAL(comitOccured()),this,SLOT(refreshTableSlot()));
-            connect(ui->editPartsWidget,SIGNAL(comitOccured()),this,SLOT(refreshTableSlot()));
-
-
             refreshViewTables();
         }
     }
-
-    //connection des commits au refresh
-    connect(ui->editPTSqlTableWidget,SIGNAL(comitOccured()),this,SLOT(refreshTableSlot()));
 
     setupModernNavigation();
 
@@ -265,20 +262,10 @@ void MainWindow::on_actionNew_DB_triggered()
             {
                 QWidgetSettings::setValue("REQ",filename);
                 setWindowTitle("GEstion  SImplifée d'Exigences pour La Recherche: "+filename);
-                m_coverageDashboard->setConnectionName(m_SQLManager->currentConnection());
-                m_traceabilityWidget->setConnectionName(m_SQLManager->currentConnection());
-                m_n2MatrixWidget->setConnectionName(m_SQLManager->currentConnection());
-                ui->ReqTrackViewWidget->setConnectionName(m_SQLManager->currentConnection());
-                ui->ReqTrackViewWidget->init();
-                if (m_productTreeWidget) m_productTreeWidget->setConnectionName(m_SQLManager->currentConnection());
-                if (m_requirementWidget) m_requirementWidget->setConnectionName(m_SQLManager->currentConnection());
-                if (m_documentWidget) m_documentWidget->setConnectionName(m_SQLManager->currentConnection());
+                bindProjectViews();
             }
         }
     }
-
-    refreshEditTables();
-    refreshViewTables();
     updateProjectUi();
 }
 
@@ -301,18 +288,9 @@ void MainWindow::on_actionLoad_DB_triggered()
         {
             QWidgetSettings::setValue("REQ",filename);
             setWindowTitle("GEstion  SImplifée d'Exigences pour La Recherche: "+filename);
-            m_coverageDashboard->setConnectionName(m_SQLManager->currentConnection());
-            m_traceabilityWidget->setConnectionName(m_SQLManager->currentConnection());
-            m_n2MatrixWidget->setConnectionName(m_SQLManager->currentConnection());
-            ui->ReqTrackViewWidget->setConnectionName(m_SQLManager->currentConnection());
-            if (m_productTreeWidget) m_productTreeWidget->setConnectionName(m_SQLManager->currentConnection());
-            if (m_requirementWidget) m_requirementWidget->setConnectionName(m_SQLManager->currentConnection());
-            if (m_documentWidget) m_documentWidget->setConnectionName(m_SQLManager->currentConnection());
+            bindProjectViews();
         }
     }
-    refreshEditTables();
-    ui->ReqTrackViewWidget->init();
-    refreshViewTables();
     updateProjectUi();
 }
 
@@ -329,15 +307,8 @@ void MainWindow::on_actionSave_as_triggered()
             QWidgetSettings::setValue("REQ",filename);
             setWindowTitle("GEstion  SImplifée d'Exigences pour La Recherche: "+filename);
         }
-        if (hasOpenProject()) {
-            refreshEditTables();
-            refreshViewTables();
-            ui->ReqTrackViewWidget->setConnectionName(m_SQLManager->currentConnection());
-            ui->ReqTrackViewWidget->init();
-            if (m_productTreeWidget) m_productTreeWidget->setConnectionName(m_SQLManager->currentConnection());
-            if (m_requirementWidget) m_requirementWidget->setConnectionName(m_SQLManager->currentConnection());
-            if (m_documentWidget) m_documentWidget->setConnectionName(m_SQLManager->currentConnection());
-        }
+        if (hasOpenProject())
+            bindProjectViews();
     }
     updateProjectUi();
 }
@@ -703,6 +674,10 @@ void MainWindow::refreshTableSlot()
         return;
     refreshEditTables();
     refreshViewTables();
+    if (m_productTreeWidget)
+        m_productTreeWidget->refresh();
+    if (m_requirementWidget)
+        m_requirementWidget->refresh();
     if (m_documentWidget)
         m_documentWidget->refresh();
     if (m_applicabilityWidget)
@@ -713,9 +688,14 @@ void MainWindow::refreshTableSlot()
         m_interfaceWidget->refresh();
     if (m_changeWidget)
         m_changeWidget->refresh();
-    m_coverageDashboard->refresh();
-    m_traceabilityWidget->refresh();
-    m_n2MatrixWidget->refresh();
+    if (m_historyWidget)
+        m_historyWidget->refresh();
+    if (m_coverageDashboard)
+        m_coverageDashboard->refresh();
+    if (m_traceabilityWidget)
+        m_traceabilityWidget->refresh();
+    if (m_n2MatrixWidget)
+        m_n2MatrixWidget->refresh();
 }
 
 void MainWindow::setupModernNavigation()
@@ -801,14 +781,9 @@ void MainWindow::setupModernNavigation()
     connect(m_productTreeWidget,&ProductTreeWidget::dataChanged,this,&MainWindow::refreshTableSlot);
     connect(m_requirementWidget,&RequirementWidget::dataChanged,this,&MainWindow::refreshTableSlot);
     connect(m_documentWidget,&DocumentWidget::dataChanged,this,&MainWindow::refreshTableSlot);
-    connect(m_applicabilityWidget,&ApplicabilityWidget::dataChanged,this,[this]{
-        // La matrice s'est déjà rafraîchie elle-même. Ne pas recharger toutes
-        // les pages du projet pour la modification d'une seule cellule.
-        if(m_requirementWidget)m_requirementWidget->refresh();
-        if(m_coverageDashboard)m_coverageDashboard->refresh();
-    });
+    connect(m_applicabilityWidget,&ApplicabilityWidget::dataChanged,this,&MainWindow::refreshTableSlot);
     connect(m_applicabilityWidget,&ApplicabilityWidget::openRequirementRequested,this,[this](int id){ui->mainTabWidget->setCurrentIndex(1);m_projectNavigation->setCurrentRow(1);m_requirementWidget->openRequirementApplicability(id);});
-    connect(m_verificationWidget,&VerificationWidget::dataChanged,this,[this]{if(m_requirementWidget)m_requirementWidget->refresh();if(m_coverageDashboard)m_coverageDashboard->refresh();});
+    connect(m_verificationWidget,&VerificationWidget::dataChanged,this,&MainWindow::refreshTableSlot);
     connect(m_verificationWidget,&VerificationWidget::openRequirementRequested,this,[this](int id){ui->mainTabWidget->setCurrentIndex(1);m_projectNavigation->setCurrentRow(1);m_requirementWidget->openRequirement(id);});
     connect(m_documentWidget,&DocumentWidget::openRequirement,this,[this](int id){ui->mainTabWidget->setCurrentIndex(1);m_projectNavigation->setCurrentRow(1);m_requirementWidget->openRequirement(id);});
     connect(m_requirementWidget,&RequirementWidget::openDocumentRequested,this,[this](int id){ui->mainTabWidget->setCurrentIndex(1);m_projectNavigation->setCurrentRow(2);m_documentWidget->openDocument(id);});
@@ -837,7 +812,7 @@ void MainWindow::setupModernNavigation()
     connect(m_coverageDashboard,&CoverageDashboard::navigateRequested,this,[this](int page,const QString&filter){if(page==1){RequirementFilter f;if(filter=="unallocated")f.allocated=0;else if(filter=="allocated")f.allocated=1;else if(filter=="untraced")f.traced=0;else if(filter=="traced")f.traced=1;else if(filter=="undocumented")f.documented=0;else if(filter=="documented")f.documented=1;else if(filter=="unverified")f.verified=0;else if(filter=="verified")f.verified=1;m_requirementWidget->applyFilter(f);}ui->mainTabWidget->setCurrentIndex(1);m_projectNavigation->setCurrentRow(page);});
     m_projectNavigation->setCurrentRow(0);
     if (hasOpenProject())
-    { m_productTreeWidget->setConnectionName(m_SQLManager->currentConnection());m_requirementWidget->setConnectionName(m_SQLManager->currentConnection());m_documentWidget->setConnectionName(m_SQLManager->currentConnection());m_applicabilityWidget->setConnectionName(m_SQLManager->currentConnection());m_interfaceWidget->setConnectionName(m_SQLManager->currentConnection());m_verificationWidget->setConnectionName(m_SQLManager->currentConnection());m_changeWidget->setConnectionName(m_SQLManager->currentConnection());m_historyWidget->setConnectionName(m_SQLManager->currentConnection()); }
+        bindProjectViews();
 
     ui->mainTabWidget->clear();
     ui->mainTabWidget->addTab(dashboardPage,tr("Tableau de bord"));
