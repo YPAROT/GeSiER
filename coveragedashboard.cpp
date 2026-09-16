@@ -8,10 +8,23 @@
 
 namespace {
 const QColor Blue("#2878c8"),Green("#2e9d67"),Orange("#e59a2f"),Red("#d6534d"),Grey("#98a2ae"),Ink("#12345b");
-QColor colorAt(int i){static const QList<QColor> c{Grey,Orange,Green,Red,QColor("#b7c2ce"),Blue,QColor("#725bb5")};return c[i%c.size()];}
+QColor colorAt(int i){static const QList<QColor> c{
+  QColor("#8b98a7"), // gris ardoise
+  QColor("#e59a2f"), // orange
+  QColor("#2e9d67"), // vert
+  QColor("#d6534d"), // rouge
+  QColor("#54a9b5"), // turquoise
+  QColor("#2878c8"), // bleu
+  QColor("#725bb5"), // violet
+  QColor("#c45a91"), // rose
+  QColor("#8a6a3f"), // brun
+  QColor("#49a078"), // vert sauge
+  QColor("#d47725"), // orange sombre
+  QColor("#536d9f")  // bleu acier
+};return c[i%c.size()];}
 class Donut:public QWidget{
 public: Donut(QString t,int v,int n,QColor c,std::function<void()> a,QWidget*p=nullptr):QWidget(p),title(std::move(t)),value(v),total(n),color(c),action(std::move(a)){setMinimumSize(135,145);setCursor(Qt::PointingHandCursor);setToolTip("Afficher les éléments manquants");}
-protected:void paintEvent(QPaintEvent*)override{QPainter p(this);p.setRenderHint(QPainter::Antialiasing);int side=qMin(width()-24,96),x=(width()-side)/2;QRectF r(x,8,side,side);QPen pen(QColor("#dce5ee"),11);p.setPen(pen);p.drawArc(r,0,360*16);int pct=total?qRound(100.0*value/total):0;pen.setColor(color);p.setPen(pen);p.drawArc(r,90*16,-pct*360*16/100);p.setPen(Ink);QFont f=p.font();f.setBold(true);f.setPointSize(13);p.setFont(f);p.drawText(r,Qt::AlignCenter,QString::number(pct)+" %");f.setBold(false);f.setPointSize(9);p.setFont(f);p.drawText(QRectF(0,82,width(),24),Qt::AlignCenter,QString("%1 / %2").arg(value).arg(total));f.setPointSize(10);p.setFont(f);p.drawText(QRectF(3,111,width()-6,32),Qt::AlignHCenter|Qt::AlignTop|Qt::TextWordWrap,title);}
+protected:void paintEvent(QPaintEvent*)override{QPainter p(this);p.setRenderHint(QPainter::Antialiasing);int side=qMin(width()-24,96),x=(width()-side)/2;QRectF r(x,8,side,side);QPen pen(QColor("#dce5ee"),11);p.setPen(pen);p.drawArc(r,0,360*16);int pct=total?qRound(100.0*value/total):0;pen.setColor(color);p.setPen(pen);p.drawArc(r,90*16,-pct*360*16/100);p.setPen(Ink);QFont f=p.font();f.setBold(true);f.setPointSize(13);p.setFont(f);p.drawText(QRectF(x,31,side,28),Qt::AlignCenter,QString::number(pct)+" %");f.setBold(false);f.setPointSize(9);p.setFont(f);p.drawText(QRectF(x,57,side,20),Qt::AlignCenter,QString("%1 / %2").arg(value).arg(total));f.setPointSize(10);p.setFont(f);p.drawText(QRectF(3,111,width()-6,32),Qt::AlignHCenter|Qt::AlignTop|Qt::TextWordWrap,title);}
 void mouseReleaseEvent(QMouseEvent*)override{if(action)action();}
 private:QString title;int value,total;QColor color;std::function<void()> action;};
 class Bars:public QWidget{
