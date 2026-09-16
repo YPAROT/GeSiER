@@ -80,11 +80,14 @@ void DatabaseMigratorTest::auditsDiagnosesBacksUpAndRestoresProject() {
     QSqlQuery q(db);
     QVERIFY(q.exec("INSERT INTO PT(ID,NAME,SEGMENT) VALUES(1,'System','SYS')"));
     QVERIFY(q.exec("UPDATE PT SET NAME='Système' WHERE ID=1"));
+    QVERIFY(q.exec("INSERT INTO PT(ID,NAME,SEGMENT) VALUES(2,'Logiciel','SW')"));
     const auto events=history.find({},"PT",{});
-    QCOMPARE(events.size(),2);
-    QCOMPARE(events.first().author,QString("Ingénieur test"));
-    QVERIFY(events.first().beforeJson.contains("System"));
-    QVERIFY(events.first().afterJson.contains("Système"));
+    QCOMPARE(events.size(),3);
+    const auto objectEvents=history.find({},"PT",{},1);
+    QCOMPARE(objectEvents.size(),2);
+    QCOMPARE(objectEvents.first().author,QString("Ingénieur test"));
+    QVERIFY(objectEvents.first().beforeJson.contains("System"));
+    QVERIFY(objectEvents.first().afterJson.contains("Système"));
   }
   const ProjectDiagnostic diagnostic=history.diagnose();
   QVERIFY2(diagnostic.ok,qPrintable(diagnostic.summary()));

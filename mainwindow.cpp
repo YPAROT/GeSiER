@@ -795,6 +795,7 @@ void MainWindow::setupModernNavigation()
     connect(m_interfaceWidget,&InterfaceWidget::openProductTreeRequested,this,[this](int){m_projectNavigation->setCurrentRow(0);});
     connect(m_productTreeWidget,&ProductTreeWidget::openChangesForPt,this,[this](int id){m_changeWidget->applyObjectFilter("PT",id);ui->mainTabWidget->setCurrentIndex(1);m_projectNavigation->setCurrentRow(6);});
     connect(m_requirementWidget,&RequirementWidget::openChangesRequested,this,[this](int id){m_changeWidget->applyObjectFilter("REQUIREMENT",id);m_projectNavigation->setCurrentRow(6);});
+    connect(m_requirementWidget,&RequirementWidget::openChangeRequested,this,[this](int id){m_changeWidget->openChange(id);m_projectNavigation->setCurrentRow(6);});
     connect(m_changeWidget,&ChangeWidget::dataChanged,this,&MainWindow::refreshTableSlot);
     connect(m_changeWidget,&ChangeWidget::openRequirementRequested,this,[this](int id){m_requirementWidget->openRequirement(id);m_projectNavigation->setCurrentRow(1);});
     connect(m_changeWidget,&ChangeWidget::openProductTreeRequested,this,[this](int){m_projectNavigation->setCurrentRow(0);});
@@ -805,7 +806,7 @@ void MainWindow::setupModernNavigation()
         if(type=="REQUIREMENT"){m_requirementWidget->openRequirement(id);m_projectNavigation->setCurrentRow(1);}
         else if(type=="DOCUMENT"){m_documentWidget->openDocument(id);m_projectNavigation->setCurrentRow(2);}
         else if(type=="INTERFACE"){m_interfaceWidget->openInterface(id);m_projectNavigation->setCurrentRow(4);}
-        else if(type=="CHANGE"){m_changeWidget->applyObjectFilter(type,id);m_projectNavigation->setCurrentRow(6);}
+        else if(type=="CHANGE"){m_changeWidget->openChange(id);m_projectNavigation->setCurrentRow(6);}
         else if(type=="CONFIGURATION")m_projectNavigation->setCurrentRow(3);
         else if(type=="PT")m_projectNavigation->setCurrentRow(0);
     });

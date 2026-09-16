@@ -5,6 +5,8 @@
 #include "tabularservice.h"
 #include "tabularexportdialog.h"
 #include "documentservice.h"
+#include "changeservice.h"
+#include "historyservice.h"
 #include "producttreeservice.h"
 #include <QSqlDatabase>
 #include <QSqlQuery>
@@ -257,13 +259,35 @@ RequirementWidget::RequirementWidget(QWidget *p) : QWidget(p) {
   applicabilityLayout->addWidget(applicabilityHelp);
   applicabilityLayout->addWidget(m_configurations);
   m_tabs->addTab(applicabilityPage, "Applicabilité");
-  for (QString name : {"Changements",
-                       "Historique"}) {
-    auto label =
-        new QLabel("Cette section sera complétée dans son lot métier.");
-    label->setAlignment(Qt::AlignCenter);
-    m_tabs->addTab(label, name);
-  }
+  m_changes = new QTableWidget(0, 5);
+  m_changes->setHorizontalHeaderLabels(
+      {"Code", "Type", "Statut", "Description", "Décision"});
+  m_changes->setSelectionBehavior(QAbstractItemView::SelectRows);
+  m_changes->setSelectionMode(QAbstractItemView::SingleSelection);
+  m_changes->setEditTriggers(QAbstractItemView::NoEditTriggers);
+  m_changes->horizontalHeader()->setStretchLastSection(true);
+  auto *changesPage = new QWidget;
+  auto *changesLayout = new QVBoxLayout(changesPage);
+  auto *openAllChanges = new QPushButton("Ouvrir les changements liés");
+  changesLayout->addWidget(openAllChanges, 0, Qt::AlignLeft);
+  changesLayout->addWidget(m_changes);
+  m_tabs->addTab(changesPage, "Changements");
+
+  m_history = new QTableWidget(0, 6);
+  m_history->setHorizontalHeaderLabels(
+      {"Date", "Auteur", "Événement", "Avant", "Après", "Commentaire"});
+  m_history->setSelectionBehavior(QAbstractItemView::SelectRows);
+  m_history->setEditTriggers(QAbstractItemView::NoEditTriggers);
+  m_history->horizontalHeader()->setStretchLastSection(true);
+  m_tabs->addTab(m_history, "Historique");
+  connect(openAllChanges, &QPushButton::clicked, this, [this] {
+    if (m_current >= 0) emit openChangesRequested(m_current);
+  });
+  connect(m_changes, &QTableWidget::cellDoubleClicked, this, [this](int row, int) {
+    if (row >= 0 && m_changes->item(row, 0))
+      emit openChangeRequested(
+          m_changes->item(row, 0)->data(Qt::UserRole).toInt());
+  });
   m_save = new QPushButton("Enregistrer");
   m_cancel = new QPushButton("Annuler");
   auto actions = new QHBoxLayout;
@@ -666,6 +690,10 @@ void RequirementWidget::refresh() {
   QString error;
   m_records = m_service.find(m_filter, &error);
   sortByColumn(m_sortColumn);
+  if (m_current >= 0) {
+    loadChanges(m_current);
+    loadHistory(m_current);
+  }
 }
 void RequirementWidget::openRequirement(int id) {
   if (id < 0 || !confirmDiscard())
@@ -805,6 +833,8 @@ void RequirementWidget::clearEditor() {
   if (m_relationGraph->scene()) m_relationGraph->scene()->deleteLater();
   m_relationGraph->setScene(new QGraphicsScene(m_relationGraph));
   m_documents->setRowCount(0);
+  m_changes->setRowCount(0);
+  m_history->setRowCount(0);
   loadApplicability({});
   m_loading = false;
   m_dirty = false;
@@ -859,6 +889,8 @@ void RequirementWidget::loadEditor(int id) {
   loadRelationGraph(id);
   loadDocuments(id);
   loadApplicability(r.configurationIds);
+  loadChanges(id);
+  loadHistory(id);
   ProductTreeService pt(m_connection);
   QString prefix = pt.fullCode(r.primaryPtId) + "-R-";
   m_codeWarning->setText(
@@ -1492,6 +1524,44 @@ void RequirementWidget::loadApplicability(const QList<int> &selected) {
     }
   }
   m_loading = wasLoading;
+}
+
+void RequirementWidget::loadChanges(int id) {
+  m_changes->setRowCount(0);
+  ChangeFilter filter;
+  filter.objectType = "REQUIREMENT";
+  filter.objectId = id;
+  filter.includeArchived = true;
+  const auto rows = ChangeService(m_connection).find(filter);
+  for (const ChangeRecord &record : rows) {
+    const int row = m_changes->rowCount();
+    m_changes->insertRow(row);
+    const QStringList values = {
+        record.code, record.typeLabel, record.statusLabel, record.description,
+        record.decision};
+    for (int column = 0; column < values.size(); ++column)
+      m_changes->setItem(row, column, new QTableWidgetItem(values[column]));
+    m_changes->item(row, 0)->setData(Qt::UserRole, record.id);
+    if (record.archived)
+      for (int column = 0; column < m_changes->columnCount(); ++column)
+        m_changes->item(row, column)->setForeground(Qt::gray);
+  }
+  m_changes->resizeColumnsToContents();
+}
+
+void RequirementWidget::loadHistory(int id) {
+  m_history->setRowCount(0);
+  const auto rows = HistoryService(m_connection).find({}, "REQUIREMENT", {}, id);
+  for (const HistoryRecord &record : rows) {
+    const int row = m_history->rowCount();
+    m_history->insertRow(row);
+    const QStringList values = {record.time, record.author, record.eventType,
+                                record.beforeJson, record.afterJson,
+                                record.comment};
+    for (int column = 0; column < values.size(); ++column)
+      m_history->setItem(row, column, new QTableWidgetItem(values[column]));
+  }
+  m_history->resizeColumnsToContents();
 }
 void RequirementWidget::obsolete() {
   if (m_current < 0)

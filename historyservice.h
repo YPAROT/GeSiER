@@ -25,7 +25,8 @@ public:
   explicit HistoryService(QString connectionName);
   QList<HistoryRecord> find(const QString &text = {},
                             const QString &objectType = {},
-                            const QString &eventType = {}) const;
+                            const QString &eventType = {},
+                            int objectId = -1) const;
   QStringList objectTypes() const;
   QStringList eventTypes() const;
   ProjectDiagnostic diagnose() const;

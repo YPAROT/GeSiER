@@ -16,7 +16,8 @@ static QSqlDatabase historyDb(const QString &name) {
 
 QList<HistoryRecord> HistoryService::find(const QString &text,
                                            const QString &objectType,
-                                           const QString &eventType) const {
+                                           const QString &eventType,
+                                           int objectId) const {
   QList<HistoryRecord> result;
   QSqlQuery q(historyDb(m_connectionName));
   QString sql = "SELECT ID,EVENT_TIME,COALESCE(AUTHOR,''),EVENT_TYPE,"
@@ -26,6 +27,7 @@ QList<HistoryRecord> HistoryService::find(const QString &text,
   QVariantList values;
   if (!objectType.isEmpty()) { sql += " AND OBJECT_TYPE=?"; values << objectType; }
   if (!eventType.isEmpty()) { sql += " AND EVENT_TYPE=?"; values << eventType; }
+  if (objectId >= 0) { sql += " AND OBJECT_ID=?"; values << objectId; }
   if (!text.trimmed().isEmpty()) {
     sql += " AND (AUTHOR LIKE ? OR OBJECT_TYPE LIKE ? OR EVENT_TYPE LIKE ? OR "
            "BEFORE_JSON LIKE ? OR AFTER_JSON LIKE ? OR COMMENT LIKE ?)";

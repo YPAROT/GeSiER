@@ -120,6 +120,8 @@ if(BUILD_TESTING)
         requirementrelationservice.cpp requirementrelationservice.h
         documentservice.cpp documentservice.h
         producttreeservice.cpp producttreeservice.h
+        changeservice.cpp changeservice.h
+        historyservice.cpp historyservice.h
         databasemigrator.cpp databasemigrator.h
         req_sqlmanager.cpp req_sqlmanager.h
         qressources.qrc

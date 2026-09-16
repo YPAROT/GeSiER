@@ -30,6 +30,7 @@ signals:
   void dataChanged();
   void openDocumentRequested(int id);
   void openChangesRequested(int id);
+  void openChangeRequested(int id);
 private slots:
   void selectRow(int, int);
   void save();
@@ -57,6 +58,8 @@ private:
   void loadRelationGraph(int id);
   void loadDocuments(int id);
   void loadApplicability(const QList<int> &selected);
+  void loadChanges(int id);
+  void loadHistory(int id);
   void appendVerification(
       const RequirementVerification &verification = RequirementVerification());
   RequirementRecord editorRecord() const;
@@ -79,7 +82,7 @@ private:
   QComboBox *m_status, *m_type, *m_primary;
   QTreeWidget *m_pt;
   QTableWidget *m_verifications, *m_list;
-  QTableWidget *m_relations, *m_documents;
+  QTableWidget *m_relations, *m_documents, *m_changes, *m_history;
   QGraphicsView *m_relationGraph;
   QSpinBox *m_graphDepth;
   QCheckBox *m_showDerivations, *m_showDependencies;
