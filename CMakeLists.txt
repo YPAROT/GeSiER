@@ -31,7 +31,9 @@ qt_add_executable(GeSiER WIN32
     requirementrelationservice.cpp requirementrelationservice.h
     documentservice.cpp documentservice.h
     docxexportservice.cpp docxexportservice.h
+    docximportservice.cpp docximportservice.h
     documentwidget.cpp documentwidget.h
+    imageeditdialog.cpp imageeditdialog.h
     requirementwidget.cpp requirementwidget.h
     applicabilityservice.cpp applicabilityservice.h
     applicabilitywidget.cpp applicabilitywidget.h
@@ -95,6 +97,7 @@ if(BUILD_TESTING)
         requirementrelationservice.cpp requirementrelationservice.h
         documentservice.cpp documentservice.h
         docxexportservice.cpp docxexportservice.h
+        docximportservice.cpp docximportservice.h
         coverageservice.cpp coverageservice.h
         historyservice.cpp historyservice.h
         req_sqlmanager.cpp req_sqlmanager.h
@@ -111,6 +114,7 @@ if(BUILD_TESTING)
         requirementwidget.cpp requirementwidget.h
         checkablecombobox.cpp checkablecombobox.h
         requirementimportdialog.cpp requirementimportdialog.h
+        docximportservice.cpp docximportservice.h
         importvalidationdialog.cpp importvalidationdialog.h
         xlsxreader.cpp xlsxreader.h
         csvutility.cpp csvutility.h

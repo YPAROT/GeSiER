@@ -2,6 +2,7 @@
 #define REQUIREMENTIMPORTDIALOG_H
 
 #include "tabularservice.h"
+#include "docximportservice.h"
 #include <QDialog>
 
 class QCheckBox;
@@ -28,12 +29,16 @@ private slots:
 private:
   void rebuildMappings();
   void loadSource();
+  void loadWordSource();
+  void runWordImport();
   int mappedColumn(int field) const;
   QString mappedValue(const QStringList &row, int field) const;
   int resolveLevel(const QString &value, int occurrences,
                    QMap<QString, int> &decisions, bool *rejected);
   QString m_connection;
   QString m_filePath;
+  bool m_wordMode = false;
+  DocxImportPreview m_wordPreview;
   QList<TabularSheet> m_sheets;
   QLabel *m_fileLabel;
   QComboBox *m_sheet;
@@ -51,6 +56,8 @@ private:
   QLineEdit *m_documentReference;
   QLineEdit *m_documentTitle;
   QLineEdit *m_documentDescription;
+  QLineEdit *m_wordTemplate;
+  QComboBox *m_primaryPt;
 };
 
 #endif

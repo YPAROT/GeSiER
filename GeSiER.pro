@@ -26,6 +26,8 @@ DEFINES += QT_DEPRECATED_WARNINGS
 
 
 SOURCES += \
+    imageeditdialog.cpp \
+    docximportservice.cpp \
     historyservice.cpp \
     historywidget.cpp \
     changeservice.cpp \
@@ -63,6 +65,8 @@ SOURCES += \
     importlogdialog.cpp
 
 HEADERS += \
+    imageeditdialog.h \
+    docximportservice.h \
     historyservice.h \
     historywidget.h \
     changeservice.h \

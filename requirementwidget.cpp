@@ -85,8 +85,7 @@ RequirementWidget::RequirementWidget(QWidget *p) : QWidget(p) {
   m_duplicate = new QPushButton("Dupliquer");
   m_obsoleteButton = new QPushButton("Rendre obsolète");
   m_includeObsolete = new QCheckBox("Inclure les obsolètes");
-  auto *importExcel = new QPushButton("Importer XLSX…");
-  importExcel->setText("Importer CSV/XLSX…");
+  auto *importExcel = new QPushButton("Importer une spécification…");
   auto *exportTable = new QPushButton("Exporter CSV/XLSX…");
   auto *changes = new QPushButton("Changements liés");
   auto toolbar = new QHBoxLayout;

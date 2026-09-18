@@ -39,7 +39,8 @@ struct DocumentExportRecord {
 class DocxExportService {
 public:
   explicit DocxExportService(QString connectionName = {});
-  DocxTemplateValidation validateTemplate(const QString &path) const;
+  DocxTemplateValidation validateTemplate(const QString &path,
+                                          int documentId = -1) const;
   RequirementResult exportDocument(const DocxExportRequest &request);
   QList<DocumentExportRecord> history(int documentId) const;
   RequirementResult setGedInformation(int exportId, const QString &reference,

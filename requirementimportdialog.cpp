@@ -22,6 +22,7 @@
 #include <QVBoxLayout>
 #include <QRegularExpression>
 #include <QSettings>
+#include <QTextDocumentFragment>
 #include <algorithm>
 
 namespace {
@@ -47,7 +48,8 @@ RequirementImportDialog::RequirementImportDialog(const QString &connectionName,
     : QDialog(parent), m_connection(connectionName) {
   setWindowTitle("Importer une spécification CSV/XLSX");
   resize(1050, 760);
-  auto *choose = new QPushButton("Choisir un fichier CSV/XLSX…");
+  setWindowTitle("Importer une spécification");
+  auto *choose = new QPushButton("Choisir un fichier CSV/XLSX/DOCX…");
   m_fileLabel = new QLabel("Aucun fichier sélectionné");
   m_sheet = new QComboBox;
   m_separator = new QComboBox;
@@ -77,12 +79,24 @@ RequirementImportDialog::RequirementImportDialog(const QString &connectionName,
   m_documentReference = new QLineEdit;
   m_documentTitle = new QLineEdit;
   m_documentDescription = new QLineEdit;
+  m_wordTemplate = new QLineEdit(QSettings().value("Requirements/lastWordImportTemplate").toString());
+  auto *chooseWordTemplate = new QPushButton("Choisir…");
+  auto *validateWordTemplate = new QPushButton("Valider");
+  auto *templateRow = new QHBoxLayout;
+  templateRow->addWidget(m_wordTemplate); templateRow->addWidget(chooseWordTemplate); templateRow->addWidget(validateWordTemplate);
+  m_primaryPt = new QComboBox;
+  ProductTreeService productTrees(m_connection);
+  QSqlQuery pts("SELECT ID,COALESCE(NAME,DESCRIPTION,SEGMENT) FROM PT WHERE ARCHIVED=0 ORDER BY POSITION,ID",
+                QSqlDatabase::database(m_connection));
+  while (pts.next()) m_primaryPt->addItem(productTrees.fullCode(pts.value(0).toInt()) + " — " + pts.value(1).toString(), pts.value(0));
   QSqlQuery documents("SELECT ID,COALESCE(REFERENCE,'')||' — '||TITLE FROM DOCUMENT ORDER BY TITLE",
                       QSqlDatabase::database(m_connection));
   while (documents.next())
     m_existingDocument->addItem(documents.value(1).toString(), documents.value(0));
   auto *form = new QFormLayout;
   form->addRow(choose, m_fileLabel);
+  form->addRow("Gabarit d'import Word", templateRow);
+  form->addRow("Product Tree principal", m_primaryPt);
   form->addRow("Onglet", m_sheet);
   form->addRow("Séparateur CSV", m_separator);
   form->addRow("Encodage CSV", m_encoding);
@@ -116,6 +130,16 @@ RequirementImportDialog::RequirementImportDialog(const QString &connectionName,
   layout->addWidget(buttons);
   connect(choose, &QPushButton::clicked, this,
           &RequirementImportDialog::chooseFile);
+  connect(chooseWordTemplate, &QPushButton::clicked, this, [this] {
+    const QString path = QFileDialog::getOpenFileName(this, "Gabarit d'import Word", m_wordTemplate->text(), "Documents Word (*.docx)");
+    if (!path.isEmpty()) { m_wordTemplate->setText(path); QSettings().setValue("Requirements/lastWordImportTemplate", path); if (m_wordMode) loadWordSource(); }
+  });
+  connect(validateWordTemplate, &QPushButton::clicked, this, [this] {
+    DocxImportService service(m_connection); const auto result = service.validateTemplate(m_wordTemplate->text());
+    QString message = result.valid ? "Gabarit valide." : result.errors.join('\n');
+    if (!result.warnings.isEmpty()) message += "\n\nAvertissements :\n" + result.warnings.join('\n');
+    result.valid ? QMessageBox::information(this, "Gabarit Word", message) : QMessageBox::warning(this, "Gabarit Word", message);
+  });
   connect(m_sheet, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
           &RequirementImportDialog::refreshPreview);
   connect(m_headerRow, QOverload<int>::of(&QSpinBox::valueChanged), this,
@@ -142,12 +166,41 @@ RequirementImportDialog::RequirementImportDialog(const QString &connectionName,
 
 void RequirementImportDialog::chooseFile() {
   const QString fileName = QFileDialog::getOpenFileName(
-      this, "Spécification tabulaire", QString(),
-      "Fichiers tabulaires (*.xlsx *.csv);;Classeur Excel (*.xlsx);;CSV (*.csv)");
+      this, "Spécification", QString(),
+      "Spécifications (*.xlsx *.csv *.docx);;Document Word (*.docx);;Classeur Excel (*.xlsx);;CSV (*.csv)");
   if (fileName.isEmpty())
     return;
   m_filePath = fileName;
-  loadSource();
+  m_wordMode = fileName.endsWith(".docx", Qt::CaseInsensitive);
+  if (m_wordMode) loadWordSource(); else loadSource();
+}
+
+void RequirementImportDialog::loadWordSource() {
+  if (m_wordTemplate->text().trimmed().isEmpty()) {
+    QMessageBox::information(this, "Import Word", "Sélectionnez le gabarit DOCX décrivant la structure des exigences.");
+    return;
+  }
+  QSettings().setValue("Requirements/lastWordImportTemplate", m_wordTemplate->text());
+  DocxImportService service(m_connection);
+  m_wordPreview = service.preview(m_filePath, m_wordTemplate->text());
+  m_fileLabel->setText(m_filePath);
+  m_sheet->setEnabled(false); m_separator->setEnabled(false); m_encoding->setEnabled(false);
+  m_headerRow->setEnabled(false); m_ignoredRows->setEnabled(false); m_mapping->setEnabled(false);
+  m_preview->clear(); m_preview->setColumnCount(7);
+  m_preview->setHorizontalHeaderLabels({"N°", "Chapitre", "Code", "Titre", "Type/Statut", "Description", "Relations"});
+  m_preview->setRowCount(m_wordPreview.requirements.size());
+  for (int row = 0; row < m_wordPreview.requirements.size(); ++row) {
+    const auto &requirement = m_wordPreview.requirements[row];
+    const QString metadata = requirement.type + (requirement.status.isEmpty() ? QString() : " / " + requirement.status);
+    const QString description = QTextDocumentFragment::fromHtml(requirement.record.description).toPlainText();
+    const QStringList values{QString::number(requirement.ordinal), requirement.chapterPath.join(" / "), requirement.record.code,
+                             requirement.record.title, metadata, description, QString::number(requirement.relations.size())};
+    for (int column = 0; column < values.size(); ++column) m_preview->setItem(row, column, new QTableWidgetItem(values[column]));
+  }
+  m_preview->resizeColumnsToContents();
+  QStringList diagnostics = m_wordPreview.errors;
+  for (const QString &warning : m_wordPreview.warnings) diagnostics << "Avertissement : " + warning;
+  if (!diagnostics.isEmpty()) QMessageBox::warning(this, "Aperçu Word", diagnostics.join('\n'));
 }
 
 void RequirementImportDialog::loadSource() {
@@ -315,6 +368,7 @@ int RequirementImportDialog::resolveLevel(const QString &value, int occurrences,
 }
 
 void RequirementImportDialog::runImport() {
+  if (m_wordMode) { runWordImport(); return; }
   if (m_sheet->currentIndex() < 0)
     return;
   if (mappedColumn(Code) < 0 || mappedColumn(Title) < 0 ||
@@ -751,4 +805,39 @@ void RequirementImportDialog::runImport() {
           .arg(createdCount).arg(updatedCount).arg(attachedCount));
   emit imported();
   accept();
+}
+
+void RequirementImportDialog::runWordImport() {
+  if (!m_wordPreview.valid()) {
+    QMessageBox::warning(this, "Import Word", m_wordPreview.errors.join('\n'));
+    return;
+  }
+  DocxImportPreview selected = m_wordPreview;
+  QList<ImportDuplicate> duplicateRows;
+  QSqlDatabase db = QSqlDatabase::database(m_connection);
+  for (const auto &item : selected.requirements) {
+    QSqlQuery existing(db); existing.prepare("SELECT TITLE,COALESCE(DESCRIPTION,'') FROM REQUIREMENT WHERE CODE=?"); existing.addBindValue(item.record.code);
+    if (existing.exec() && existing.next()) duplicateRows << ImportDuplicate{item.record.code, existing.value(0).toString(), item.record.title,
+      QTextDocumentFragment::fromHtml(existing.value(1).toString()).toPlainText(), QTextDocumentFragment::fromHtml(item.record.description).toPlainText()};
+  }
+  QMap<QString, QString> decisions;
+  if (!duplicateRows.isEmpty()) {
+    ImportDuplicateDialog dialog(duplicateRows, m_duplicates->currentData().toString(), this);
+    if (dialog.exec() != QDialog::Accepted) return;
+    decisions = dialog.decisions();
+  }
+  for (int index = selected.requirements.size() - 1; index >= 0; --index) {
+    const QString action = decisions.value(selected.requirements[index].record.code, "update");
+    if (action == "skip" || action == "reject") selected.requirements.removeAt(index);
+    else selected.requirements[index].importAction = action;
+  }
+  if (selected.requirements.isEmpty()) { QMessageBox::information(this, "Import Word", "Aucune exigence à importer."); return; }
+  DocxImportOptions options;
+  options.primaryPtId = m_primaryPt->currentData().toInt();
+  options.updateDuplicates = true;
+  if (m_documentMode->currentData().toString() == "existing") options.documentId = m_existingDocument->currentData().toInt();
+  else { options.documentReference = m_documentReference->text().trimmed(); options.documentTitle = m_documentTitle->text().trimmed(); options.documentDescription = m_documentDescription->text(); }
+  DocxImportService service(m_connection); const auto result = service.importPreview(selected, options);
+  if (!result.success) { QMessageBox::critical(this, "Import Word", result.message); return; }
+  QMessageBox::information(this, "Import Word", result.message); emit imported(); accept();
 }

@@ -1,5 +1,97 @@
 # Prompt pour le futur manuel utilisateur de GeSiER
 
+## Référence des balises Word d'import et d'export
+
+Ajouter au manuel une section de référence exhaustive consacrée aux gabarits
+Word. Expliquer qu'une balise peut être répartie entre plusieurs segments de
+mise en forme Word, mais que son texte visible doit rester strictement identique,
+accolades comprises. Les noms de balises ne sont pas sensibles à la casse ; il
+est néanmoins recommandé de toujours utiliser les formes ci-dessous.
+
+### Structure générale d'un gabarit d'export
+
+| Balise | Rôle | Règle |
+|---|---|---|
+| `{{GESIER_CONTENT}}` | Emplacement du contenu structuré du document | Obligatoire, exactement une fois |
+| `{{GESIER_TOC}}` | Emplacement d'une table des matières Word | Facultative si le document contient déjà un champ TOC |
+| `{{GESIER_REFERENCE}}` | Référence principale, puis références secondaires | Facultative ; utilisable dans le corps, l'en-tête ou le pied de page |
+| `{{GESIER_METADATA}}` | Métadonnées du document, une par ligne | Facultative ; utilisable dans le corps, l'en-tête ou le pied de page |
+| `{{GESIER_METADATA:Nom de la clé}}` | Valeur d'une métadonnée précise | Facultative ; par exemple `{{GESIER_METADATA:Indice}}` dans une cellule de cartouche |
+| `{{GESIER_DOCUMENT_TITLE}}` | Titre du draft ou de la publication | Facultative ; les champs Word `DOCPROPERTY Title` sont également actualisés |
+| `{{GESIER_CHAPTER_LEVEL_1}}` à `{{GESIER_CHAPTER_LEVEL_6}}` | Paragraphes prototypes des différents niveaux de chapitre | Au moins un prototype ; ajouter tous les niveaux nécessaires à la structure exportée |
+| `{{GESIER_REQUIREMENT_TEMPLATE_BEGIN}}` | Début du prototype d'exigence | Obligatoire, exactement une fois |
+| `{{GESIER_REQUIREMENT_TEMPLATE_END}}` | Fin du prototype d'exigence | Obligatoire, exactement une fois et après la balise de début |
+
+Pour construire un cartouche, placer chaque métadonnée à l'endroit voulu, par
+exemple `Indice : {{GESIER_METADATA:Indice}}` et
+`Auteur : {{GESIER_METADATA:Auteur}}`. La recherche ignore la casse et les
+espaces autour du nom de clé. Une clé absente ou ambiguë produit un avertissement
+et une valeur vide ; la balise globale `{{GESIER_METADATA}}` conserve la liste
+complète au format `Clé : Valeur`.
+
+Préciser que les paragraphes portant les balises de début et de fin ne font pas
+partie du rendu. Tout contenu situé entre ces deux bornes est dupliqué pour
+chaque exigence.
+
+### Champs disponibles dans un bloc d'exigence
+
+| Balise | Valeur exportée ou attendue à l'import |
+|---|---|
+| `{{REQ_ID}}` | Identifiant interne à l'export ; informatif et ignoré à l'import |
+| `{{REQ_CODE}}` | Code fonctionnel unique de l'exigence |
+| `{{REQ_TITLE}}` | Titre de l'exigence |
+| `{{REQ_DESCRIPTION}}` | Description |
+| `{{REQ_TYPE}}` | Code ou libellé du type |
+| `{{REQ_STATUS}}` | Code, raccourci ou libellé du statut |
+| `{{REQ_SOURCE}}` | Source de l'exigence |
+| `{{REQ_PRODUCT_TREES}}` | Allocations au Product Tree, un code par ligne |
+| `{{REQ_APPLICABILITY}}` | Configurations applicables, un code par ligne |
+| `{{REQ_VERIFICATIONS}}` | Vérifications, une par ligne |
+| `{{REQ_RELATIONS}}` | Relations prises en charge, une par ligne |
+
+À l'import, `REQ_CODE`, `REQ_TITLE` et `REQ_DESCRIPTION` sont obligatoires dans
+le gabarit. Le code sert de clé pour détecter les exigences déjà présentes.
+Une balise décrite par le gabarit mais vide dans le document source efface la
+valeur correspondante lors d'une mise à jour confirmée.
+
+Documenter la syntaxe compacte compatible avec les exports GeSiER :
+
+- une vérification suit `méthode | niveau | procédure | moyen | verdict |
+  Redmine | commentaire` ;
+- une relation suit `Dépend de CODE`, `Dérive de CODE` ou `Enfant de CODE` ;
+- le titre de l'exigence liée peut suivre le code après `—` ;
+- un commentaire de relation peut être ajouté entre parenthèses.
+
+### Sous-blocs répétables d'import
+
+Présenter également les balises réservées à la description explicite des
+listes répétables :
+
+| Sous-bloc | Balises de champ |
+|---|---|
+| `{{GESIER_VERIFICATION_TEMPLATE_BEGIN}}` … `{{GESIER_VERIFICATION_TEMPLATE_END}}` | `{{VERIF_METHOD}}`, `{{VERIF_LEVEL}}`, `{{VERIF_PROCEDURE}}`, `{{VERIF_REDMINE}}`, `{{VERIF_MEANS}}`, `{{VERIF_VERDICT}}`, `{{VERIF_COMMENT}}` |
+| `{{GESIER_RELATION_TEMPLATE_BEGIN}}` … `{{GESIER_RELATION_TEMPLATE_END}}` | `{{RELATION_TYPE}}`, `{{RELATION_DIRECTION}}`, `{{RELATION_CODE}}`, `{{RELATION_TITLE}}`, `{{RELATION_COMMENT}}` |
+
+Indiquer que ces sous-blocs doivent rester à l'intérieur du bloc d'exigence,
+que leurs bornes doivent être appariées et dans le bon ordre, et que le gabarit
+doit conserver la même structure de paragraphes ou de tableau que le document
+Word à lire.
+
+### Procédure utilisateur et limites
+
+Décrire la procédure complète : ouvrir **Exigences**, choisir **Importer une
+spécification…**, sélectionner le DOCX source et son gabarit, valider le
+gabarit, choisir le Product Tree principal et le document cible, contrôler
+l'aperçu, résoudre les correspondances et les doublons, puis confirmer
+l'import.
+
+Rappeler les règles de conversion : les titres Word deviennent des chapitres ;
+les paragraphes, listes, caractères gras et italiques des descriptions sont
+conservés ; les tableaux sont aplatis en texte ; les images, objets incorporés,
+commentaires Word, notes et révisions suivies ne sont pas importés. Ajouter au
+manuel au moins un exemple complet de gabarit en tableau et un exemple de
+document source correspondant.
+
 Rédiger et intégrer dans le manuel utilisateur accessible depuis le menu
 **Aide** une section pédagogique consacrée aux relations entre exigences.
 
