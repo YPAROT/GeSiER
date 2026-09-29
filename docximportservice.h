@@ -18,6 +18,18 @@ struct DocxImportRelation {
   QString comment;
 };
 
+enum class DocxImportRecognition {
+  Conformant,
+  Candidate
+};
+
+struct DocxImportDiagnostic {
+  QString location;
+  QString field;
+  QString message;
+  bool blocking = true;
+};
+
 struct DocxImportRequirement {
   RequirementRecord record;
   QString type;
@@ -30,10 +42,16 @@ struct DocxImportRequirement {
   int ordinal = 0;
   QString location;
   QString importAction = "update";
+  bool selected = true;
+  DocxImportRecognition recognition = DocxImportRecognition::Conformant;
+  QStringList diagnostics;
+  QList<DocxImportDiagnostic> detailedDiagnostics;
 };
 
 struct DocxImportPreview {
   QList<DocxImportRequirement> requirements;
+  QString documentReference;
+  QString documentTitle;
   QStringList errors;
   QStringList warnings;
   bool valid() const { return errors.isEmpty() && !requirements.isEmpty(); }

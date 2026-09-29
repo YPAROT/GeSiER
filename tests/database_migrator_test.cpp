@@ -48,6 +48,20 @@ QString writeDocxTemplate(const QString &path) {
   writer.close();
   return path;
 }
+QString writeImportFixture(const QString &path, const QByteArray &document,
+                           const QByteArray &header = {},
+                           const QByteArray &coreTitle = {},
+                           const QByteArray &customReference = {}) {
+  const QByteArray styles = R"(<?xml version="1.0" encoding="UTF-8"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="paragraph" w:styleId="Heading1"><w:pPr><w:outlineLvl w:val="0"/></w:pPr></w:style></w:styles>)";
+  QZipWriter writer(path);
+  writer.addFile("word/document.xml", document);
+  writer.addFile("word/styles.xml", styles);
+  if (!header.isEmpty()) writer.addFile("word/header1.xml", header);
+  if (!coreTitle.isEmpty()) writer.addFile("docProps/core.xml", "<?xml version=\"1.0\"?><cp:coreProperties xmlns:cp=\"http://schemas.openxmlformats.org/package/2006/metadata/core-properties\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\"><dc:title>" + coreTitle + "</dc:title></cp:coreProperties>");
+  if (!customReference.isEmpty()) writer.addFile("docProps/custom.xml", "<?xml version=\"1.0\"?><Properties xmlns=\"http://schemas.openxmlformats.org/officeDocument/2006/custom-properties\" xmlns:vt=\"http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes\"><property name=\"Reference\"><vt:lpwstr>" + customReference + "</vt:lpwstr></property></Properties>");
+  writer.close();
+  return path;
+}
 }
 
 class DatabaseMigratorTest : public QObject {
@@ -68,7 +82,54 @@ private slots:
   void calculatesDashboardCoverageFromOneService();
   void auditsDiagnosesBacksUpAndRestoresProject();
   void previewsTaggedWordRoundTrip();
+  void parsesSemanticWordTablesAndMetadata();
 };
+
+void DatabaseMigratorTest::parsesSemanticWordTablesAndMetadata() {
+  QTemporaryDir directory;
+  QVERIFY(directory.isValid());
+  const QByteArray model = R"(<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Document: </w:t></w:r><w:r><w:t>{{GESIER_DOCUMENT_TITLE}}</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>{{GESIER_REQUIREMENT_</w:t></w:r><w:r><w:t>TEMPLATE_BEGIN}}</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Title:</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>{{REQ_TITLE}}</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Reference:</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Code {{REQ_</w:t></w:r><w:r><w:t>CODE}} end</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Description:</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>{{REQ_DESCRIPTION}}</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Type:</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>{{REQ_TYPE}}</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Status:</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>{{REQ_STATUS}}</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Higher level req.:</w:t></w:r></w:p></w:tc><w:tc><w:p/></w:tc></w:tr></w:tbl><w:p><w:r><w:t>{{GESIER_REQUIREMENT_TEMPLATE_END}}</w:t></w:r></w:p></w:body></w:document>)";
+  const QByteArray source = R"(<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Document: Spécification importée</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Fonctions</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Title:</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Détection de panne</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Reference:</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Code SYS-R-0042 end</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Description:</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:rPr><w:b/></w:rPr><w:t>Le système détecte la panne.</w:t></w:r></w:p><w:p><w:pPr><w:numPr/></w:pPr><w:r><w:t>Il journalise l'événement.</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Type:</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Feature</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Status:</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Draft</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Higher level req.:</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>SYS-R-0001</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>)";
+  const QByteArray modelHeader = R"(<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:r><w:t>Ref. {{GESIER_REFERENCE}}</w:t></w:r></w:p></w:hdr>)";
+  const QByteArray sourceHeader = R"(<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:r><w:t>Ref. SPEC-0042</w:t></w:r></w:p></w:hdr>)";
+  const QString modelPath = writeImportFixture(directory.filePath("semantic-model.docx"), model, modelHeader, "Titre propriété", "REF-PROPERTY");
+  const QString sourcePath = writeImportFixture(directory.filePath("semantic-source.docx"), source, sourceHeader, "Titre de repli", "REF-DE-REPLI");
+  DocxImportService service;
+  const auto preview = service.preview(sourcePath, modelPath);
+  QVERIFY2(preview.valid(), qPrintable(preview.errors.join('\n')));
+  QCOMPARE(preview.documentTitle, QString("Spécification importée"));
+  QCOMPARE(preview.documentReference, QString("SPEC-0042"));
+  QCOMPARE(preview.requirements.size(), 1);
+  const auto &requirement = preview.requirements.first();
+  QCOMPARE(requirement.record.code, QString("SYS-R-0042"));
+  QCOMPARE(requirement.record.title, QString("Détection de panne"));
+  QCOMPARE(requirement.chapterPath, QStringList{"Fonctions"});
+  QVERIFY(requirement.record.description.contains("<b>Le système détecte la panne.</b>"));
+  QVERIFY(requirement.record.description.contains("<li>Il journalise l'événement.</li>"));
+
+  QByteArray fallbackModel = model;
+  fallbackModel.replace("{{GESIER_DOCUMENT_TITLE}}", "Titre statique");
+  const QString fallbackModelPath = writeImportFixture(directory.filePath("fallback-model.docx"), fallbackModel, {}, "Titre modèle");
+  const QString fallbackSourcePath = writeImportFixture(directory.filePath("fallback-source.docx"), source, {}, "Titre propriété", "REF-PROPERTY");
+  const auto fallback = service.preview(fallbackSourcePath, fallbackModelPath);
+  QVERIFY2(fallback.valid(), qPrintable(fallback.errors.join('\n')));
+  QCOMPARE(fallback.documentTitle, QString("Titre propriété"));
+  QCOMPARE(fallback.documentReference, QString("REF-PROPERTY"));
+  const QString noReferencePath = writeImportFixture(directory.filePath("filename-must-not-be-reference.docx"), source, {}, "Titre propriété");
+  const auto noReference = service.preview(noReferencePath, fallbackModelPath);
+  QVERIFY2(noReference.valid(), qPrintable(noReference.errors.join('\n')));
+  QVERIFY(noReference.documentReference.isEmpty());
+
+  const QByteArray tolerantSource = R"(<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Candidats</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Titre inhabituel:</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Exigence exemple</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Reference:</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Code EXAMPLE-1 end</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Description:</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Bloc à vérifier</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Type:</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Feature</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Status:</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Draft</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Higher level req.:</w:t></w:r></w:p></w:tc><w:tc><w:p/></w:tc></w:tr></w:tbl><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Tableau documentaire</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>)";
+  const QString tolerantPath = writeImportFixture(directory.filePath("tolerant-source.docx"), tolerantSource);
+  const auto tolerant = service.preview(tolerantPath, modelPath);
+  QVERIFY2(tolerant.valid(), qPrintable(tolerant.errors.join('\n')));
+  QCOMPARE(tolerant.requirements.size(), 1);
+  QCOMPARE(tolerant.requirements.first().recognition, DocxImportRecognition::Candidate);
+  QVERIFY(!tolerant.requirements.first().selected);
+  QCOMPARE(tolerant.requirements.first().record.code, QString("EXAMPLE-1"));
+  QVERIFY(!tolerant.requirements.first().diagnostics.isEmpty());
+}
 
 void DatabaseMigratorTest::previewsTaggedWordRoundTrip() {
   QTemporaryDir directory;
@@ -96,9 +157,31 @@ void DatabaseMigratorTest::previewsTaggedWordRoundTrip() {
   QCOMPARE(preview.requirements.size(), 1);
   QCOMPARE(preview.requirements.first().record.code, QString("SYS-R-0001"));
   QCOMPARE(preview.requirements.first().record.title, QString("Détection"));
+  QCOMPARE(preview.documentTitle, QString("Word"));
+  QCOMPARE(preview.documentReference, QString("SPEC-W"));
   QVERIFY(preview.requirements.first().record.description.contains("Détecter la panne"));
   QVERIFY(!preview.requirements.first().chapterPath.isEmpty());
   QCOMPARE(preview.requirements.first().chapterPath.last(), QString("Fonctions"));
+
+  DocxImportPreview selective;
+  DocxImportRequirement ignored; ignored.selected = false; ignored.ordinal = 1;
+  ignored.record.code = "IGNORED-R-1"; ignored.record.title = "À ignorer"; ignored.record.description = "<p>Ignorée</p>";
+  DocxImportRequirement imported; imported.selected = true; imported.ordinal = 2; imported.location = "Exigence 2 — Fonctions";
+  imported.record.code = "SYS-R-0002"; imported.record.title = "Importée"; imported.record.description = "<p>Valide</p>";
+  selective.requirements = {ignored, imported};
+  DocxImportOptions importOptions; importOptions.documentId = 1; importOptions.primaryPtId = 1;
+  QVERIFY2(importer.importPreview(selective, importOptions).success, "L'exigence cochée doit être importée");
+  QVERIFY(query.exec("SELECT COUNT(*) FROM REQUIREMENT WHERE CODE='IGNORED-R-1'")); QVERIFY(query.next()); QCOMPARE(query.value(0).toInt(), 0);
+  QVERIFY(query.exec("SELECT COUNT(*) FROM REQUIREMENT WHERE CODE='SYS-R-0002'")); QVERIFY(query.next()); QCOMPARE(query.value(0).toInt(), 1);
+
+  DocxImportPreview rollbackPreview;
+  DocxImportRequirement beforeFailure; beforeFailure.selected = true; beforeFailure.ordinal = 3; beforeFailure.location = "Exigence 3";
+  beforeFailure.record.code = "SYS-R-ROLLBACK-1"; beforeFailure.record.title = "Avant erreur"; beforeFailure.record.description = "<p>Valide</p>";
+  DocxImportRequirement failure; failure.selected = true; failure.ordinal = 4; failure.location = "Exigence 4";
+  failure.record.code = "SYS-R-ROLLBACK-2"; failure.record.title = "Erreur"; failure.record.description = "<p>Valide</p>"; failure.type = "TYPE-INCONNU";
+  rollbackPreview.requirements = {beforeFailure, failure};
+  QVERIFY(!importer.importPreview(rollbackPreview, importOptions).success);
+  QVERIFY(query.exec("SELECT COUNT(*) FROM REQUIREMENT WHERE CODE LIKE 'SYS-R-ROLLBACK-%'")); QVERIFY(query.next()); QCOMPARE(query.value(0).toInt(), 0);
   manager.close();
 }
 

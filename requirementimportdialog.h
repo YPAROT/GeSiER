@@ -31,6 +31,8 @@ private:
   void loadSource();
   void loadWordSource();
   void runWordImport();
+  void editWordRequirement(int row);
+  void refreshWordPreviewRow(int row);
   int mappedColumn(int field) const;
   QString mappedValue(const QStringList &row, int field) const;
   int resolveLevel(const QString &value, int occurrences,

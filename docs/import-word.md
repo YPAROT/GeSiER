@@ -10,6 +10,12 @@ d'exigence est encadré par :
 {{GESIER_REQUIREMENT_TEMPLATE_END}}
 ```
 
+Les zones `{{GESIER_DOCUMENT_TITLE}}` et `{{GESIER_REFERENCE}}` servent aussi
+à lire le titre et la référence du document source. Elles préremplissent les
+champs d'une nouvelle spécification sans remplacer une saisie déjà effectuée.
+À défaut, GeSiER consulte les propriétés Word `Title` et `Reference` ; aucune
+référence n'est déduite du nom du fichier.
+
 Les valeurs de l'exemple sont remplacées par les balises suivantes :
 
 | Balise | Valeur |
@@ -46,3 +52,23 @@ DOCX GeSiER existants.
 La liste exhaustive des balises communes, d'import et d'export à intégrer au
 manuel utilisateur est maintenue dans
 [`prompt-manuel-utilisateur.md`](prompt-manuel-utilisateur.md#référence-des-balises-word-dimport-et-dexport).
+
+## Revue avant import
+
+Tous les blocs reconnus sont affichés avant l'écriture. Un bloc conforme au
+gabarit est sélectionné par défaut. Un bloc qui ressemble à une exigence mais
+dont certains libellés ou certaines cellules diffèrent est présenté comme
+« à corriger », avec l'emplacement de la divergence, et reste décoché.
+
+Une exigence peut être corrigée dans l'aperçu : code, titre, description,
+source, type, statut, chapitre, Product Trees, configurations, vérifications
+et relations. Elle peut également être décochée, notamment lorsqu'il s'agit
+d'une exigence d'exemple. GeSiER ne tente pas de reconnaître un exemple à
+partir de son nom afin de ne pas exclure une vraie exigence.
+
+Si une exigence sélectionnée reste invalide, l'utilisateur peut revenir la
+corriger, ignorer les exigences concernées ou annuler tout l'import. Aucune
+écriture n'a lieu avant cette décision. Une erreur technique pendant l'écriture
+annule la transaction complète : exigences, chapitres, rattachements,
+vérifications et relations ne sont pas conservés. Les corrections de l'aperçu
+restent disponibles pour une nouvelle tentative.

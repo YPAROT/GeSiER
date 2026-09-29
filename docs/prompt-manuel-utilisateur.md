@@ -1,5 +1,17 @@
 # Prompt pour le futur manuel utilisateur de GeSiER
 
+## Revue et correction d'un import Word
+
+Décrire l'aperçu préalable à l'import : les exigences conformes sont cochées,
+les blocs partiellement reconnus sont marqués « à corriger » et décochés avec
+un diagnostic de ligne et de cellule. Expliquer comment corriger tous les
+champs, vérifications et relations, ou décocher une exigence d'exemple.
+
+Préciser les trois décisions disponibles face à une anomalie : revenir
+corriger, ignorer les exigences concernées ou annuler tout l'import. Indiquer
+qu'une erreur technique déclenche un rollback complet et conserve l'aperçu
+corrigé pour permettre une nouvelle tentative.
+
 ## Référence des balises Word d'import et d'export
 
 Ajouter au manuel une section de référence exhaustive consacrée aux gabarits
@@ -21,6 +33,12 @@ est néanmoins recommandé de toujours utiliser les formes ci-dessous.
 | `{{GESIER_CHAPTER_LEVEL_1}}` à `{{GESIER_CHAPTER_LEVEL_6}}` | Paragraphes prototypes des différents niveaux de chapitre | Au moins un prototype ; ajouter tous les niveaux nécessaires à la structure exportée |
 | `{{GESIER_REQUIREMENT_TEMPLATE_BEGIN}}` | Début du prototype d'exigence | Obligatoire, exactement une fois |
 | `{{GESIER_REQUIREMENT_TEMPLATE_END}}` | Fin du prototype d'exigence | Obligatoire, exactement une fois et après la balise de début |
+
+À l'import d'une nouvelle spécification, préciser que
+`{{GESIER_DOCUMENT_TITLE}}` et `{{GESIER_REFERENCE}}` préremplissent les champs
+du dialogue sans écraser une saisie existante. En leur absence, GeSiER utilise
+les propriétés Word `Title` et `Reference`; le nom du fichier n'est jamais
+interprété comme une référence documentaire.
 
 Pour construire un cartouche, placer chaque métadonnée à l'endroit voulu, par
 exemple `Indice : {{GESIER_METADATA:Indice}}` et
