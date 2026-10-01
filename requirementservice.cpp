@@ -217,7 +217,7 @@ QString RequirementService::suggestCode(int ptId) const {
                        .arg(pt.fullCode(ptId))
                        .arg(number++, 4, 10, QChar('0'));
     QSqlQuery used(db);
-    used.prepare("SELECT 1 FROM REQUIREMENT WHERE CODE=?");
+    used.prepare("SELECT 1 FROM REQUIREMENT WHERE CODE=? COLLATE NOCASE");
     used.addBindValue(code);
     if (used.exec() && !used.next())
       return code;

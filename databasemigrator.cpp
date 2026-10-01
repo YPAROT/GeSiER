@@ -3,6 +3,7 @@
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QSqlRecord>
+#include <QRegularExpression>
 #include <QStringList>
 
 bool DatabaseMigrator::execute(QSqlDatabase db, const QString &sql,
@@ -56,6 +57,65 @@ bool DatabaseMigrator::migrate(QSqlDatabase db, QString *errorMessage) {
       rebuildInterface = interfaceInfo.value(3).toBool();
   interfaceInfo.finish();
   interfaceInfo = QSqlQuery();
+
+  bool rebuildRequirement = false;
+  QStringList requirementTriggers;
+  QStringList requirementIndexes;
+  if (db.tables().contains("REQUIREMENT")) {
+    QSqlQuery schema(db);
+    schema.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND "
+                   "name='REQUIREMENT'");
+    if (schema.exec() && schema.next()) {
+      const QString tableSql = schema.value(0).toString();
+      rebuildRequirement =
+          QRegularExpression("\\bTITLE\\b[^,)]*\\bUNIQUE\\b",
+                             QRegularExpression::CaseInsensitiveOption)
+              .match(tableSql)
+              .hasMatch();
+    }
+
+    QSqlQuery collisions(db);
+    if (!collisions.exec(
+            "SELECT GROUP_CONCAT(CODE,' / ') FROM REQUIREMENT WHERE CODE IS "
+            "NOT NULL GROUP BY CODE COLLATE NOCASE HAVING COUNT(*)>1")) {
+      if (errorMessage)
+        *errorMessage = collisions.lastError().text();
+      return false;
+    }
+    QStringList conflicts;
+    while (collisions.next())
+      conflicts << collisions.value(0).toString();
+    if (!conflicts.isEmpty()) {
+      if (errorMessage)
+        *errorMessage =
+            "Des codes d'exigence ne diffèrent que par la casse : " +
+            conflicts.join(", ") +
+            ". Corrigez ces codes avant de relancer la migration.";
+      return false;
+    }
+
+    if (rebuildRequirement) {
+      QSqlQuery objects(db);
+      objects.prepare("SELECT type,name,sql FROM sqlite_master WHERE "
+                      "tbl_name='REQUIREMENT' AND sql IS NOT NULL AND "
+                      "type IN ('trigger','index') ORDER BY type,name");
+      if (!objects.exec()) {
+        if (errorMessage)
+          *errorMessage = objects.lastError().text();
+        return false;
+      }
+      while (objects.next()) {
+        const QString type = objects.value(0).toString();
+        const QString name = objects.value(1).toString();
+        const QString sql = objects.value(2).toString();
+        if (type == "trigger")
+          requirementTriggers << sql;
+        else if (name.compare("idx_code", Qt::CaseInsensitive) != 0)
+          requirementIndexes << sql;
+      }
+    }
+  }
+
   const bool foreignKeys = [&db] {
     QSqlQuery q("PRAGMA foreign_keys", db);
     return q.next() && q.value(0).toBool();
@@ -69,8 +129,8 @@ bool DatabaseMigrator::migrate(QSqlDatabase db, QString *errorMessage) {
         q.exec("PRAGMA foreign_keys=ON");
       }
     }
-  } restore{db, rebuildInterface && foreignKeys};
-  if (rebuildInterface && foreignKeys) {
+  } restore{db, (rebuildInterface || rebuildRequirement) && foreignKeys};
+  if ((rebuildInterface || rebuildRequirement) && foreignKeys) {
     QSqlQuery q(db);
     q.exec("PRAGMA foreign_keys=OFF");
   }
@@ -79,6 +139,53 @@ bool DatabaseMigrator::migrate(QSqlDatabase db, QString *errorMessage) {
     if (errorMessage)
       *errorMessage = db.lastError().text();
     return false;
+  }
+
+  if (rebuildRequirement) {
+    const QSqlRecord old = db.record("REQUIREMENT");
+    auto source = [&old](const QString &column, const QString &fallback) {
+      return old.indexOf(column) >= 0 ? column : fallback;
+    };
+    const QString copySql =
+        QString("INSERT INTO REQUIREMENT_V16(ID,PT_ID,CODE,DOC_ID,DOC_"
+                "CHAPTER,TITLE,DESCRIPTION,TYPE,STATUS,SOURCE,PARENT_ID,VERIF_"
+                "LEVEL,VERIF_METHOD,COMMENTS,IS_TRACE_ROOT,VERIF_PROCEDURE,"
+                "REDMINE_REF,VERIF_STATUS,VERIF_MEANS) SELECT ID,PT_ID,CODE,"
+                "DOC_ID,DOC_CHAPTER,TITLE,DESCRIPTION,TYPE,STATUS,SOURCE,"
+                "PARENT_ID,VERIF_LEVEL,VERIF_METHOD,COMMENTS,%1,%2,%3,%4,%5 "
+                "FROM REQUIREMENT")
+            .arg(source("IS_TRACE_ROOT", "0"),
+                 source("VERIF_PROCEDURE", "NULL"),
+                 source("REDMINE_REF", "NULL"),
+                 source("VERIF_STATUS", "NULL"),
+                 source("VERIF_MEANS", "NULL"));
+    if (!execute(
+            db,
+            "CREATE TABLE REQUIREMENT_V16(ID INTEGER PRIMARY KEY "
+            "AUTOINCREMENT,PT_ID INTEGER NOT NULL REFERENCES PT(ID),CODE TEXT "
+            "NOT NULL,DOC_ID INTEGER NOT NULL REFERENCES DOCUMENT(ID),DOC_"
+            "CHAPTER INTEGER REFERENCES REQ_CHAPTER(ID),TITLE TEXT NOT NULL,"
+            "DESCRIPTION TEXT,TYPE INTEGER NOT NULL REFERENCES REQ_TYPE(ID),"
+            "STATUS INTEGER NOT NULL REFERENCES REQ_STATUS(ID),SOURCE TEXT,"
+            "PARENT_ID INTEGER REFERENCES REQUIREMENT(ID),VERIF_LEVEL TEXT,"
+            "VERIF_METHOD INTEGER NOT NULL REFERENCES REQ_METHOD(ID),COMMENTS "
+            "TEXT,IS_TRACE_ROOT INTEGER NOT NULL DEFAULT 0 CHECK(IS_TRACE_ROOT "
+            "IN (0,1)),VERIF_PROCEDURE TEXT,REDMINE_REF TEXT,VERIF_STATUS "
+            "TEXT,VERIF_MEANS TEXT)",
+            errorMessage) ||
+        !execute(db, copySql, errorMessage) ||
+        !execute(db, "DROP TABLE REQUIREMENT", errorMessage) ||
+        !execute(db, "ALTER TABLE REQUIREMENT_V16 RENAME TO REQUIREMENT",
+                 errorMessage)) {
+      db.rollback();
+      return false;
+    }
+    for (const QString &sql : requirementIndexes + requirementTriggers) {
+      if (!execute(db, sql, errorMessage)) {
+        db.rollback();
+        return false;
+      }
+    }
   }
 
   if (rebuildInterface) {
@@ -420,6 +527,16 @@ bool DatabaseMigrator::migrate(QSqlDatabase db, QString *errorMessage) {
                "INTERFACE_DOCUMENT(INTERFACE_ID,DOC_ID,CHAPTER_NODE_ID) SELECT "
                "ID,DOC_ID,NULL FROM INTERFACE WHERE DOC_ID IS NOT NULL",
                errorMessage)) {
+    db.rollback();
+    return false;
+  }
+
+  if (version < 16 &&
+      (!execute(db, "DROP INDEX IF EXISTS idx_code", errorMessage) ||
+       !execute(db,
+                "CREATE UNIQUE INDEX idx_code ON "
+                "REQUIREMENT(CODE COLLATE NOCASE)",
+                errorMessage))) {
     db.rollback();
     return false;
   }

@@ -69,6 +69,8 @@ class DatabaseMigratorTest : public QObject {
   QTemporaryDir m_directory;
 private slots:
   void migratesLegacySchemaWithoutLosingLinks();
+  void migratesRequirementUniquenessToCode();
+  void rejectsCaseInsensitiveCodeCollisions();
   void storesMultipleVerificationMethods();
   void initializesNewProjectCatalogs();
   void managesRelationsAndDocumentOccurrences();
@@ -743,6 +745,103 @@ void DatabaseMigratorTest::migratesLegacySchemaWithoutLosingLinks() {
   QVERIFY(query.next());
   QCOMPARE(query.value(0).toInt(), 0);
   db.close();
+}
+
+void DatabaseMigratorTest::migratesRequirementUniquenessToCode() {
+  QTemporaryDir directory;
+  QVERIFY(directory.isValid());
+  REQ_SQLManager manager;
+  QVERIFY(manager.newDB(directory.filePath("requirements.db")).type() ==
+          QSqlError::NoError);
+  QSqlDatabase db = QSqlDatabase::database(manager.currentConnection());
+  QSqlQuery query(db);
+  QVERIFY(query.exec("INSERT INTO PT(ID,NAME,SEGMENT) "
+                     "VALUES(1,'Système','SYS')"));
+  QVERIFY(query.exec("INSERT INTO DOCUMENT(ID,PT_ID,TYPE,TITLE) "
+                     "VALUES(1,1,1,'Spécification')"));
+  QVERIFY(query.exec("INSERT INTO REQUIREMENT(ID,PT_ID,CODE,DOC_ID,TITLE,"
+                     "TYPE,STATUS,VERIF_METHOD) "
+                     "VALUES(1,1,'REQ-001',1,'Premier titre',1,1,1)"));
+  QVERIFY(query.exec("INSERT INTO REQUIREMENT(ID,PT_ID,CODE,DOC_ID,TITLE,"
+                     "TYPE,STATUS,VERIF_METHOD) "
+                     "VALUES(2,1,'REQ-002',1,'Second titre',1,1,1)"));
+  QVERIFY(query.exec("INSERT INTO REQUIREMENT_PT(REQ_ID,PT_ID,IS_PRIMARY) "
+                     "VALUES(1,1,1),(2,1,1)"));
+  QVERIFY(query.exec("INSERT INTO REQUIREMENT_RELATION(SOURCE_REQ_ID,"
+                     "TARGET_REQ_ID,TYPE_ID) VALUES(1,2,1)"));
+  QVERIFY(query.exec("INSERT INTO DOCUMENT_NODE(DOC_ID,NODE_TYPE,POSITION,"
+                     "REQ_ID) VALUES(1,'REQUIREMENT',1,1)"));
+
+  QVERIFY(query.exec("SELECT sql FROM sqlite_master WHERE type='table' AND "
+                     "name='REQUIREMENT'"));
+  QVERIFY(query.next());
+  QString version15Schema = query.value(0).toString();
+  version15Schema.replace("CREATE TABLE REQUIREMENT",
+                          "CREATE TABLE REQUIREMENT_V15");
+  version15Schema.replace("TITLE STRING NOT NULL",
+                          "TITLE STRING NOT NULL UNIQUE");
+  version15Schema.replace("TITLE TEXT NOT NULL",
+                          "TITLE TEXT NOT NULL UNIQUE");
+  query.finish();
+  QVERIFY(query.exec("PRAGMA foreign_keys=OFF"));
+  QVERIFY2(query.exec(version15Schema), qPrintable(query.lastError().text()));
+  QVERIFY(query.exec("INSERT INTO REQUIREMENT_V15 SELECT * FROM REQUIREMENT"));
+  QVERIFY(query.exec("DROP TABLE REQUIREMENT"));
+  QVERIFY(query.exec("ALTER TABLE REQUIREMENT_V15 RENAME TO REQUIREMENT"));
+  QVERIFY(query.exec("PRAGMA user_version=15"));
+  QVERIFY(query.exec("PRAGMA foreign_keys=ON"));
+
+  QString error;
+  QVERIFY2(DatabaseMigrator::migrate(db, &error), qPrintable(error));
+  QVERIFY(query.exec("UPDATE REQUIREMENT SET TITLE='Titre commun'"));
+  QVERIFY(query.exec("SELECT COUNT(*) FROM REQUIREMENT WHERE TITLE='Titre "
+                     "commun'"));
+  QVERIFY(query.next());
+  QCOMPARE(query.value(0).toInt(), 2);
+  QVERIFY(!query.exec("INSERT INTO REQUIREMENT(PT_ID,CODE,DOC_ID,TITLE,TYPE,"
+                      "STATUS,VERIF_METHOD) "
+                      "VALUES(1,'req-001',1,'Autre titre',1,1,1)"));
+  QVERIFY(query.exec("SELECT COUNT(*) FROM REQUIREMENT_PT"));
+  QVERIFY(query.next());
+  QCOMPARE(query.value(0).toInt(), 2);
+  QVERIFY(query.exec("SELECT COUNT(*) FROM REQUIREMENT_RELATION"));
+  QVERIFY(query.next());
+  QCOMPARE(query.value(0).toInt(), 1);
+  QVERIFY(query.exec("SELECT COUNT(*) FROM DOCUMENT_NODE WHERE REQ_ID=1"));
+  QVERIFY(query.next());
+  QCOMPARE(query.value(0).toInt(), 1);
+  QVERIFY2(DatabaseMigrator::migrate(db, &error), qPrintable(error));
+  query = QSqlQuery();
+  db = QSqlDatabase();
+  manager.close();
+}
+
+void DatabaseMigratorTest::rejectsCaseInsensitiveCodeCollisions() {
+  QTemporaryDir directory;
+  QVERIFY(directory.isValid());
+  QSqlDatabase db = QSqlDatabase::addDatabase("QSQLITE", "collision-test");
+  db.setDatabaseName(directory.filePath("collision.db"));
+  QVERIFY(db.open());
+  QSqlQuery query(db);
+  QVERIFY(query.exec("CREATE TABLE REQUIREMENT(ID INTEGER PRIMARY KEY,CODE "
+                     "TEXT,TITLE TEXT NOT NULL UNIQUE)"));
+  QVERIFY(query.exec("INSERT INTO REQUIREMENT VALUES(1,'REQ-001','Premier')"));
+  QVERIFY(query.exec("INSERT INTO REQUIREMENT VALUES(2,'req-001','Second')"));
+  QVERIFY(query.exec("PRAGMA user_version=15"));
+  QString error;
+  QVERIFY(!DatabaseMigrator::migrate(db, &error));
+  QVERIFY(error.contains("REQ-001"));
+  QVERIFY(error.contains("req-001"));
+  QVERIFY(query.exec("PRAGMA user_version"));
+  QVERIFY(query.next());
+  QCOMPARE(query.value(0).toInt(), 15);
+  QVERIFY(query.exec("SELECT COUNT(*) FROM REQUIREMENT"));
+  QVERIFY(query.next());
+  QCOMPARE(query.value(0).toInt(), 2);
+  query = QSqlQuery();
+  db.close();
+  db = QSqlDatabase();
+  QSqlDatabase::removeDatabase("collision-test");
 }
 
 void DatabaseMigratorTest::storesMultipleVerificationMethods() {

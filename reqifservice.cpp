@@ -136,8 +136,9 @@ ReqIfReport ReqIfService::preview(const QString &fileName) const {
     if (o.externalId.isEmpty()) { report.errors << QObject::tr("SPEC-OBJECT sans IDENTIFIER."); continue; }
     o.code = safeCode(o.code, o.externalId);
     if (o.title.isEmpty()) o.title = o.code;
-    if (codes.contains(o.code)) { ++report.duplicates; report.errors << QObject::tr("Code dupliqué dans le fichier : %1").arg(o.code); }
-    codes.insert(o.code);
+    const QString normalizedCode = o.code.toCaseFolded();
+    if (codes.contains(normalizedCode)) { ++report.duplicates; report.errors << QObject::tr("Code dupliqué dans le fichier : %1").arg(o.code); }
+    codes.insert(normalizedCode);
     const QString hierarchyId = hierarchyObject.key(o.externalId);
     o.parentExternalId = hierarchyObject.value(hierarchyParent.value(hierarchyId));
     report.objects << o;
@@ -152,7 +153,7 @@ ReqIfReport ReqIfService::preview(const QString &fileName) const {
   if (db.isValid() && db.isOpen()) for (const ReqIfObject &o : report.objects) {
     QSqlQuery q(db); q.prepare("SELECT 1 FROM REQIF_IDENTITY WHERE EXTERNAL_ID=?"); q.addBindValue(o.externalId);
     if (q.exec() && q.next()) ++report.updates; else ++report.creates;
-    QSqlQuery conflict(db); conflict.prepare("SELECT R.ID FROM REQUIREMENT R LEFT JOIN REQIF_IDENTITY I ON I.REQ_ID=R.ID WHERE R.CODE=? AND COALESCE(I.EXTERNAL_ID,'')<>?"); conflict.addBindValue(o.code); conflict.addBindValue(o.externalId);
+    QSqlQuery conflict(db); conflict.prepare("SELECT R.ID FROM REQUIREMENT R LEFT JOIN REQIF_IDENTITY I ON I.REQ_ID=R.ID WHERE R.CODE=? COLLATE NOCASE AND COALESCE(I.EXTERNAL_ID,'')<>?"); conflict.addBindValue(o.code); conflict.addBindValue(o.externalId);
     if (conflict.exec() && conflict.next()) report.errors << QObject::tr("Le code %1 appartient déjà à une autre exigence.").arg(o.code);
   }
   QMap<QString, QString> externalParents;

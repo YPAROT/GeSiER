@@ -613,7 +613,7 @@ RequirementResult DocxImportService::importPreview(const DocxImportPreview &prev
     if (!item.selected) continue;
     RequirementRecord record = item.record;
     const QString context = QString("%1 [%2] : ").arg(item.location, record.code);
-    QSqlQuery existing(db); existing.prepare("SELECT ID FROM REQUIREMENT WHERE CODE=?"); existing.addBindValue(record.code);
+    QSqlQuery existing(db); existing.prepare("SELECT ID FROM REQUIREMENT WHERE CODE=? COLLATE NOCASE"); existing.addBindValue(record.code);
     const bool exists = existing.exec() && existing.next();
     if (exists) {
       record = requirements.get(existing.value(0).toInt());
@@ -681,7 +681,7 @@ RequirementResult DocxImportService::importPreview(const DocxImportPreview &prev
     }
     for (const auto &relation : item.relations) {
       int other = idsByCode.value(normalized(relation.otherCode), -1);
-      if (other < 0) { QSqlQuery q(db); q.prepare("SELECT ID FROM REQUIREMENT WHERE UPPER(CODE)=?"); q.addBindValue(normalized(relation.otherCode)); if (q.exec() && q.next()) other = q.value(0).toInt(); }
+      if (other < 0) { QSqlQuery q(db); q.prepare("SELECT ID FROM REQUIREMENT WHERE CODE=? COLLATE NOCASE"); q.addBindValue(relation.otherCode.trimmed()); if (q.exec() && q.next()) other = q.value(0).toInt(); }
       const QString typeCode = relation.type.startsWith("Dépend") ? "DEPENDS_ON" : relation.type.startsWith("Dérive") ? "DERIVES_FROM" : "DECOMPOSE";
       const int typeId = lookup(db, "REQUIREMENT_RELATION_TYPE", {"CODE", "LABEL"}, typeCode);
       if (owner < 0 || other < 0 || typeId < 0) return fail("Relation non résolue pour " + item.record.code + " vers " + relation.otherCode);

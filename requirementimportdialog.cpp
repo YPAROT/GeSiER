@@ -650,7 +650,7 @@ void RequirementImportDialog::runImport() {
     if (m_external->isChecked() && !code.startsWith("EXTERNAL-", Qt::CaseInsensitive))
       code.prepend("EXTERNAL-");
     QSqlQuery existing(db);
-    existing.prepare("SELECT TITLE,COALESCE(DESCRIPTION,'') FROM REQUIREMENT WHERE CODE=?");
+    existing.prepare("SELECT TITLE,COALESCE(DESCRIPTION,'') FROM REQUIREMENT WHERE CODE=? COLLATE NOCASE");
     existing.addBindValue(code);
     if (existing.exec() && existing.next())
       duplicateRows << ImportDuplicate{code, existing.value(0).toString(),
@@ -677,7 +677,7 @@ void RequirementImportDialog::runImport() {
     if (m_external->isChecked() && !code.startsWith("EXTERNAL-", Qt::CaseInsensitive))
       code.prepend("EXTERNAL-");
     QSqlQuery existing(db);
-    existing.prepare("SELECT ID FROM REQUIREMENT WHERE CODE=?");
+    existing.prepare("SELECT ID FROM REQUIREMENT WHERE CODE=? COLLATE NOCASE");
     existing.addBindValue(code);
     const bool exists = existing.exec() && existing.next();
     if (codeWasEmpty || (!exists && (title.isEmpty() || description.isEmpty()))) {
@@ -994,7 +994,7 @@ void RequirementImportDialog::runWordImport() {
   auto requirementExists = [&](const QString &code) {
     for (const auto &candidate : selected.requirements)
       if (candidate.selected && normalized(candidate.record.code) == normalized(code)) return true;
-    QSqlQuery query(db); query.prepare("SELECT 1 FROM REQUIREMENT WHERE UPPER(CODE)=? LIMIT 1");
+    QSqlQuery query(db); query.prepare("SELECT 1 FROM REQUIREMENT WHERE CODE=? COLLATE NOCASE LIMIT 1");
     query.addBindValue(normalized(code)); return query.exec() && query.next();
   };
   QList<int> invalidRows;
@@ -1055,7 +1055,7 @@ void RequirementImportDialog::runWordImport() {
 
   QList<ImportDuplicate> duplicateRows;
   for (const auto &item : selected.requirements) {
-    QSqlQuery existing(db); existing.prepare("SELECT TITLE,COALESCE(DESCRIPTION,'') FROM REQUIREMENT WHERE CODE=?"); existing.addBindValue(item.record.code);
+    QSqlQuery existing(db); existing.prepare("SELECT TITLE,COALESCE(DESCRIPTION,'') FROM REQUIREMENT WHERE CODE=? COLLATE NOCASE"); existing.addBindValue(item.record.code);
     if (existing.exec() && existing.next()) duplicateRows << ImportDuplicate{item.record.code, existing.value(0).toString(), item.record.title,
       QTextDocumentFragment::fromHtml(existing.value(1).toString()).toPlainText(), QTextDocumentFragment::fromHtml(item.record.description).toPlainText()};
   }
