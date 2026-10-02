@@ -19,6 +19,8 @@
 #include "checkablecombobox.h"
 #include "req_sqlmanager.h"
 #include "requirementwidget.h"
+#include "referencedataservice.h"
+#include "referencedatawidget.h"
 
 class RequirementWidgetTest : public QObject {
   Q_OBJECT
@@ -26,7 +28,38 @@ private slots:
   void startsWithoutEditingAndConstrainsPrimaryAllocation();
   void checkableFiltersSupportMultipleValues();
   void relationGraphLayersPlacementAndPreferences();
+  void referenceDataWidgetRefreshesCatalogs();
 };
+
+void RequirementWidgetTest::referenceDataWidgetRefreshesCatalogs() {
+  QTemporaryDir directory;
+  QVERIFY(directory.isValid());
+  REQ_SQLManager manager;
+  const QSqlError error = manager.newDB(directory.filePath("settings.db"));
+  QVERIFY2(error.type() == QSqlError::NoError, qPrintable(error.text()));
+  ReferenceDataService service(manager.currentConnection());
+  QVERIFY(service.addVerificationMethod("Inspection UI").success);
+  QVERIFY(service.addRequirementType("UI-CUSTOM", "Type UI personnalisé").success);
+
+  ReferenceDataWidget widget;
+  widget.setConnectionName(manager.currentConnection());
+  auto *methods = widget.findChild<QTableWidget *>("verificationMethodsTable");
+  auto *types = widget.findChild<QTableWidget *>("requirementTypesTable");
+  QVERIFY(methods);
+  QVERIFY(types);
+  bool foundMethod = false, foundType = false;
+  for (int row = 0; row < methods->rowCount(); ++row)
+    foundMethod |= methods->item(row, 0)->text() == "Inspection UI";
+  for (int row = 0; row < types->rowCount(); ++row)
+    foundType |= types->item(row, 0)->text() == "UI-CUSTOM" &&
+                 types->item(row, 1)->text() == "Type UI personnalisé";
+  QVERIFY(foundMethod);
+  QVERIFY(foundType);
+  widget.releaseDatabase();
+  QCOMPARE(methods->rowCount(), 0);
+  QCOMPARE(types->rowCount(), 0);
+  manager.close();
+}
 
 void RequirementWidgetTest::relationGraphLayersPlacementAndPreferences() {
   QTemporaryDir directory;

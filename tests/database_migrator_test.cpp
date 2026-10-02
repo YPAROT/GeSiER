@@ -26,6 +26,7 @@
 #include "sqltreemodel.h"
 #include "reqifservice.h"
 #include "historyservice.h"
+#include "referencedataservice.h"
 
 namespace {
 QString writeDocxTemplate(const QString &path) {
@@ -73,6 +74,7 @@ private slots:
   void rejectsCaseInsensitiveCodeCollisions();
   void storesMultipleVerificationMethods();
   void initializesNewProjectCatalogs();
+  void managesRequirementReferenceData();
   void managesRelationsAndDocumentOccurrences();
   void managesApplicabilityAndExportsMatrix();
   void managesVerificationMatrixAndExport();
@@ -959,6 +961,64 @@ void DatabaseMigratorTest::initializesNewProjectCatalogs() {
   QVERIFY(query.next());
   QCOMPARE(query.value(0).toString(), QString("WAIVER"));
   QCOMPARE(query.value(1).toString(), QString("Waiver / Dérogation"));
+  query = QSqlQuery();
+  db = QSqlDatabase();
+  manager.close();
+}
+
+void DatabaseMigratorTest::managesRequirementReferenceData() {
+  QTemporaryDir directory;
+  QVERIFY(directory.isValid());
+  REQ_SQLManager manager;
+  const QSqlError error = manager.newDB(directory.filePath("reference-data.db"));
+  QVERIFY2(error.type() == QSqlError::NoError, qPrintable(error.text()));
+  ReferenceDataService service(manager.currentConnection());
+
+  auto method = service.addVerificationMethod("  Inspection  ");
+  QVERIFY2(method.success, qPrintable(method.message));
+  QVERIFY(!service.addVerificationMethod("inspection").success);
+  QVERIFY(!service.addVerificationMethod("  ").success);
+  QVERIFY(service.updateVerificationMethod(method.id, "Inspection visuelle").success);
+
+  auto type = service.addRequirementType("  PERF-CUSTOM  ", " Performance spéciale ");
+  QVERIFY2(type.success, qPrintable(type.message));
+  QVERIFY(!service.addRequirementType("perf-custom", "Autre").success);
+  QVERIFY(!service.addRequirementType("OTHER", "performance SPÉCIALE").success);
+  QVERIFY(!service.addRequirementType({}, " ").success);
+  QVERIFY(service.updateRequirementType(type.id, {}, "Performance personnalisée").success);
+
+  auto freeMethod = service.addVerificationMethod("Méthode temporaire");
+  auto freeType = service.addRequirementType({}, "Type temporaire");
+  QVERIFY(freeMethod.success);
+  QVERIFY(freeType.success);
+  QVERIFY(service.deleteVerificationMethod(freeMethod.id).success);
+  QVERIFY(service.deleteRequirementType(freeType.id).success);
+
+  ProductTreeService tree(manager.currentConnection());
+  QVERIFY(tree.addNode(-1, "SYS").success);
+  QSqlDatabase db = QSqlDatabase::database(manager.currentConnection());
+  QSqlQuery query(db);
+  QVERIFY(query.exec("SELECT ID FROM PT WHERE SEGMENT='SYS'"));
+  QVERIFY(query.next());
+  const int ptId = query.value(0).toInt();
+  QVERIFY(query.exec(QString("INSERT INTO DOCUMENT(ID,PT_ID,TYPE,TITLE) VALUES(1,%1,1,'Référentiels')").arg(ptId)));
+  QVERIFY(query.exec(QString("INSERT INTO REQUIREMENT(ID,PT_ID,CODE,DOC_ID,TITLE,TYPE,STATUS,VERIF_METHOD) VALUES(1,%1,'REF-1',1,'Référence',%2,1,%3)").arg(ptId).arg(type.id).arg(method.id)));
+  QVERIFY(!service.deleteRequirementType(type.id).success);
+  QVERIFY(!service.deleteVerificationMethod(method.id).success);
+
+  auto planMethod = service.addVerificationMethod("Méthode du plan");
+  QVERIFY(planMethod.success);
+  QVERIFY(query.exec(QString("INSERT INTO REQUIREMENT_VERIFICATION(REQ_ID,METHOD_ID,POSITION) VALUES(1,%1,0)").arg(planMethod.id)));
+  QVERIFY(!service.deleteVerificationMethod(planMethod.id).success);
+
+  const auto methods = service.verificationMethods();
+  QVERIFY(std::any_of(methods.cbegin(), methods.cend(), [method](const ReferenceDataEntry &entry) {
+    return entry.id == method.id && entry.label == "Inspection visuelle";
+  }));
+  const auto types = service.requirementTypes();
+  QVERIFY(std::any_of(types.cbegin(), types.cend(), [type](const ReferenceDataEntry &entry) {
+    return entry.id == type.id && entry.code.isEmpty() && entry.label == "Performance personnalisée";
+  }));
   query = QSqlQuery();
   db = QSqlDatabase();
   manager.close();

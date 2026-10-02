@@ -30,6 +30,7 @@ class VerificationWidget;
 class InterfaceWidget;
 class ChangeWidget;
 class HistoryWidget;
+class ReferenceDataWidget;
 class QListWidget;
 class QStackedWidget;
 
@@ -134,6 +135,7 @@ private:
     InterfaceWidget* m_interfaceWidget = nullptr;
     ChangeWidget* m_changeWidget = nullptr;
     HistoryWidget* m_historyWidget = nullptr;
+    ReferenceDataWidget* m_referenceDataWidget = nullptr;
     QListWidget* m_projectNavigation = nullptr;
     QStackedWidget* m_projectPages = nullptr;
     //SqlTreeReqModel* m_Req_Arbo;

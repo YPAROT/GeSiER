@@ -22,6 +22,7 @@
 #include "interfacewidget.h"
 #include "changewidget.h"
 #include "historywidget.h"
+#include "referencedatawidget.h"
 #include "historyservice.h"
 #include "reqifservice.h"
 #include <QAction>
@@ -178,6 +179,7 @@ void MainWindow::releaseProjectViews()
     if (m_interfaceWidget) m_interfaceWidget->setConnectionName({});
     if (m_changeWidget) m_changeWidget->setConnectionName({});
     if (m_historyWidget) m_historyWidget->setConnectionName({});
+    if (m_referenceDataWidget) m_referenceDataWidget->releaseDatabase();
     if (m_coverageDashboard) m_coverageDashboard->setConnectionName({});
     if (m_traceabilityWidget) m_traceabilityWidget->setConnectionName({});
     if (m_n2MatrixWidget) m_n2MatrixWidget->setConnectionName({});
@@ -210,6 +212,7 @@ void MainWindow::bindProjectViews()
     if (m_interfaceWidget) m_interfaceWidget->setConnectionName(connection);
     if (m_changeWidget) m_changeWidget->setConnectionName(connection);
     if (m_historyWidget) m_historyWidget->setConnectionName(connection);
+    if (m_referenceDataWidget) m_referenceDataWidget->setConnectionName(connection);
     HistoryService(connection).setAuthor(qEnvironmentVariable("USERNAME", "Utilisateur"));
     refreshEditTables();
     refreshViewTables();
@@ -690,6 +693,8 @@ void MainWindow::refreshTableSlot()
         m_changeWidget->refresh();
     if (m_historyWidget)
         m_historyWidget->refresh();
+    if (m_referenceDataWidget)
+        m_referenceDataWidget->refresh();
     if (m_coverageDashboard)
         m_coverageDashboard->refresh();
     if (m_traceabilityWidget)
@@ -766,7 +771,8 @@ void MainWindow::setupModernNavigation()
     m_interfaceWidget=new InterfaceWidget(projectPage);
     m_changeWidget=new ChangeWidget(projectPage);
     m_historyWidget=new HistoryWidget(projectPage);
-    const QStringList sections={tr("Product Tree"),tr("Exigences"),tr("Documents"),tr("Applicabilité"),tr("Interfaces"),tr("Vérification"),tr("Changements"),tr("Historique")};
+    m_referenceDataWidget=new ReferenceDataWidget(projectPage);
+    const QStringList sections={tr("Product Tree"),tr("Exigences"),tr("Documents"),tr("Applicabilité"),tr("Interfaces"),tr("Vérification"),tr("Changements"),tr("Historique"),tr("Paramètres")};
     m_projectNavigation->addItems(sections);
     m_projectPages->addWidget(m_productTreeWidget);
     m_projectPages->addWidget(m_requirementWidget);
@@ -776,6 +782,7 @@ void MainWindow::setupModernNavigation()
     m_projectPages->addWidget(m_verificationWidget);
     m_projectPages->addWidget(m_changeWidget);
     m_projectPages->addWidget(m_historyWidget);
+    m_projectPages->addWidget(m_referenceDataWidget);
     projectLayout->addWidget(m_projectNavigation);projectLayout->addWidget(m_projectPages,1);
     connect(m_projectNavigation,&QListWidget::currentRowChanged,m_projectPages,&QStackedWidget::setCurrentIndex);
     connect(m_productTreeWidget,&ProductTreeWidget::dataChanged,this,&MainWindow::refreshTableSlot);
@@ -797,6 +804,7 @@ void MainWindow::setupModernNavigation()
     connect(m_requirementWidget,&RequirementWidget::openChangesRequested,this,[this](int id){m_changeWidget->applyObjectFilter("REQUIREMENT",id);m_projectNavigation->setCurrentRow(6);});
     connect(m_requirementWidget,&RequirementWidget::openChangeRequested,this,[this](int id){m_changeWidget->openChange(id);m_projectNavigation->setCurrentRow(6);});
     connect(m_changeWidget,&ChangeWidget::dataChanged,this,&MainWindow::refreshTableSlot);
+    connect(m_referenceDataWidget,&ReferenceDataWidget::dataChanged,this,&MainWindow::refreshTableSlot);
     connect(m_changeWidget,&ChangeWidget::openRequirementRequested,this,[this](int id){m_requirementWidget->openRequirement(id);m_projectNavigation->setCurrentRow(1);});
     connect(m_changeWidget,&ChangeWidget::openProductTreeRequested,this,[this](int){m_projectNavigation->setCurrentRow(0);});
     connect(m_changeWidget,&ChangeWidget::openInterfaceRequested,this,[this](int id){m_interfaceWidget->openInterface(id);m_projectNavigation->setCurrentRow(4);});
