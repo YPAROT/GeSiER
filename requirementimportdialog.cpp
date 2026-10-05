@@ -25,6 +25,7 @@
 #include <QRegularExpression>
 #include <QSettings>
 #include <QTextDocumentFragment>
+#include "markdownutility.h"
 #include <algorithm>
 
 namespace {
@@ -364,7 +365,10 @@ void RequirementImportDialog::editWordRequirement(int row) {
   auto *chapter = new QLineEdit(item.chapterPath.join(" / "));
   auto *pts = new QTextEdit(joinLines(item.productTreeCodes)); pts->setMaximumHeight(70);
   auto *configs = new QTextEdit(joinLines(item.configurationCodes)); configs->setMaximumHeight(70);
-  auto *description = new QTextEdit; description->setHtml(item.record.description);
+  auto *description = new QTextEdit;
+  description->document()->setMarkdown(
+      MarkdownUtility::normalizeLegacy(item.record.description),
+      QTextDocument::MarkdownDialectGitHub);
   form->addRow("Code *", code); form->addRow("Titre *", title);
   form->addRow("Source", source); form->addRow("Type", type); form->addRow("Statut", status);
   form->addRow(QString(), traceRoot);
@@ -441,7 +445,8 @@ void RequirementImportDialog::editWordRequirement(int row) {
   item.record.traceRoot = traceRoot->isChecked();
   item.chapterPath = editedLines(chapter->text().replace('/', '\n'));
   item.productTreeCodes = editedLines(pts->toPlainText()); item.configurationCodes = editedLines(configs->toPlainText());
-  item.record.description = description->toHtml();
+  item.record.description = description->document()->toMarkdown(
+      QTextDocument::MarkdownDialectGitHub).trimmed();
   item.record.verifications.clear(); item.verificationMethods.clear();
   for (int r = 0; r < verifications->rowCount(); ++r) {
     RequirementVerification verification; item.verificationMethods << verifications->item(r, 0)->text().trimmed();
@@ -1100,7 +1105,7 @@ void RequirementImportDialog::runWordImport() {
     item.diagnostics.clear();
     if (item.record.code.trimmed().isEmpty()) item.diagnostics << "Code absent";
     if (item.record.title.trimmed().isEmpty()) item.diagnostics << "Titre absent";
-    if (QTextDocumentFragment::fromHtml(item.record.description).toPlainText().trimmed().isEmpty()) item.diagnostics << "Description absente";
+    if (MarkdownUtility::toPlainText(item.record.description).trimmed().isEmpty()) item.diagnostics << "Description absente";
     if (!item.type.isEmpty() && !lookup("REQ_TYPE", {"TYPE", "CODE"}, item.type)) item.diagnostics << "Type inconnu : " + item.type;
     if (!item.status.isEmpty() && !lookup("REQ_STATUS", {"STATUS", "SHORTCUT"}, item.status)) item.diagnostics << "Statut inconnu : " + item.status;
     for (const QString &code : item.productTreeCodes) {
@@ -1153,7 +1158,8 @@ void RequirementImportDialog::runWordImport() {
   for (const auto &item : selected.requirements) {
     QSqlQuery existing(db); existing.prepare("SELECT TITLE,COALESCE(DESCRIPTION,'') FROM REQUIREMENT WHERE CODE=? COLLATE NOCASE"); existing.addBindValue(item.record.code);
     if (existing.exec() && existing.next()) duplicateRows << ImportDuplicate{item.record.code, existing.value(0).toString(), item.record.title,
-      QTextDocumentFragment::fromHtml(existing.value(1).toString()).toPlainText(), QTextDocumentFragment::fromHtml(item.record.description).toPlainText()};
+      MarkdownUtility::toPlainText(MarkdownUtility::normalizeLegacy(existing.value(1).toString())),
+      MarkdownUtility::toPlainText(MarkdownUtility::normalizeLegacy(item.record.description))};
   }
   QMap<QString, QString> decisions;
   if (!duplicateRows.isEmpty()) {

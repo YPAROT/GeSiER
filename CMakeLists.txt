@@ -31,6 +31,8 @@ qt_add_executable(GeSiER WIN32
     producttreemodel.cpp producttreemodel.h
     producttreewidget.cpp producttreewidget.h
     requirementservice.cpp requirementservice.h
+    markdownutility.cpp markdownutility.h
+    markdowndescriptioneditor.cpp markdowndescriptioneditor.h
     requirementrelationservice.cpp requirementrelationservice.h
     documentservice.cpp documentservice.h
     docxexportservice.cpp docxexportservice.h
@@ -114,6 +116,7 @@ if(BUILD_TESTING)
         databasemigrator.cpp databasemigrator.h
         producttreeservice.cpp producttreeservice.h
         requirementservice.cpp requirementservice.h
+        markdownutility.cpp markdownutility.h
         referencedataservice.cpp referencedataservice.h
         applicabilityservice.cpp applicabilityservice.h
         verificationservice.cpp verificationservice.h
@@ -151,6 +154,8 @@ if(BUILD_TESTING)
         csvutility.cpp csvutility.h
         tabularservice.cpp tabularservice.h
         requirementservice.cpp requirementservice.h
+        markdownutility.cpp markdownutility.h
+        markdowndescriptioneditor.cpp markdowndescriptioneditor.h
         referencedataservice.cpp referencedataservice.h
         referencedatawidget.cpp referencedatawidget.h
         tabularexportdialog.cpp tabularexportdialog.h

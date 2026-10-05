@@ -5,6 +5,7 @@
 #include <QGraphicsView>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QPlainTextEdit>
 #include <QMessageBox>
 #include <QTimer>
 #include <QSettings>
@@ -22,6 +23,7 @@
 #include "checkablecombobox.h"
 #include "req_sqlmanager.h"
 #include "requirementwidget.h"
+#include "markdowndescriptioneditor.h"
 #include "requirementimportdialog.h"
 #include "referencedataservice.h"
 #include "referencedatawidget.h"
@@ -29,6 +31,7 @@
 class RequirementWidgetTest : public QObject {
   Q_OBJECT
 private slots:
+  void editsMarkdownWithPreviewAndToolbar();
   void startsWithoutEditingAndConstrainsPrimaryAllocation();
   void checkableFiltersSupportMultipleValues();
   void relationGraphLayersPlacementAndPreferences();
@@ -36,6 +39,25 @@ private slots:
   void parsesTraceRootImportValues();
   void keepsCurrentRequirementWhenDiscardIsRefused();
 };
+
+void RequirementWidgetTest::editsMarkdownWithPreviewAndToolbar() {
+  MarkdownDescriptionEditor editor;
+  editor.setContent("Texte");
+  QVERIFY(!editor.isEditing());
+  auto *toggle = editor.findChild<QPushButton *>("markdownModeToggle");
+  auto *source = editor.findChild<QPlainTextEdit *>("markdownSource");
+  auto *bold = editor.findChild<QPushButton *>("markdownBold");
+  QVERIFY(toggle); QVERIFY(source); QVERIFY(bold);
+  toggle->click();
+  QVERIFY(editor.isEditing());
+  source->selectAll();
+  bold->click();
+  QCOMPARE(editor.markdown(), QString("**Texte**"));
+  toggle->click();
+  QVERIFY(!editor.isEditing());
+  QCOMPARE(MarkdownDescriptionEditor::plainText(editor.markdown()),
+           QString("Texte"));
+}
 
 void RequirementWidgetTest::parsesTraceRootImportValues() {
   bool value = false;

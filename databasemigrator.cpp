@@ -1,4 +1,5 @@
 #include "databasemigrator.h"
+#include "markdownutility.h"
 
 #include <QSqlError>
 #include <QSqlQuery>
@@ -249,6 +250,10 @@ bool DatabaseMigrator::migrate(QSqlDatabase db, QString *errorMessage) {
          "REFERENCES REQUIREMENT(ID) ON DELETE CASCADE, ATTRIBUTE_ID TEXT NOT "
          "NULL, ATTRIBUTE_NAME TEXT NOT NULL, VALUE TEXT, VALUE_TYPE TEXT, "
          "PRIMARY KEY(REQ_ID,ATTRIBUTE_ID))"
+      << "CREATE TABLE IF NOT EXISTS REQ_IMAGE (ID INTEGER PRIMARY KEY "
+         "AUTOINCREMENT,REQ_ID INTEGER NOT NULL REFERENCES REQUIREMENT(ID) ON "
+         "DELETE CASCADE,TOKEN TEXT NOT NULL UNIQUE,MIME_TYPE TEXT NOT NULL,"
+         "LEGEND TEXT,IMAGE BLOB NOT NULL)"
       << "CREATE TABLE IF NOT EXISTS REQUIREMENT_PT (REQ_ID INTEGER NOT NULL "
          "REFERENCES REQUIREMENT(ID) ON DELETE CASCADE, PT_ID INTEGER NOT NULL "
          "REFERENCES PT(ID) ON DELETE CASCADE, PRIMARY KEY(REQ_ID,PT_ID))"
@@ -481,6 +486,63 @@ bool DatabaseMigrator::migrate(QSqlDatabase db, QString *errorMessage) {
                             errorMessage)) {
       db.rollback();
       return false;
+    }
+  }
+
+  if (version < 17) {
+    if (db.tables().contains("REQ_IMAGE") &&
+        db.record("REQ_IMAGE").indexOf("TOKEN") < 0) {
+      if (!execute(db, "ALTER TABLE REQ_IMAGE RENAME TO REQ_IMAGE_V16",
+                   errorMessage) ||
+          !execute(db,
+                   "CREATE TABLE REQ_IMAGE (ID INTEGER PRIMARY KEY "
+                   "AUTOINCREMENT,REQ_ID INTEGER NOT NULL REFERENCES "
+                   "REQUIREMENT(ID) ON DELETE CASCADE,TOKEN TEXT NOT NULL "
+                   "UNIQUE,MIME_TYPE TEXT NOT NULL,LEGEND TEXT,IMAGE BLOB "
+                   "NOT NULL)", errorMessage) ||
+          !execute(db,
+                   "INSERT INTO REQ_IMAGE(ID,REQ_ID,TOKEN,MIME_TYPE,LEGEND,IMAGE) "
+                   "SELECT ID,REQ_ID,'legacy-'||ID,'image/png',LEGEND,IMAGE "
+                   "FROM REQ_IMAGE_V16", errorMessage) ||
+          !execute(db, "DROP TABLE REQ_IMAGE_V16", errorMessage)) {
+        db.rollback(); return false;
+      }
+    }
+    QSqlQuery descriptions(db);
+    if (!descriptions.exec("SELECT ID,COALESCE(DESCRIPTION,'') FROM REQUIREMENT")) {
+      if (errorMessage) *errorMessage = descriptions.lastError().text();
+      db.rollback(); return false;
+    }
+    QList<QPair<int, QString>> converted;
+    while (descriptions.next()) {
+      const int requirementId = descriptions.value(0).toInt();
+      QString markdown = MarkdownUtility::normalizeLegacy(
+          descriptions.value(1).toString());
+      QSqlQuery images(db);
+      images.prepare("SELECT TOKEN,COALESCE(LEGEND,'') FROM REQ_IMAGE WHERE REQ_ID=? ORDER BY ID");
+      images.addBindValue(requirementId);
+      if (!images.exec()) {
+        if (errorMessage) *errorMessage = images.lastError().text();
+        db.rollback(); return false;
+      }
+      while (images.next()) {
+        const QString token = images.value(0).toString();
+        const QString url = MarkdownUtility::imageUrl(token);
+        if (!markdown.contains(url))
+          markdown += QString("\n\n![%1](%2)")
+                          .arg(images.value(1).toString(), url);
+      }
+      converted << qMakePair(requirementId, markdown.trimmed());
+    }
+    descriptions = QSqlQuery();
+    for (const auto &item : converted) {
+      QSqlQuery update(db);
+      update.prepare("UPDATE REQUIREMENT SET DESCRIPTION=? WHERE ID=?");
+      update.addBindValue(item.second); update.addBindValue(item.first);
+      if (!update.exec()) {
+        if (errorMessage) *errorMessage = update.lastError().text();
+        db.rollback(); return false;
+      }
     }
   }
 

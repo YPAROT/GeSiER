@@ -3,6 +3,8 @@
 #include "documentservice.h"
 #include "producttreeservice.h"
 #include <QFileInfo>
+#include <QBuffer>
+#include <QImageReader>
 #include <QMap>
 #include <QRegularExpression>
 #include <QSet>
@@ -10,6 +12,8 @@
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QTextDocumentFragment>
+#include <QUuid>
+#include "markdownutility.h"
 #include <private/qzipreader_p.h>
 
 namespace {
@@ -103,6 +107,13 @@ QString htmlFromParagraph(const Paragraph &p) {
     if (run.contains(QRegularExpression("<w:i(?:\\s[^>]*)?/?>(?:</w:i>)?"))) value = "<i>" + value + "</i>";
     text += value;
   }
+  QRegularExpression drawings(
+      "<a:blip[^>]*r:embed=\"([^\"]+)\"[^>]*/?>",
+      QRegularExpression::CaseInsensitiveOption);
+  auto imageIterator = drawings.globalMatch(p.xml);
+  while (imageIterator.hasNext())
+    text += "<img src=\"gesier-rid://" +
+            imageIterator.next().captured(1).toHtmlEscaped() + "\"/>";
   if (p.xml.contains("<w:numPr")) return "<li>" + text + "</li>";
   return "<p>" + text + "</p>";
 }
@@ -377,6 +388,47 @@ QString customReference(const QString &path) {
 QStringList lines(const QString &value) {
   return value.split(QRegularExpression("[\\r\\n;]+"), Qt::SkipEmptyParts);
 }
+QString relationshipTarget(const QString &sourcePath, const QString &rid) {
+  const QString relationships = QString::fromUtf8(
+      partData(sourcePath, "word/_rels/document.xml.rels"));
+  QRegularExpression expression(
+      "<Relationship[^>]*Id=\"" + QRegularExpression::escape(rid) +
+          "\"[^>]*Target=\"([^\"]+)\"",
+      QRegularExpression::CaseInsensitiveOption);
+  const auto match = expression.match(relationships);
+  if (!match.hasMatch()) return {};
+  QString target = decode(match.captured(1)).replace('\\', '/');
+  if (target.startsWith('/') || target.contains("..")) return {};
+  return target.startsWith("word/") ? target : "word/" + target;
+}
+QString markdownWithImages(const QString &html, const QString &sourcePath,
+                           QList<RequirementImage> *images) {
+  QString markdown; int position = 0;
+  QRegularExpression expression(
+      "<img[^>]*src=\"gesier-rid://([^\"]+)\"[^>]*/?>",
+      QRegularExpression::CaseInsensitiveOption);
+  auto matches = expression.globalMatch(html);
+  while (matches.hasNext()) {
+    const auto match = matches.next();
+    markdown += MarkdownUtility::fromHtml(
+        html.mid(position, match.capturedStart() - position));
+    const QString part = relationshipTarget(sourcePath, match.captured(1));
+    const QByteArray data = part.isEmpty() ? QByteArray() : partData(sourcePath, part);
+    QBuffer buffer; buffer.setData(data); buffer.open(QIODevice::ReadOnly);
+    QImageReader reader(&buffer); QString format = QString::fromLatin1(reader.format()).toLower();
+    if (!data.isEmpty() && QStringList{"png", "jpg", "jpeg", "bmp"}.contains(format)) {
+      RequirementImage image;
+      image.token = QUuid::createUuid().toString(QUuid::WithoutBraces);
+      image.mimeType = format == "jpg" || format == "jpeg" ? "image/jpeg"
+                                                              : "image/" + format;
+      image.data = data; images->append(image);
+      markdown += "\n\n![](gesier-image://" + image.token + ")\n\n";
+    }
+    position = match.capturedEnd();
+  }
+  markdown += MarkdownUtility::fromHtml(html.mid(position));
+  return markdown.trimmed();
+}
 int lookup(QSqlDatabase db, const QString &table, const QStringList &columns,
            const QString &value) {
   if (value.trimmed().isEmpty()) return -1;
@@ -475,7 +527,9 @@ DocxImportPreview DocxImportService::preview(const QString &sourcePath,
     imported.location = QString("Exigence %1 — %2").arg(ordinal).arg(chapterStack.join(" / "));
     imported.record.code = values.value("REQ_CODE").trimmed();
     imported.record.title = values.value("REQ_TITLE").trimmed();
-    imported.record.description = htmlValues.value("REQ_DESCRIPTION");
+    imported.record.description = markdownWithImages(
+        htmlValues.value("REQ_DESCRIPTION"), sourcePath,
+        &imported.record.images);
     imported.type = values.value("REQ_TYPE").trimmed();
     imported.status = values.value("REQ_STATUS").trimmed();
     imported.record.source = values.value("REQ_SOURCE").trimmed();
@@ -562,8 +616,7 @@ DocxImportPreview DocxImportService::preview(const QString &sourcePath,
     result.errors << message;
   }
   if (sourceXml.contains("<w:drawing") || sourceXml.contains("<w:object"))
-    result.warnings << "Les images et objets incorporés ne sont pas importés.";
-  if (sourceXml.contains("<w:tbl")) result.warnings << "Les tableaux contenus dans les descriptions sont aplatis en texte.";
+    result.warnings << "Les objets Word non reconnus hors des descriptions d’exigence ne sont pas importés.";
   return result;
 }
 
@@ -575,7 +628,7 @@ RequirementResult DocxImportService::importPreview(const DocxImportPreview &prev
     if (!item.selected) continue;
     ++selectedCount;
     if (item.record.code.trimmed().isEmpty() || item.record.title.trimmed().isEmpty() ||
-        QTextDocumentFragment::fromHtml(item.record.description).toPlainText().trimmed().isEmpty())
+        MarkdownUtility::toPlainText(item.record.description).trimmed().isEmpty())
       return RequirementResult::failure(QString("%1 : code, titre et description sont obligatoires.").arg(item.location));
   }
   if (selectedCount == 0) return RequirementResult::failure("Aucune exigence sélectionnée.");
@@ -619,6 +672,7 @@ RequirementResult DocxImportService::importPreview(const DocxImportPreview &prev
       record = requirements.get(existing.value(0).toInt());
       if (options.updateDuplicates && item.importAction != "keep") {
         record.title = item.record.title; record.description = item.record.description;
+        record.images = item.record.images;
         record.source = item.record.source;
         record.traceRoot = item.record.traceRoot;
       }

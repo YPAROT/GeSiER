@@ -1,6 +1,7 @@
 #ifndef REQUIREMENTSERVICE_H
 #define REQUIREMENTSERVICE_H
 #include <QList>
+#include <QByteArray>
 #include <QString>
 
 struct RequirementFilter {
@@ -31,6 +32,12 @@ struct RequirementVerification {
   QString comment;
   int position = 0;
 };
+struct RequirementImage {
+  QString token;
+  QString mimeType;
+  QString legend;
+  QByteArray data;
+};
 struct RequirementRecord {
   int id = -1;
   QString code, title, description, source;
@@ -41,6 +48,7 @@ struct RequirementRecord {
   QList<int> ptIds;
   QList<int> configurationIds;
   QList<RequirementVerification> verifications;
+  QList<RequirementImage> images;
 };
 struct RequirementResult {
   bool success = false;

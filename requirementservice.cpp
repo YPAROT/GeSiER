@@ -1,7 +1,9 @@
 #include "requirementservice.h"
 #include "producttreeservice.h"
+#include "markdownutility.h"
 
 #include <QRegularExpression>
+#include <QImage>
 #include <QSet>
 #include <QSqlDatabase>
 #include <QSqlError>
@@ -41,7 +43,8 @@ RequirementService::find(const RequirementFilter &filter,
   QList<QVariant> values;
   addTextFilter(where, values, "R.CODE", filter.code);
   addTextFilter(where, values, "R.TITLE", filter.title);
-  addTextFilter(where, values, "R.DESCRIPTION", filter.description);
+  // Markdown markup and internal image tokens are implementation details. The
+  // description filter is applied to the rendered plain text below.
   addTextFilter(where, values, "R.SOURCE", filter.source);
   addIdFilter(where, values, "R.STATUS", filter.statusIds);
   addIdFilter(where, values, "R.TYPE", filter.typeIds);
@@ -137,6 +140,10 @@ RequirementService::find(const RequirementFilter &filter,
     r.documented = query.value(13).toBool();
     r.verified = query.value(14).toBool();
     r.traceRoot = query.value(15).toBool();
+    if (!filter.description.trimmed().isEmpty() &&
+        !MarkdownUtility::toPlainText(r.description)
+             .contains(filter.description.trimmed(), Qt::CaseInsensitive))
+      continue;
     result << r;
   }
   return result;
@@ -197,6 +204,22 @@ RequirementRecord RequirementService::get(int id, QString *error) const {
       v.position = verification.value(9).toInt();
       r.verifications << v;
     }
+    QSqlQuery images(db);
+    images.prepare("SELECT TOKEN,COALESCE(MIME_TYPE,''),COALESCE(LEGEND,''),"
+                   "IMAGE FROM REQ_IMAGE WHERE REQ_ID=? ORDER BY ID");
+    images.addBindValue(id);
+    if (!images.exec()) {
+      if (error) *error = images.lastError().text();
+      return {};
+    }
+    while (images.next()) {
+      RequirementImage image;
+      image.token = images.value(0).toString();
+      image.mimeType = images.value(1).toString();
+      image.legend = images.value(2).toString();
+      image.data = images.value(3).toByteArray();
+      r.images << image;
+    }
     return r;
   }
   return {};
@@ -247,7 +270,28 @@ RequirementResult RequirementService::save(const RequirementRecord &record,
       return RequirementResult::failure("Verdict de vérification invalide.");
     methods.insert(v.methodId);
   }
+  const QStringList referencedImages =
+      MarkdownUtility::imageTokens(record.description);
+  QSet<QString> availableImages;
+  for (const RequirementImage &image : record.images) {
+    if (image.token.trimmed().isEmpty() || image.data.isEmpty())
+      return RequirementResult::failure("Une image de la description est invalide.");
+    QImage decoded;
+    if (!decoded.loadFromData(image.data) ||
+        !QStringList{"image/png", "image/jpeg", "image/bmp"}.contains(
+            image.mimeType.toLower()))
+      return RequirementResult::failure(
+          "Seules les images PNG, JPEG et BMP valides sont acceptées.");
+    if (availableImages.contains(image.token))
+      return RequirementResult::failure("Deux images utilisent le même identifiant.");
+    availableImages.insert(image.token);
+  }
+  for (const QString &token : referencedImages)
+    if (!availableImages.contains(token))
+      return RequirementResult::failure(
+          "Image introuvable dans la description : " + token);
   QSqlDatabase db = QSqlDatabase::database(m_connectionName);
+  const QString description = MarkdownUtility::normalizeLegacy(record.description);
   if (manageTransaction && !db.transaction())
     return RequirementResult::failure(db.lastError().text());
   int id = record.id;
@@ -300,7 +344,7 @@ RequirementResult RequirementService::save(const RequirementRecord &record,
     insert.addBindValue(record.code.trimmed());
     insert.addBindValue(defaults.value(0));
     insert.addBindValue(record.title.trimmed());
-    insert.addBindValue(record.description);
+    insert.addBindValue(description);
     insert.addBindValue(record.typeId < 0 ? defaults.value(1) : record.typeId);
     insert.addBindValue(record.statusId < 0 ? defaults.value(2)
                                             : record.statusId);
@@ -328,7 +372,7 @@ RequirementResult RequirementService::save(const RequirementRecord &record,
     update.addBindValue(record.primaryPtId);
     update.addBindValue(record.code.trimmed());
     update.addBindValue(record.title.trimmed());
-    update.addBindValue(record.description);
+    update.addBindValue(description);
     update.addBindValue(record.typeId);
     update.addBindValue(record.statusId);
     update.addBindValue(record.source);
@@ -411,6 +455,28 @@ RequirementResult RequirementService::save(const RequirementRecord &record,
     if (!insert.exec()) {
       if (manageTransaction) db.rollback();
       return RequirementResult::failure(insert.lastError().text());
+    }
+  }
+  QSqlQuery clearImages(db);
+  clearImages.prepare("DELETE FROM REQ_IMAGE WHERE REQ_ID=?");
+  clearImages.addBindValue(id);
+  if (!clearImages.exec()) {
+    if (manageTransaction) db.rollback();
+    return RequirementResult::failure(clearImages.lastError().text());
+  }
+  for (const RequirementImage &image : record.images) {
+    if (!referencedImages.contains(image.token)) continue;
+    QSqlQuery insertImage(db);
+    insertImage.prepare("INSERT INTO REQ_IMAGE(REQ_ID,TOKEN,MIME_TYPE,LEGEND,IMAGE) "
+                        "VALUES(?,?,?,?,?)");
+    insertImage.addBindValue(id);
+    insertImage.addBindValue(image.token);
+    insertImage.addBindValue(image.mimeType);
+    insertImage.addBindValue(image.legend);
+    insertImage.addBindValue(image.data);
+    if (!insertImage.exec()) {
+      if (manageTransaction) db.rollback();
+      return RequirementResult::failure(insertImage.lastError().text());
     }
   }
   QRegularExpression automatic(

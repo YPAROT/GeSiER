@@ -8,6 +8,8 @@
 #include "changeservice.h"
 #include "historyservice.h"
 #include "producttreeservice.h"
+#include "markdowndescriptioneditor.h"
+#include "markdownutility.h"
 #include <QSqlDatabase>
 #include <QSqlQuery>
 #include <QSqlError>
@@ -151,7 +153,7 @@ RequirementWidget::RequirementWidget(QWidget *p) : QWidget(p) {
   m_codeWarning->setWordWrap(true);
   m_title = new QLineEdit;
   m_title->setObjectName("requirementTitleEditor");
-  m_description = new QTextEdit;
+  m_description = new MarkdownDescriptionEditor;
   m_source = new QLineEdit;
   m_status = new QComboBox;
   m_type = new QComboBox;
@@ -360,7 +362,9 @@ RequirementWidget::RequirementWidget(QWidget *p) : QWidget(p) {
     create();
     m_loading = true;
     m_title->setText(source.title + " (copie)");
-    m_description->setPlainText(source.description);
+    source.description = MarkdownUtility::duplicatedMarkdown(
+        source.description, &source.images);
+    m_description->setContent(source.description, source.images);
     m_source->setText(source.source);
     m_type->setCurrentIndex(m_type->findData(source.typeId));
     m_status->setCurrentIndex(m_status->findData(source.statusId));
@@ -509,7 +513,7 @@ RequirementWidget::RequirementWidget(QWidget *p) : QWidget(p) {
   });
   for (auto *w : {m_code, m_title, m_source})
     connect(w, &QLineEdit::textEdited, this, [this] { m_dirty = true; });
-  connect(m_description, &QTextEdit::textChanged, this, [this] {
+  connect(m_description, &MarkdownDescriptionEditor::contentChanged, this, [this] {
     if (!m_loading)
       m_dirty = true;
   });
@@ -767,7 +771,7 @@ void RequirementWidget::sortByColumn(int column) {
     case MethodCol:
       return r.verificationMethods;
     case DescriptionCol:
-      return r.description;
+      return MarkdownDescriptionEditor::plainText(r.description);
     case ApplicabilityCol:
       return r.applicability;
     case SourceCol:
@@ -811,7 +815,8 @@ void RequirementWidget::populateList() {
     }
     QStringList cells = {r.code,        r.title,         status,
                          type,          r.productTrees,  r.verificationMethods,
-                         r.description, r.applicability, r.source,
+                         MarkdownDescriptionEditor::plainText(r.description),
+                         r.applicability, r.source,
                          r.allocated ? "✓" : "—", r.traced ? "✓" : "—",
                          r.documented ? "✓" : "—", r.verified ? "✓" : "—"};
     for (int c = 0; c < ColumnCount; ++c) {
@@ -828,7 +833,7 @@ void RequirementWidget::clearEditor() {
   m_loading = true;
   m_code->clear();
   m_title->clear();
-  m_description->clear();
+  m_description->setContent({});
   m_source->clear();
   m_codeWarning->clear();
   m_traceRoot->setChecked(false);
@@ -906,7 +911,7 @@ void RequirementWidget::loadEditor(int id) {
   RequirementRecord r = m_service.get(id);
   m_code->setText(r.code);
   m_title->setText(r.title);
-  m_description->setPlainText(r.description);
+  m_description->setContent(r.description, r.images);
   m_source->setText(r.source);
   m_status->setCurrentIndex(qMax(0, m_status->findData(r.statusId)));
   m_type->setCurrentIndex(qMax(0, m_type->findData(r.typeId)));
@@ -1142,7 +1147,8 @@ RequirementRecord RequirementWidget::editorRecord() const {
   r.id = m_current;
   r.code = m_code->text();
   r.title = m_title->text();
-  r.description = m_description->toPlainText();
+  r.description = m_description->markdown();
+  r.images = m_description->images();
   r.source = m_source->text();
   r.statusId = m_status->currentData().toInt();
   r.typeId = m_type->currentData().toInt();

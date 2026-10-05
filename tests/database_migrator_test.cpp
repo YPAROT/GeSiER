@@ -70,6 +70,7 @@ class DatabaseMigratorTest : public QObject {
   Q_OBJECT
   QTemporaryDir m_directory;
 private slots:
+  void storesMarkdownImagesAtomically();
   void migratesLegacySchemaWithoutLosingLinks();
   void migratesRequirementUniquenessToCode();
   void rejectsCaseInsensitiveCodeCollisions();
@@ -90,6 +91,63 @@ private slots:
   void previewsTaggedWordRoundTrip();
   void parsesSemanticWordTablesAndMetadata();
 };
+
+void DatabaseMigratorTest::storesMarkdownImagesAtomically() {
+  QTemporaryDir directory;
+  REQ_SQLManager manager;
+  const auto creation = manager.newDB(directory.filePath("markdown-images.db"));
+  QVERIFY2(creation.type() == QSqlError::NoError, qPrintable(creation.text()));
+  ProductTreeService tree(manager.currentConnection());
+  QVERIFY(tree.addNode(-1, "SYS").success);
+  QSqlQuery query(QSqlDatabase::database(manager.currentConnection()));
+  QVERIFY(query.exec("SELECT ID FROM PT WHERE SEGMENT='SYS'"));
+  QVERIFY(query.next()); const int pt = query.value(0).toInt();
+
+  RequirementRecord record;
+  record.code = "SYS-R-0001"; record.title = "Markdown";
+  record.primaryPtId = pt; record.ptIds = {pt};
+  RequirementImage image;
+  image.token = "figure-1"; image.mimeType = "image/png";
+  image.legend = "Architecture";
+  image.data = QByteArray::fromBase64(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=");
+  record.images = {image};
+  record.description = "**Texte**\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n\n![Architecture](gesier-image://figure-1)";
+  auto saved = RequirementService(manager.currentConnection()).save(record);
+  QVERIFY2(saved.success, qPrintable(saved.message));
+  auto loaded = RequirementService(manager.currentConnection()).get(saved.id);
+  QCOMPARE(loaded.description, record.description);
+  QCOMPARE(loaded.images.size(), 1);
+  QCOMPARE(loaded.images.first().data, image.data);
+  QVERIFY(query.exec("SELECT ID FROM DOCUMENT ORDER BY ID LIMIT 1"));
+  QVERIFY(query.next()); const int documentId = query.value(0).toInt();
+  QVERIFY(DocumentService(manager.currentConnection())
+              .placeRequirement(documentId, -1, saved.id).success);
+  DocxExportRequest exportRequest;
+  exportRequest.documentId = documentId;
+  exportRequest.outputPath = directory.filePath("markdown.docx");
+  const auto exported =
+      DocxExportService(manager.currentConnection()).exportDocument(exportRequest);
+  QVERIFY2(exported.success, qPrintable(exported.message));
+  QZipReader archive(exportRequest.outputPath);
+  const QString wordXml =
+      QString::fromUtf8(archive.fileData("word/document.xml"));
+  QVERIFY(wordXml.contains("<w:b/>"));
+  QVERIFY(wordXml.contains("<w:tbl>"));
+  QVERIFY(wordXml.contains("<w:drawing>"));
+  QVERIFY(!archive.fileData("word/media/gesier1.png").isEmpty());
+
+  loaded.description = "Image retirée";
+  QVERIFY(RequirementService(manager.currentConnection()).save(loaded).success);
+  loaded = RequirementService(manager.currentConnection()).get(saved.id);
+  QVERIFY(loaded.images.isEmpty());
+  loaded.description = "![Absente](gesier-image://missing)";
+  const auto rejected = RequirementService(manager.currentConnection()).save(loaded);
+  QVERIFY(!rejected.success);
+  QCOMPARE(RequirementService(manager.currentConnection()).get(saved.id).description,
+           QString("Image retirée"));
+  manager.close();
+}
 
 void DatabaseMigratorTest::controlsHighLevelTraceability() {
   QTemporaryDir directory;
@@ -201,8 +259,8 @@ void DatabaseMigratorTest::parsesSemanticWordTablesAndMetadata() {
   QCOMPARE(requirement.record.code, QString("SYS-R-0042"));
   QCOMPARE(requirement.record.title, QString("Détection de panne"));
   QCOMPARE(requirement.chapterPath, QStringList{"Fonctions"});
-  QVERIFY(requirement.record.description.contains("<b>Le système détecte la panne.</b>"));
-  QVERIFY(requirement.record.description.contains("<li>Il journalise l'événement.</li>"));
+  QVERIFY(requirement.record.description.contains("**Le système détecte la panne.**"));
+  QVERIFY(requirement.record.description.contains("Il journalise l'événement."));
 
   QByteArray fallbackModel = model;
   fallbackModel.replace("{{GESIER_DOCUMENT_TITLE}}", "Titre statique");
@@ -753,6 +811,8 @@ void DatabaseMigratorTest::migratesLegacySchemaWithoutLosingLinks() {
       "TEXT,DOC_ID INTEGER,DOC_CHAPTER INTEGER,TITLE TEXT,DESCRIPTION "
       "TEXT,TYPE INTEGER,STATUS INTEGER,SOURCE TEXT,PARENT_ID "
       "INTEGER,VERIF_LEVEL TEXT,VERIF_METHOD INTEGER,COMMENTS TEXT)",
+      "CREATE TABLE REQ_IMAGE(ID INTEGER PRIMARY KEY,REQ_ID INTEGER NOT NULL,"
+      "LEGEND TEXT,IMAGE BLOB NOT NULL)",
       "CREATE TABLE DOCUMENT(ID INTEGER PRIMARY KEY,PT_ID INTEGER,TYPE "
       "INTEGER,TITLE TEXT,DESCRIPTION TEXT)",
       "CREATE TABLE INTERFACE(ID INTEGER PRIMARY KEY,ELEMENT1 INTEGER,ELEMENT2 "
@@ -763,6 +823,10 @@ void DatabaseMigratorTest::migratesLegacySchemaWithoutLosingLinks() {
       "INSERT INTO "
       "REQUIREMENT(ID,PT_ID,CODE,DOC_ID,TITLE,PARENT_ID,VERIF_METHOD) "
       "VALUES(1,1,'SYS-001',1,'Parent',NULL,1)",
+      "UPDATE REQUIREMENT SET DESCRIPTION='<p><b>Description legacy</b></p>' "
+      "WHERE ID=1",
+      "INSERT INTO REQ_IMAGE(ID,REQ_ID,LEGEND,IMAGE) "
+      "VALUES(7,1,'Schéma historique',x'89504E47')",
       "INSERT INTO "
       "REQUIREMENT(ID,PT_ID,CODE,DOC_ID,TITLE,PARENT_ID,VERIF_METHOD) "
       "VALUES(2,1,'SYS-002',1,'Enfant',1,1)"};
@@ -789,6 +853,16 @@ void DatabaseMigratorTest::migratesLegacySchemaWithoutLosingLinks() {
       query.exec("SELECT COUNT(*) FROM REQUIREMENT_PT WHERE REQ_ID IN (1,2)"));
   QVERIFY(query.next());
   QCOMPARE(query.value(0).toInt(), 2);
+  QVERIFY(query.exec("SELECT DESCRIPTION FROM REQUIREMENT WHERE ID=1"));
+  QVERIFY(query.next());
+  QVERIFY(query.value(0).toString().contains("**Description legacy**"));
+  QVERIFY(query.value(0).toString().contains("gesier-image://legacy-7"));
+  QVERIFY(query.exec("SELECT TOKEN,MIME_TYPE,LEGEND,hex(IMAGE) FROM REQ_IMAGE WHERE ID=7"));
+  QVERIFY(query.next());
+  QCOMPARE(query.value(0).toString(), QString("legacy-7"));
+  QCOMPARE(query.value(1).toString(), QString("image/png"));
+  QCOMPARE(query.value(2).toString(), QString("Schéma historique"));
+  QCOMPARE(query.value(3).toString(), QString("89504E47"));
   QVERIFY(query.exec("SELECT COUNT(*) FROM REQUIREMENT_PT WHERE REQ_ID IN "
                      "(1,2) AND IS_PRIMARY=1"));
   QVERIFY(query.next());
