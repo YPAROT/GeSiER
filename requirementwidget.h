@@ -85,7 +85,7 @@ private:
   QTableWidget *m_relations, *m_documents, *m_changes, *m_history;
   QGraphicsView *m_relationGraph;
   QSpinBox *m_graphDepth;
-  QCheckBox *m_showDerivations, *m_showDependencies;
+  QCheckBox *m_showDerivations, *m_showDependencies, *m_traceRoot;
   QListWidget *m_configurations;
   QPushButton *m_save, *m_cancel, *m_duplicate, *m_obsoleteButton;
   QSplitter *m_splitter;

@@ -36,6 +36,7 @@ struct RequirementRecord {
   QString code, title, description, source;
   QString productTrees, verificationMethods, applicability;
   bool allocated = false, traced = false, documented = false, verified = false;
+  bool traceRoot = false;
   int typeId = -1, statusId = -1, primaryPtId = -1;
   QList<int> ptIds;
   QList<int> configurationIds;

@@ -17,6 +17,9 @@ qt_add_executable(GeSiER WIN32
     coveragedashboard.cpp coveragedashboard.h
     coverageservice.cpp coverageservice.h
     traceabilitywidget.cpp traceabilitywidget.h
+    traceabilitycontrolservice.cpp traceabilitycontrolservice.h
+    traceabilitycontrolwidget.cpp traceabilitycontrolwidget.h
+    projectpages.h
     n2matrixwidget.cpp n2matrixwidget.h
     interfaceservice.cpp interfaceservice.h
     interfacewidget.cpp interfacewidget.h
@@ -102,6 +105,8 @@ if(BUILD_TESTING)
         docxexportservice.cpp docxexportservice.h
         docximportservice.cpp docximportservice.h
         coverageservice.cpp coverageservice.h
+        traceabilitycontrolservice.cpp traceabilitycontrolservice.h
+        projectpages.h
         historyservice.cpp historyservice.h
         req_sqlmanager.cpp req_sqlmanager.h
         sqltreemodel.cpp sqltreemodel.h

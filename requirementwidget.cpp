@@ -145,14 +145,18 @@ RequirementWidget::RequirementWidget(QWidget *p) : QWidget(p) {
   m_list->setRowHeight(0, 30);
   m_tabs = new QTabWidget;
   m_code = new QLineEdit;
+  m_code->setObjectName("requirementCodeEditor");
   m_codeWarning = new QLabel;
   m_codeWarning->setStyleSheet("color:#b06000");
   m_codeWarning->setWordWrap(true);
   m_title = new QLineEdit;
+  m_title->setObjectName("requirementTitleEditor");
   m_description = new QTextEdit;
   m_source = new QLineEdit;
   m_status = new QComboBox;
   m_type = new QComboBox;
+  m_traceRoot = new QCheckBox("Exigence haut niveau / racine de traçabilité");
+  m_traceRoot->setObjectName("traceRootCheckBox");
   auto identity = new QWidget;
   auto identityForm = new QFormLayout(identity);
   identityForm->addRow("Code", m_code);
@@ -162,6 +166,7 @@ RequirementWidget::RequirementWidget(QWidget *p) : QWidget(p) {
   identityForm->addRow("Source", m_source);
   identityForm->addRow("Type", m_type);
   identityForm->addRow("Statut", m_status);
+  identityForm->addRow(QString(), m_traceRoot);
   m_tabs->addTab(identity, "Identité");
   m_primary = new QComboBox;
   m_primary->setObjectName("primaryProductTree");
@@ -359,6 +364,7 @@ RequirementWidget::RequirementWidget(QWidget *p) : QWidget(p) {
     m_source->setText(source.source);
     m_type->setCurrentIndex(m_type->findData(source.typeId));
     m_status->setCurrentIndex(m_status->findData(source.statusId));
+    m_traceRoot->setChecked(source.traceRoot);
     QTreeWidgetItemIterator allocation(m_pt);
     while (*allocation) {
       (*allocation)
@@ -380,8 +386,8 @@ RequirementWidget::RequirementWidget(QWidget *p) : QWidget(p) {
           &RequirementWidget::obsolete);
   connect(m_save, &QPushButton::clicked, this, &RequirementWidget::save);
   connect(m_cancel, &QPushButton::clicked, this, &RequirementWidget::cancel);
-  connect(m_list, &QTableWidget::cellClicked, this,
-          &RequirementWidget::selectRow);
+  connect(m_list, &QTableWidget::currentCellChanged, this,
+          [this](int row, int column, int, int) { selectRow(row, column); });
   connect(m_list->horizontalHeader(), &QHeaderView::sectionClicked, this,
           &RequirementWidget::sortByColumn);
   connect(m_splitter, &QSplitter::splitterMoved, this, [this] {
@@ -403,6 +409,10 @@ RequirementWidget::RequirementWidget(QWidget *p) : QWidget(p) {
           &RequirementWidget::allocationChanged);
   connect(m_primary, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
           &RequirementWidget::primaryChanged);
+  connect(m_traceRoot, &QCheckBox::toggled, this, [this] {
+    if (!m_loading)
+      m_dirty = true;
+  });
   connect(addVerif, &QPushButton::clicked, this,
           &RequirementWidget::addVerification);
   connect(removeVerif, &QPushButton::clicked, this,
@@ -695,7 +705,7 @@ void RequirementWidget::refresh() {
   }
 }
 void RequirementWidget::openRequirement(int id) {
-  if (id < 0 || !confirmDiscard())
+  if (id < 0 || (id != m_current && !confirmDiscard()))
     return;
   auto rowForId = [this, id]() {
     for (int row = 1; row < m_list->rowCount(); ++row) {
@@ -713,10 +723,14 @@ void RequirementWidget::openRequirement(int id) {
     row = rowForId();
   }
   if (row >= 0) {
-    m_list->setCurrentCell(row, CodeCol);
+    {
+      QSignalBlocker blocker(m_list);
+      m_list->setCurrentCell(row, CodeCol);
+    }
     m_list->scrollToItem(m_list->item(row, CodeCol));
+    if (m_current != id)
+      loadEditor(id);
   }
-  loadEditor(id);
 }
 void RequirementWidget::openRequirementApplicability(int id) {
   openRequirement(id);
@@ -817,6 +831,7 @@ void RequirementWidget::clearEditor() {
   m_description->clear();
   m_source->clear();
   m_codeWarning->clear();
+  m_traceRoot->setChecked(false);
   if (m_status->count())
     m_status->setCurrentIndex(0);
   if (m_type->count())
@@ -853,13 +868,27 @@ bool RequirementWidget::confirmDiscard() {
              QMessageBox::Yes;
 }
 void RequirementWidget::selectRow(int row, int) {
-  if (row == 0)
+  if (row <= 0 || !m_list->item(row, CodeCol))
     return;
   int id = m_list->item(row, CodeCol)->data(Qt::UserRole).toInt();
   if (id == m_current)
     return;
-  if (!confirmDiscard())
+  if (!confirmDiscard()) {
+    int currentEditorRow = -1;
+    for (int candidate = 1; candidate < m_list->rowCount(); ++candidate) {
+      QTableWidgetItem *item = m_list->item(candidate, CodeCol);
+      if (item && item->data(Qt::UserRole).toInt() == m_current) {
+        currentEditorRow = candidate;
+        break;
+      }
+    }
+    QSignalBlocker blocker(m_list);
+    if (currentEditorRow >= 0)
+      m_list->setCurrentCell(currentEditorRow, CodeCol);
+    else
+      m_list->clearSelection();
     return;
+  }
   loadEditor(id);
 }
 void RequirementWidget::loadEditor(int id) {
@@ -872,6 +901,7 @@ void RequirementWidget::loadEditor(int id) {
   m_source->setText(r.source);
   m_status->setCurrentIndex(qMax(0, m_status->findData(r.statusId)));
   m_type->setCurrentIndex(qMax(0, m_type->findData(r.typeId)));
+  m_traceRoot->setChecked(r.traceRoot);
   QTreeWidgetItemIterator it(m_pt);
   while (*it) {
     (*it)->setCheckState(0,
@@ -1107,6 +1137,7 @@ RequirementRecord RequirementWidget::editorRecord() const {
   r.source = m_source->text();
   r.statusId = m_status->currentData().toInt();
   r.typeId = m_type->currentData().toInt();
+  r.traceRoot = m_traceRoot->isChecked();
   r.primaryPtId = m_primary->currentData().toInt();
   QTreeWidgetItemIterator it(m_pt);
   while (*it) {

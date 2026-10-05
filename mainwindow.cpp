@@ -13,6 +13,8 @@
 #include "importlogdialog.h"
 #include "coveragedashboard.h"
 #include "traceabilitywidget.h"
+#include "traceabilitycontrolwidget.h"
+#include "projectpages.h"
 #include "n2matrixwidget.h"
 #include "producttreewidget.h"
 #include "requirementwidget.h"
@@ -111,6 +113,7 @@ MainWindow::MainWindow(QWidget *parent)
             m_traceabilityWidget->setConnectionName(m_SQLManager->currentConnection());
             m_n2MatrixWidget->setConnectionName(m_SQLManager->currentConnection());
             if (m_requirementWidget) m_requirementWidget->setConnectionName(m_SQLManager->currentConnection());
+            if (m_traceabilityControlWidget) m_traceabilityControlWidget->setConnectionName(m_SQLManager->currentConnection());
             if (m_documentWidget) m_documentWidget->setConnectionName(m_SQLManager->currentConnection());
 
 
@@ -173,6 +176,7 @@ void MainWindow::releaseProjectViews()
         form->releaseDatabase();
     if (m_productTreeWidget) m_productTreeWidget->setConnectionName({});
     if (m_requirementWidget) m_requirementWidget->setConnectionName({});
+    if (m_traceabilityControlWidget) m_traceabilityControlWidget->setConnectionName({});
     if (m_documentWidget) m_documentWidget->releaseDatabase();
     if (m_applicabilityWidget) m_applicabilityWidget->setConnectionName({});
     if (m_verificationWidget) m_verificationWidget->setConnectionName({});
@@ -206,6 +210,7 @@ void MainWindow::bindProjectViews()
     if (m_n2MatrixWidget) m_n2MatrixWidget->setConnectionName(connection);
     if (m_productTreeWidget) m_productTreeWidget->setConnectionName(connection);
     if (m_requirementWidget) m_requirementWidget->setConnectionName(connection);
+    if (m_traceabilityControlWidget) m_traceabilityControlWidget->setConnectionName(connection);
     if (m_documentWidget) m_documentWidget->setConnectionName(connection);
     if (m_applicabilityWidget) m_applicabilityWidget->setConnectionName(connection);
     if (m_verificationWidget) m_verificationWidget->setConnectionName(connection);
@@ -681,6 +686,8 @@ void MainWindow::refreshTableSlot()
         m_productTreeWidget->refresh();
     if (m_requirementWidget)
         m_requirementWidget->refresh();
+    if (m_traceabilityControlWidget)
+        m_traceabilityControlWidget->refresh();
     if (m_documentWidget)
         m_documentWidget->refresh();
     if (m_applicabilityWidget)
@@ -765,6 +772,7 @@ void MainWindow::setupModernNavigation()
     m_projectPages=new QStackedWidget(projectPage);
     m_productTreeWidget=new ProductTreeWidget(projectPage);
     m_requirementWidget=new RequirementWidget(projectPage);
+    m_traceabilityControlWidget=new TraceabilityControlWidget(projectPage);
     m_documentWidget=new DocumentWidget(projectPage);
     m_applicabilityWidget=new ApplicabilityWidget(projectPage);
     m_verificationWidget=new VerificationWidget(projectPage);
@@ -772,10 +780,11 @@ void MainWindow::setupModernNavigation()
     m_changeWidget=new ChangeWidget(projectPage);
     m_historyWidget=new HistoryWidget(projectPage);
     m_referenceDataWidget=new ReferenceDataWidget(projectPage);
-    const QStringList sections={tr("Product Tree"),tr("Exigences"),tr("Documents"),tr("Applicabilité"),tr("Interfaces"),tr("Vérification"),tr("Changements"),tr("Historique"),tr("Paramètres")};
+    const QStringList sections={tr("Product Tree"),tr("Exigences"),tr("Traçabilité"),tr("Documents"),tr("Applicabilité"),tr("Interfaces"),tr("Vérification"),tr("Changements"),tr("Historique"),tr("Paramètres")};
     m_projectNavigation->addItems(sections);
     m_projectPages->addWidget(m_productTreeWidget);
     m_projectPages->addWidget(m_requirementWidget);
+    m_projectPages->addWidget(m_traceabilityControlWidget);
     m_projectPages->addWidget(m_documentWidget);
     m_projectPages->addWidget(m_applicabilityWidget);
     m_projectPages->addWidget(m_interfaceWidget);
@@ -787,39 +796,40 @@ void MainWindow::setupModernNavigation()
     connect(m_projectNavigation,&QListWidget::currentRowChanged,m_projectPages,&QStackedWidget::setCurrentIndex);
     connect(m_productTreeWidget,&ProductTreeWidget::dataChanged,this,&MainWindow::refreshTableSlot);
     connect(m_requirementWidget,&RequirementWidget::dataChanged,this,&MainWindow::refreshTableSlot);
+    connect(m_traceabilityControlWidget,&TraceabilityControlWidget::openRequirementRequested,this,[this](int id){m_requirementWidget->openRequirement(id);m_projectNavigation->setCurrentRow(RequirementsPage);});
     connect(m_documentWidget,&DocumentWidget::dataChanged,this,&MainWindow::refreshTableSlot);
     connect(m_applicabilityWidget,&ApplicabilityWidget::dataChanged,this,&MainWindow::refreshTableSlot);
-    connect(m_applicabilityWidget,&ApplicabilityWidget::openRequirementRequested,this,[this](int id){ui->mainTabWidget->setCurrentIndex(1);m_projectNavigation->setCurrentRow(1);m_requirementWidget->openRequirementApplicability(id);});
+    connect(m_applicabilityWidget,&ApplicabilityWidget::openRequirementRequested,this,[this](int id){ui->mainTabWidget->setCurrentIndex(1);m_projectNavigation->setCurrentRow(RequirementsPage);m_requirementWidget->openRequirementApplicability(id);});
     connect(m_verificationWidget,&VerificationWidget::dataChanged,this,&MainWindow::refreshTableSlot);
-    connect(m_verificationWidget,&VerificationWidget::openRequirementRequested,this,[this](int id){ui->mainTabWidget->setCurrentIndex(1);m_projectNavigation->setCurrentRow(1);m_requirementWidget->openRequirement(id);});
-    connect(m_documentWidget,&DocumentWidget::openRequirement,this,[this](int id){ui->mainTabWidget->setCurrentIndex(1);m_projectNavigation->setCurrentRow(1);m_requirementWidget->openRequirement(id);});
-    connect(m_requirementWidget,&RequirementWidget::openDocumentRequested,this,[this](int id){ui->mainTabWidget->setCurrentIndex(1);m_projectNavigation->setCurrentRow(2);m_documentWidget->openDocument(id);});
-    connect(m_productTreeWidget,&ProductTreeWidget::openRequirementsForPt,this,[this](int pt){RequirementFilter f;f.ptIds={pt};m_requirementWidget->applyFilter(f);ui->mainTabWidget->setCurrentIndex(1);m_projectNavigation->setCurrentRow(1);});
-    connect(m_productTreeWidget,&ProductTreeWidget::openInterfacesForPt,this,[this](int pt){m_interfaceWidget->applyPtFilter(pt);ui->mainTabWidget->setCurrentIndex(1);m_projectNavigation->setCurrentRow(4);});
+    connect(m_verificationWidget,&VerificationWidget::openRequirementRequested,this,[this](int id){ui->mainTabWidget->setCurrentIndex(1);m_projectNavigation->setCurrentRow(RequirementsPage);m_requirementWidget->openRequirement(id);});
+    connect(m_documentWidget,&DocumentWidget::openRequirement,this,[this](int id){ui->mainTabWidget->setCurrentIndex(1);m_projectNavigation->setCurrentRow(RequirementsPage);m_requirementWidget->openRequirement(id);});
+    connect(m_requirementWidget,&RequirementWidget::openDocumentRequested,this,[this](int id){ui->mainTabWidget->setCurrentIndex(1);m_projectNavigation->setCurrentRow(DocumentsPage);m_documentWidget->openDocument(id);});
+    connect(m_productTreeWidget,&ProductTreeWidget::openRequirementsForPt,this,[this](int pt){RequirementFilter f;f.ptIds={pt};m_requirementWidget->applyFilter(f);ui->mainTabWidget->setCurrentIndex(1);m_projectNavigation->setCurrentRow(RequirementsPage);});
+    connect(m_productTreeWidget,&ProductTreeWidget::openInterfacesForPt,this,[this](int pt){m_interfaceWidget->applyPtFilter(pt);ui->mainTabWidget->setCurrentIndex(1);m_projectNavigation->setCurrentRow(InterfacesPage);});
     connect(m_interfaceWidget,&InterfaceWidget::dataChanged,this,&MainWindow::refreshTableSlot);
-    connect(m_interfaceWidget,&InterfaceWidget::openRequirementRequested,this,[this](int id){m_requirementWidget->openRequirement(id);m_projectNavigation->setCurrentRow(1);});
-    connect(m_interfaceWidget,&InterfaceWidget::openDocumentRequested,this,[this](int id){m_documentWidget->openDocument(id);m_projectNavigation->setCurrentRow(2);});
-    connect(m_interfaceWidget,&InterfaceWidget::openProductTreeRequested,this,[this](int){m_projectNavigation->setCurrentRow(0);});
-    connect(m_productTreeWidget,&ProductTreeWidget::openChangesForPt,this,[this](int id){m_changeWidget->applyObjectFilter("PT",id);ui->mainTabWidget->setCurrentIndex(1);m_projectNavigation->setCurrentRow(6);});
-    connect(m_requirementWidget,&RequirementWidget::openChangesRequested,this,[this](int id){m_changeWidget->applyObjectFilter("REQUIREMENT",id);m_projectNavigation->setCurrentRow(6);});
-    connect(m_requirementWidget,&RequirementWidget::openChangeRequested,this,[this](int id){m_changeWidget->openChange(id);m_projectNavigation->setCurrentRow(6);});
+    connect(m_interfaceWidget,&InterfaceWidget::openRequirementRequested,this,[this](int id){m_requirementWidget->openRequirement(id);m_projectNavigation->setCurrentRow(RequirementsPage);});
+    connect(m_interfaceWidget,&InterfaceWidget::openDocumentRequested,this,[this](int id){m_documentWidget->openDocument(id);m_projectNavigation->setCurrentRow(DocumentsPage);});
+    connect(m_interfaceWidget,&InterfaceWidget::openProductTreeRequested,this,[this](int){m_projectNavigation->setCurrentRow(ProductTreePage);});
+    connect(m_productTreeWidget,&ProductTreeWidget::openChangesForPt,this,[this](int id){m_changeWidget->applyObjectFilter("PT",id);ui->mainTabWidget->setCurrentIndex(1);m_projectNavigation->setCurrentRow(ChangesPage);});
+    connect(m_requirementWidget,&RequirementWidget::openChangesRequested,this,[this](int id){m_changeWidget->applyObjectFilter("REQUIREMENT",id);m_projectNavigation->setCurrentRow(ChangesPage);});
+    connect(m_requirementWidget,&RequirementWidget::openChangeRequested,this,[this](int id){m_changeWidget->openChange(id);m_projectNavigation->setCurrentRow(ChangesPage);});
     connect(m_changeWidget,&ChangeWidget::dataChanged,this,&MainWindow::refreshTableSlot);
     connect(m_referenceDataWidget,&ReferenceDataWidget::dataChanged,this,&MainWindow::refreshTableSlot);
-    connect(m_changeWidget,&ChangeWidget::openRequirementRequested,this,[this](int id){m_requirementWidget->openRequirement(id);m_projectNavigation->setCurrentRow(1);});
-    connect(m_changeWidget,&ChangeWidget::openProductTreeRequested,this,[this](int){m_projectNavigation->setCurrentRow(0);});
-    connect(m_changeWidget,&ChangeWidget::openInterfaceRequested,this,[this](int id){m_interfaceWidget->openInterface(id);m_projectNavigation->setCurrentRow(4);});
-    connect(m_changeWidget,&ChangeWidget::openDocumentRequested,this,[this](int id){m_documentWidget->openDocument(id);m_projectNavigation->setCurrentRow(2);});
-    connect(m_changeWidget,&ChangeWidget::openConfigurationRequested,this,[this](int){m_projectNavigation->setCurrentRow(3);});
+    connect(m_changeWidget,&ChangeWidget::openRequirementRequested,this,[this](int id){m_requirementWidget->openRequirement(id);m_projectNavigation->setCurrentRow(RequirementsPage);});
+    connect(m_changeWidget,&ChangeWidget::openProductTreeRequested,this,[this](int){m_projectNavigation->setCurrentRow(ProductTreePage);});
+    connect(m_changeWidget,&ChangeWidget::openInterfaceRequested,this,[this](int id){m_interfaceWidget->openInterface(id);m_projectNavigation->setCurrentRow(InterfacesPage);});
+    connect(m_changeWidget,&ChangeWidget::openDocumentRequested,this,[this](int id){m_documentWidget->openDocument(id);m_projectNavigation->setCurrentRow(DocumentsPage);});
+    connect(m_changeWidget,&ChangeWidget::openConfigurationRequested,this,[this](int){m_projectNavigation->setCurrentRow(ApplicabilityPage);});
     connect(m_historyWidget,&HistoryWidget::openObjectRequested,this,[this](const QString&type,int id){
-        if(type=="REQUIREMENT"){m_requirementWidget->openRequirement(id);m_projectNavigation->setCurrentRow(1);}
-        else if(type=="DOCUMENT"){m_documentWidget->openDocument(id);m_projectNavigation->setCurrentRow(2);}
-        else if(type=="INTERFACE"){m_interfaceWidget->openInterface(id);m_projectNavigation->setCurrentRow(4);}
-        else if(type=="CHANGE"){m_changeWidget->openChange(id);m_projectNavigation->setCurrentRow(6);}
-        else if(type=="CONFIGURATION")m_projectNavigation->setCurrentRow(3);
-        else if(type=="PT")m_projectNavigation->setCurrentRow(0);
+        if(type=="REQUIREMENT"){m_requirementWidget->openRequirement(id);m_projectNavigation->setCurrentRow(RequirementsPage);}
+        else if(type=="DOCUMENT"){m_documentWidget->openDocument(id);m_projectNavigation->setCurrentRow(DocumentsPage);}
+        else if(type=="INTERFACE"){m_interfaceWidget->openInterface(id);m_projectNavigation->setCurrentRow(InterfacesPage);}
+        else if(type=="CHANGE"){m_changeWidget->openChange(id);m_projectNavigation->setCurrentRow(ChangesPage);}
+        else if(type=="CONFIGURATION")m_projectNavigation->setCurrentRow(ApplicabilityPage);
+        else if(type=="PT")m_projectNavigation->setCurrentRow(ProductTreePage);
     });
-    connect(m_coverageDashboard,&CoverageDashboard::navigateRequested,this,[this](int page,const QString&filter){if(page==1){RequirementFilter f;if(filter=="unallocated")f.allocated=0;else if(filter=="allocated")f.allocated=1;else if(filter=="untraced")f.traced=0;else if(filter=="traced")f.traced=1;else if(filter=="undocumented")f.documented=0;else if(filter=="documented")f.documented=1;else if(filter=="unverified")f.verified=0;else if(filter=="verified")f.verified=1;m_requirementWidget->applyFilter(f);}ui->mainTabWidget->setCurrentIndex(1);m_projectNavigation->setCurrentRow(page);});
-    m_projectNavigation->setCurrentRow(0);
+    connect(m_coverageDashboard,&CoverageDashboard::navigateRequested,this,[this](int page,const QString&filter){if(page==RequirementsPage){RequirementFilter f;if(filter=="unallocated")f.allocated=0;else if(filter=="allocated")f.allocated=1;else if(filter=="untraced")f.traced=0;else if(filter=="traced")f.traced=1;else if(filter=="undocumented")f.documented=0;else if(filter=="documented")f.documented=1;else if(filter=="unverified")f.verified=0;else if(filter=="verified")f.verified=1;m_requirementWidget->applyFilter(f);}ui->mainTabWidget->setCurrentIndex(1);m_projectNavigation->setCurrentRow(page);});
+    m_projectNavigation->setCurrentRow(ProductTreePage);
     if (hasOpenProject())
         bindProjectViews();
 

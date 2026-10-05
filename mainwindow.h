@@ -21,6 +21,7 @@ QT_FORWARD_DECLARE_CLASS(QSqlError)
 QT_FORWARD_DECLARE_CLASS(QTableWidgetItem)
 class CoverageDashboard;
 class TraceabilityWidget;
+class TraceabilityControlWidget;
 class N2MatrixWidget;
 class ProductTreeWidget;
 class RequirementWidget;
@@ -129,6 +130,7 @@ private:
     N2MatrixWidget* m_n2MatrixWidget = nullptr;
     ProductTreeWidget* m_productTreeWidget = nullptr;
     RequirementWidget* m_requirementWidget = nullptr;
+    TraceabilityControlWidget* m_traceabilityControlWidget = nullptr;
     DocumentWidget* m_documentWidget = nullptr;
     ApplicabilityWidget* m_applicabilityWidget = nullptr;
     VerificationWidget* m_verificationWidget = nullptr;

@@ -20,6 +20,7 @@
 #include "interfaceservice.h"
 #include "changeservice.h"
 #include "coverageservice.h"
+#include "traceabilitycontrolservice.h"
 #include "xlsxreader.h"
 #include <private/qzipreader_p.h>
 #include <private/qzipwriter_p.h>
@@ -84,10 +85,102 @@ private slots:
   void composesDocumentsInsideCallerTransaction();
   void importsExportsReqIfAndRejectsUnsafeXml();
   void calculatesDashboardCoverageFromOneService();
+  void controlsHighLevelTraceability();
   void auditsDiagnosesBacksUpAndRestoresProject();
   void previewsTaggedWordRoundTrip();
   void parsesSemanticWordTablesAndMetadata();
 };
+
+void DatabaseMigratorTest::controlsHighLevelTraceability() {
+  QTemporaryDir directory;
+  REQ_SQLManager manager;
+  const auto creation = manager.newDB(directory.filePath("traceability.db"));
+  QVERIFY2(creation.type() == QSqlError::NoError, qPrintable(creation.text()));
+  QSqlDatabase db = QSqlDatabase::database(manager.currentConnection());
+  QSqlQuery q(db);
+  QVERIFY(q.exec("INSERT INTO PT(ID,PARENT,NAME,SEGMENT,ARCHIVED) VALUES"
+                 "(1,NULL,'Système','SYS',0),(2,1,'Sous-système','SUB',0),"
+                 "(3,NULL,'Archive','OLD',1)"));
+  QVERIFY(q.exec("INSERT INTO DOCUMENT(ID,PT_ID,TYPE,TITLE) "
+                 "VALUES(1,1,1,'Spécification')"));
+  QVERIFY(q.exec("INSERT INTO CONFIGURATION(ID,CODE,LABEL,ACTIVE,POSITION) "
+                 "VALUES(1,'FM','Vol',1,1),(2,'OLD','Archivée',0,2)"));
+  QVERIFY(q.exec("INSERT INTO REQUIREMENT(ID,PT_ID,CODE,DOC_ID,TITLE,TYPE,"
+                 "STATUS,VERIF_METHOD,IS_TRACE_ROOT) VALUES"
+                 "(1,1,'HL-1',1,'Racine conforme',1,1,1,1),"
+                 "(2,2,'LL-1',1,'Enfant',1,1,1,0),"
+                 "(3,2,'HL-2',1,'Mauvais PT',1,1,1,1),"
+                 "(4,1,'HL-OBS',1,'Obsolète',1,8,1,1)"));
+  QVERIFY(q.exec("INSERT INTO REQUIREMENT_PT(REQ_ID,PT_ID,IS_PRIMARY) VALUES"
+                 "(1,1,1),(2,2,1),(3,2,1),(4,1,1)"));
+  QVERIFY(q.exec("INSERT INTO REQUIREMENT_APPLICABILITY"
+                 "(REQ_ID,CONFIG_ID,PT_ID,APPLICABLE) VALUES"
+                 "(1,1,NULL,1),(1,1,1,0),(1,2,NULL,1),(3,1,NULL,1)"));
+  QVERIFY(q.exec("INSERT INTO REQUIREMENT_RELATION(SOURCE_REQ_ID,TARGET_REQ_ID,"
+                 "TYPE_ID) VALUES(1,2,1)"));
+
+  TraceabilityControlService service(manager.currentConnection());
+  QString error;
+  auto rows = service.rows({}, &error);
+  QVERIFY2(error.isEmpty(), qPrintable(error));
+  QCOMPARE(rows.size(), 2); // l'obsolète est masquée
+  QCOMPARE(rows[0].code, QString("HL-1"));
+  QVERIFY(!rows[0].applicable); // l'exception root fausse prime
+  QVERIFY(rows[0].rootConform);
+  QVERIFY(rows[0].takenIntoAccount);
+  QCOMPARE(rows[0].qualifyingRelationCount, 1);
+  QCOMPARE(rows[1].code, QString("HL-2"));
+  QVERIFY(rows[1].applicable);
+  QVERIFY(!rows[1].rootConform);
+  QVERIFY(!rows[1].takenIntoAccount);
+
+  // La dépendance qualifie dans son sens métier : l'exigence aval dépend de
+  // la racine. Le sens inverse ne doit pas compter.
+  QVERIFY(q.exec("INSERT INTO REQUIREMENT_RELATION(SOURCE_REQ_ID,TARGET_REQ_ID,"
+                 "TYPE_ID) VALUES(2,1,3),(1,2,3),(1,2,2),(2,1,2)"));
+  TraceabilityFilter applicable;
+  applicable.applicable = 1;
+  rows = service.rows(applicable, &error);
+  QCOMPARE(rows.size(), 1);
+  QCOMPARE(rows.first().code, QString("HL-2"));
+
+  // Retirer l'exception rend HL-1 applicable et ses trois liens qualifiants
+  // sont Décompose + Dérive de + Dépend de. Les liens inversés restent ignorés.
+  QVERIFY(q.exec("DELETE FROM REQUIREMENT_APPLICABILITY WHERE REQ_ID=1 AND "
+                 "CONFIG_ID=1 AND PT_ID=1"));
+  rows = service.rows({}, &error);
+  QVERIFY(rows[0].applicable);
+  QCOMPARE(rows[0].qualifyingRelationCount, 3);
+  QVERIFY(rows[0].relationTypes.contains("Décompose"));
+  QVERIFY(rows[0].relationTypes.contains("Dérive de"));
+  QVERIFY(rows[0].relationTypes.contains("Dépend de"));
+
+  TraceabilityFilter anomalies;
+  anomalies.rootConform = 0;
+  anomalies.takenIntoAccount = 0;
+  anomalies.text = "mauvais";
+  rows = service.rows(anomalies, &error);
+  QCOMPARE(rows.size(), 1);
+  QCOMPARE(rows.first().code, QString("HL-2"));
+
+  TraceabilityFilter byStatus;
+  byStatus.statusId = 1;
+  QCOMPARE(service.rows(byStatus, &error).size(), 2);
+
+  TraceabilityFilter includeObsolete;
+  includeObsolete.includeObsolete = true;
+  rows = service.rows(includeObsolete, &error);
+  QCOMPARE(rows.size(), 3);
+  QVERIFY(rows.last().obsolete);
+  QVERIFY(rows.last().diagnostic.contains("contrôles désactivés"));
+
+  RequirementService requirements(manager.currentConnection());
+  RequirementRecord record = requirements.get(2, &error);
+  QVERIFY2(error.isEmpty(), qPrintable(error));
+  record.traceRoot = true;
+  QVERIFY2(requirements.save(record).success, "Le marqueur doit être enregistré");
+  QVERIFY(requirements.get(2).traceRoot);
+}
 
 void DatabaseMigratorTest::parsesSemanticWordTablesAndMetadata() {
   QTemporaryDir directory;
@@ -172,11 +265,18 @@ void DatabaseMigratorTest::previewsTaggedWordRoundTrip() {
   ignored.record.code = "IGNORED-R-1"; ignored.record.title = "À ignorer"; ignored.record.description = "<p>Ignorée</p>";
   DocxImportRequirement imported; imported.selected = true; imported.ordinal = 2; imported.location = "Exigence 2 — Fonctions";
   imported.record.code = "SYS-R-0002"; imported.record.title = "Importée"; imported.record.description = "<p>Valide</p>";
+  imported.record.traceRoot = true;
   selective.requirements = {ignored, imported};
   DocxImportOptions importOptions; importOptions.documentId = 1; importOptions.primaryPtId = 1;
   QVERIFY2(importer.importPreview(selective, importOptions).success, "L'exigence cochée doit être importée");
   QVERIFY(query.exec("SELECT COUNT(*) FROM REQUIREMENT WHERE CODE='IGNORED-R-1'")); QVERIFY(query.next()); QCOMPARE(query.value(0).toInt(), 0);
   QVERIFY(query.exec("SELECT COUNT(*) FROM REQUIREMENT WHERE CODE='SYS-R-0002'")); QVERIFY(query.next()); QCOMPARE(query.value(0).toInt(), 1);
+  QVERIFY(query.exec("SELECT IS_TRACE_ROOT FROM REQUIREMENT WHERE CODE='SYS-R-0002'")); QVERIFY(query.next()); QVERIFY(query.value(0).toBool());
+  imported.record.traceRoot = false;
+  selective.requirements = {imported};
+  QVERIFY2(importer.importPreview(selective, importOptions).success,
+           "La mise à jour doit appliquer la valeur root importée");
+  QVERIFY(query.exec("SELECT IS_TRACE_ROOT FROM REQUIREMENT WHERE CODE='SYS-R-0002'")); QVERIFY(query.next()); QVERIFY(!query.value(0).toBool());
 
   DocxImportPreview rollbackPreview;
   DocxImportRequirement beforeFailure; beforeFailure.selected = true; beforeFailure.ordinal = 3; beforeFailure.location = "Exigence 3";

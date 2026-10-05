@@ -4,6 +4,8 @@
 #include <QGraphicsRectItem>
 #include <QGraphicsView>
 #include <QPushButton>
+#include <QMessageBox>
+#include <QTimer>
 #include <QSettings>
 #include <QSpinBox>
 #include <QSqlDatabase>
@@ -19,6 +21,7 @@
 #include "checkablecombobox.h"
 #include "req_sqlmanager.h"
 #include "requirementwidget.h"
+#include "requirementimportdialog.h"
 #include "referencedataservice.h"
 #include "referencedatawidget.h"
 
@@ -29,7 +32,67 @@ private slots:
   void checkableFiltersSupportMultipleValues();
   void relationGraphLayersPlacementAndPreferences();
   void referenceDataWidgetRefreshesCatalogs();
+  void parsesTraceRootImportValues();
+  void keepsCurrentRequirementWhenDiscardIsRefused();
 };
+
+void RequirementWidgetTest::parsesTraceRootImportValues() {
+  bool value = false;
+  for (const QString &text : {"oui", "TRUE", "1", "Racine", "root"}) {
+    QVERIFY(RequirementImportDialog::parseTraceRootValue(text, &value));
+    QVERIFY(value);
+  }
+  for (const QString &text : {"", "non", "FALSE", "0"}) {
+    QVERIFY(RequirementImportDialog::parseTraceRootValue(text, &value));
+    QVERIFY(!value);
+  }
+  QVERIFY(!RequirementImportDialog::parseTraceRootValue("peut-être", &value));
+  QVERIFY(!RequirementImportDialog::parseTraceRootValue("oui", nullptr));
+}
+
+void RequirementWidgetTest::keepsCurrentRequirementWhenDiscardIsRefused() {
+  QTemporaryDir directory;
+  REQ_SQLManager manager;
+  const QSqlError error = manager.newDB(directory.filePath("keyboard.db"));
+  QVERIFY2(error.type() == QSqlError::NoError, qPrintable(error.text()));
+  ProductTreeService tree(manager.currentConnection());
+  QVERIFY(tree.addNode(-1, "SYS").success);
+  QSqlQuery query(QSqlDatabase::database(manager.currentConnection()));
+  QVERIFY(query.exec("SELECT ID FROM PT WHERE SEGMENT='SYS'"));
+  QVERIFY(query.next());
+  const int ptId = query.value(0).toInt();
+  QVERIFY(query.exec(QString("INSERT INTO DOCUMENT(ID,PT_ID,TYPE,TITLE) "
+                             "VALUES(1,%1,1,'Keyboard')")
+                         .arg(ptId)));
+  QVERIFY(query.exec(QString(
+      "INSERT INTO REQUIREMENT(ID,PT_ID,CODE,DOC_ID,TITLE,TYPE,STATUS,"
+      "VERIF_METHOD) VALUES(1,%1,'REQ-1',1,'One',1,1,1),"
+      "(2,%1,'REQ-2',1,'Two',1,1,1)")
+                         .arg(ptId)));
+  QVERIFY(query.exec(QString(
+      "INSERT INTO REQUIREMENT_PT(REQ_ID,PT_ID,IS_PRIMARY) VALUES"
+      "(1,%1,1),(2,%1,1)")
+                         .arg(ptId)));
+
+  RequirementWidget widget;
+  widget.setConnectionName(manager.currentConnection());
+  auto *list = widget.findChild<QTableWidget *>("requirementList");
+  auto *title = widget.findChild<QLineEdit *>("requirementTitleEditor");
+  QVERIFY(list); QVERIFY(title);
+  widget.openRequirement(1);
+  title->setText("Modification locale");
+  list->setFocus();
+  QTimer::singleShot(0, [] {
+    if (auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget()))
+      box->done(QMessageBox::No);
+  });
+  QTest::keyClick(list, Qt::Key_Down);
+  QCOMPARE(list->currentRow(), 1);
+  QCOMPARE(widget.findChild<QLineEdit *>("requirementCodeEditor")->text(),
+           QString("REQ-1"));
+  QCOMPARE(title->text(), QString("Modification locale"));
+  manager.close();
+}
 
 void RequirementWidgetTest::referenceDataWidgetRefreshesCatalogs() {
   QTemporaryDir directory;
@@ -223,12 +286,15 @@ void RequirementWidgetTest::
   QVERIFY(query.exec(
       QString("INSERT INTO "
               "REQUIREMENT(ID,PT_ID,CODE,DOC_ID,TITLE,TYPE,STATUS,VERIF_METHOD)"
-              " VALUES(1,%1,'A-R-0001',1,'Existing requirement',1,1,1)")
+              " VALUES(1,%1,'A-R-0001',1,'Existing requirement',1,1,1),"
+              "(2,%1,'A-R-0002',1,'Keyboard requirement',1,1,1)")
           .arg(rootId)));
   QVERIFY(query.exec(
       QString(
-          "INSERT INTO REQUIREMENT_PT(REQ_ID,PT_ID,IS_PRIMARY) VALUES(1,%1,1)")
+          "INSERT INTO REQUIREMENT_PT(REQ_ID,PT_ID,IS_PRIMARY) VALUES"
+          "(1,%1,1),(2,%1,1)")
           .arg(rootId)));
+  QVERIFY(query.exec("UPDATE REQUIREMENT SET IS_TRACE_ROOT=1 WHERE ID=2"));
 
   RequirementWidget widget;
   widget.setConnectionName(manager.currentConnection());
@@ -243,7 +309,7 @@ void RequirementWidgetTest::
   QVERIFY(tree);
   QVERIFY(primary);
   QVERIFY(!editor->isEnabled());
-  QCOMPARE(list->rowCount(), 2); // filter row plus the existing requirement
+  QCOMPARE(list->rowCount(), 3); // filter row plus the two requirements
   QVERIFY(list->selectedItems().isEmpty());
   QCOMPARE(tree->topLevelItemCount(), 1);
   QCOMPARE(tree->topLevelItem(0)->text(0).section(" — ", 0, 0), QString("A"));
@@ -256,6 +322,13 @@ void RequirementWidgetTest::
   widget.openRequirement(1);
   QVERIFY(editor->isEnabled());
   QCOMPARE(list->currentRow(), 1);
+  list->setFocus();
+  QTest::keyClick(list, Qt::Key_Down);
+  QCoreApplication::processEvents();
+  QCOMPARE(list->currentRow(), 2);
+  QCOMPARE(widget.findChild<QLineEdit *>("requirementCodeEditor")->text(),
+           QString("A-R-0002"));
+  QVERIFY(widget.findChild<QCheckBox *>("traceRootCheckBox")->isChecked());
 
   QTest::mouseClick(create, Qt::LeftButton);
   QVERIFY(editor->isEnabled());

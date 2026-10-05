@@ -620,6 +620,7 @@ RequirementResult DocxImportService::importPreview(const DocxImportPreview &prev
       if (options.updateDuplicates && item.importAction != "keep") {
         record.title = item.record.title; record.description = item.record.description;
         record.source = item.record.source;
+        record.traceRoot = item.record.traceRoot;
       }
     } else { record.primaryPtId = options.primaryPtId; record.ptIds = {options.primaryPtId}; }
     if (!item.type.isEmpty()) { const int id = lookup(db, "REQ_TYPE", {"TYPE", "CODE"}, item.type); if (id < 0) return fail(context + "type inconnu : " + item.type); record.typeId = id; }

@@ -29,12 +29,14 @@
 
 namespace {
 enum Field { Code, Title, Description, Type, Source, Applicability,
-             Methods, VerificationLevel, Method1, Level1, Method2, Level2, Section,
+             Methods, VerificationLevel, Method1, Level1, Method2, Level2,
+             Section, TraceRoot,
              FieldCount };
 const QStringList fieldNames = {
     "Code *", "Titre *", "Descriptif *", "Type", "Source",
     "Applicabilité / configurations", "Méthodes (liste)", "Niveau de vérification",
-    "Méthode 1", "Niveau 1", "Méthode 2", "Niveau 2", "Section / chapitre"};
+    "Méthode 1", "Niveau 1", "Méthode 2", "Niveau 2",
+    "Section / chapitre", "Racine de traçabilité"};
 
 QString normalized(QString value) {
   return value.simplified().toUpper();
@@ -44,8 +46,24 @@ QStringList splitValues(const QString &value) {
   return value.split(QRegularExpression("[;,;|,]+"), Qt::SkipEmptyParts);
 }
 
-enum WordColumn { WordSelected, WordOrdinal, WordChapter, WordCode,
+enum WordColumn { WordSelected, WordTraceRoot, WordOrdinal, WordChapter, WordCode,
                   WordTitle, WordRecognition, WordDiagnostic, WordColumnCount };
+
+bool parseTraceRootValueImpl(const QString &raw, bool *value) {
+  const QString normalizedValue = normalized(raw);
+  if (normalizedValue.isEmpty() || normalizedValue == "NON" ||
+      normalizedValue == "FALSE" || normalizedValue == "0") {
+    *value = false;
+    return true;
+  }
+  if (normalizedValue == "OUI" || normalizedValue == "TRUE" ||
+      normalizedValue == "1" || normalizedValue == "RACINE" ||
+      normalizedValue == "ROOT") {
+    *value = true;
+    return true;
+  }
+  return false;
+}
 
 QString joinLines(const QStringList &values) { return values.join('\n'); }
 
@@ -140,6 +158,17 @@ RequirementImportDialog::RequirementImportDialog(const QString &connectionName,
   layout->addLayout(form);
   layout->addWidget(new QLabel("Aperçu"));
   layout->addWidget(m_preview, 2);
+  m_allTraceRoots = new QPushButton("Tout marquer root");
+  m_allTraceRoots->setObjectName("allTraceRootsButton");
+  m_noTraceRoots = new QPushButton("Tout démarquer root");
+  m_noTraceRoots->setObjectName("noTraceRootsButton");
+  m_traceRootOverrideLabel = new QLabel("Root : valeurs individuelles / source");
+  auto *traceRootActions = new QHBoxLayout;
+  traceRootActions->addWidget(m_allTraceRoots);
+  traceRootActions->addWidget(m_noTraceRoots);
+  traceRootActions->addWidget(m_traceRootOverrideLabel);
+  traceRootActions->addStretch();
+  layout->addLayout(traceRootActions);
   auto *editWordButton = new QPushButton("Corriger l'exigence sélectionnée…");
   editWordButton->setObjectName("editWordRequirement");
   editWordButton->setVisible(false);
@@ -177,6 +206,22 @@ RequirementImportDialog::RequirementImportDialog(const QString &connectionName,
   connect(m_preview, &QTableWidget::cellDoubleClicked, this, [this](int row, int) {
     if (m_wordMode) editWordRequirement(row);
   });
+  connect(m_preview, &QTableWidget::itemChanged, this,
+          [this](QTableWidgetItem *item) {
+            if (!m_wordMode || !item || item->column() != WordTraceRoot ||
+                item->row() < 0 ||
+                item->row() >= m_wordPreview.requirements.size())
+              return;
+            m_wordPreview.requirements[item->row()].record.traceRoot =
+                item->checkState() == Qt::Checked;
+            m_traceRootOverride = -1;
+            m_traceRootOverrideLabel->setText(
+                "Root : valeurs individuelles / source");
+          });
+  connect(m_allTraceRoots, &QPushButton::clicked, this,
+          [this] { setAllTraceRoots(true); });
+  connect(m_noTraceRoots, &QPushButton::clicked, this,
+          [this] { setAllTraceRoots(false); });
   connect(buttons, &QDialogButtonBox::rejected, this,
           &QDialog::reject);
   connect(m_documentMode, &QComboBox::currentIndexChanged, this, [this] {
@@ -189,6 +234,11 @@ RequirementImportDialog::RequirementImportDialog(const QString &connectionName,
   m_existingDocument->setEnabled(false);
 }
 
+bool RequirementImportDialog::parseTraceRootValue(const QString &raw,
+                                                  bool *value) {
+  return value && parseTraceRootValueImpl(raw, value);
+}
+
 void RequirementImportDialog::chooseFile() {
   const QString fileName = QFileDialog::getOpenFileName(
       this, "Spécification", QString(),
@@ -197,6 +247,8 @@ void RequirementImportDialog::chooseFile() {
     return;
   m_filePath = fileName;
   m_wordMode = fileName.endsWith(".docx", Qt::CaseInsensitive);
+  m_traceRootOverride = -1;
+  m_traceRootOverrideLabel->setText("Root : valeurs individuelles / source");
   if (m_wordMode) loadWordSource(); else loadSource();
 }
 
@@ -220,7 +272,7 @@ void RequirementImportDialog::loadWordSource() {
   m_mapping->setVisible(false);
   if (auto *button = findChild<QPushButton *>("editWordRequirement")) button->setVisible(true);
   m_preview->clear(); m_preview->setColumnCount(WordColumnCount);
-  m_preview->setHorizontalHeaderLabels({"Importer", "N°", "Chapitre", "Code", "Titre", "Reconnaissance", "Diagnostic"});
+  m_preview->setHorizontalHeaderLabels({"Importer", "Root", "N°", "Chapitre", "Code", "Titre", "Reconnaissance", "Diagnostic"});
   m_preview->setRowCount(m_wordPreview.requirements.size());
   for (int row = 0; row < m_wordPreview.requirements.size(); ++row) refreshWordPreviewRow(row);
   m_preview->horizontalHeader()->setSectionResizeMode(WordDiagnostic, QHeaderView::Stretch);
@@ -259,7 +311,7 @@ void RequirementImportDialog::loadSource() {
 void RequirementImportDialog::refreshWordPreviewRow(int row) {
   if (row < 0 || row >= m_wordPreview.requirements.size()) return;
   const auto &requirement = m_wordPreview.requirements[row];
-  const QStringList values{"", QString::number(requirement.ordinal), requirement.chapterPath.join(" / "),
+  const QStringList values{"", "", QString::number(requirement.ordinal), requirement.chapterPath.join(" / "),
                            requirement.record.code, requirement.record.title,
                            requirement.recognition == DocxImportRecognition::Conformant ? "Conforme" : "À corriger",
                            requirement.diagnostics.join(" ; ")};
@@ -268,11 +320,29 @@ void RequirementImportDialog::refreshWordPreviewRow(int row) {
     if (!cell) { cell = new QTableWidgetItem; m_preview->setItem(row, column, cell); }
     cell->setText(values[column]);
     cell->setFlags(cell->flags() & ~Qt::ItemIsEditable);
-    if (column == WordSelected) {
+    if (column == WordSelected || column == WordTraceRoot) {
       cell->setFlags(cell->flags() | Qt::ItemIsUserCheckable);
-      cell->setCheckState(requirement.selected ? Qt::Checked : Qt::Unchecked);
+      cell->setCheckState(column == WordSelected
+                              ? (requirement.selected ? Qt::Checked : Qt::Unchecked)
+                              : (requirement.record.traceRoot ? Qt::Checked
+                                                              : Qt::Unchecked));
     }
   }
+}
+
+void RequirementImportDialog::setAllTraceRoots(bool traceRoot) {
+  m_traceRootOverride = traceRoot ? 1 : 0;
+  m_traceRootOverrideLabel->setText(
+      traceRoot ? "Root : toutes les exigences" : "Root : aucune exigence");
+  if (!m_wordMode)
+    return;
+  m_preview->blockSignals(true);
+  for (int row = 0; row < m_wordPreview.requirements.size(); ++row) {
+    m_wordPreview.requirements[row].record.traceRoot = traceRoot;
+    if (auto *item = m_preview->item(row, WordTraceRoot))
+      item->setCheckState(traceRoot ? Qt::Checked : Qt::Unchecked);
+  }
+  m_preview->blockSignals(false);
 }
 
 void RequirementImportDialog::editWordRequirement(int row) {
@@ -289,12 +359,15 @@ void RequirementImportDialog::editWordRequirement(int row) {
   auto *source = new QLineEdit(item.record.source);
   auto *type = new QLineEdit(item.type);
   auto *status = new QLineEdit(item.status);
+  auto *traceRoot = new QCheckBox("Exigence haut niveau / racine de traçabilité");
+  traceRoot->setChecked(item.record.traceRoot);
   auto *chapter = new QLineEdit(item.chapterPath.join(" / "));
   auto *pts = new QTextEdit(joinLines(item.productTreeCodes)); pts->setMaximumHeight(70);
   auto *configs = new QTextEdit(joinLines(item.configurationCodes)); configs->setMaximumHeight(70);
   auto *description = new QTextEdit; description->setHtml(item.record.description);
   form->addRow("Code *", code); form->addRow("Titre *", title);
   form->addRow("Source", source); form->addRow("Type", type); form->addRow("Statut", status);
+  form->addRow(QString(), traceRoot);
   form->addRow("Chapitre (niveaux séparés par /)", chapter);
   form->addRow("Product Trees (un code par ligne)", pts);
   form->addRow("Configurations (un code par ligne)", configs);
@@ -365,6 +438,7 @@ void RequirementImportDialog::editWordRequirement(int row) {
 
   item.record.code = code->text().trimmed(); item.record.title = title->text().trimmed();
   item.record.source = source->text().trimmed(); item.type = type->text().trimmed(); item.status = status->text().trimmed();
+  item.record.traceRoot = traceRoot->isChecked();
   item.chapterPath = editedLines(chapter->text().replace('/', '\n'));
   item.productTreeCodes = editedLines(pts->toPlainText()); item.configurationCodes = editedLines(configs->toPlainText());
   item.record.description = description->toHtml();
@@ -426,7 +500,9 @@ void RequirementImportDialog::rebuildMappings() {
       {"METHODES", "METHODS", "METHODE DE VERIFICATION"},
       {"NIVEAU", "VERIFICATION LEVEL"}, {"METHODE 1", "METHOD 1"},
       {"NIVEAU 1", "LEVEL 1"}, {"METHODE 2", "METHOD 2"},
-      {"NIVEAU 2", "LEVEL 2"}, {"SECTION", "CHAPTER", "CHAPITRE"}};
+      {"NIVEAU 2", "LEVEL 2"}, {"SECTION", "CHAPTER", "CHAPITRE"},
+      {"RACINE DE TRACABILITE", "RACINE DE TRAÇABILITÉ", "TRACE ROOT",
+       "ROOT", "IS_TRACE_ROOT"}};
   const QString profileScope = "requirements-import-" +
                                normalized(headers.join("|"));
   const TabularProfile savedProfile = TabularService::loadProfile(profileScope);
@@ -685,6 +761,19 @@ void RequirementImportDialog::runImport() {
                     .arg(index + 1);
       continue;
     }
+    bool importedTraceRoot = false;
+    const bool traceRootIsExplicit =
+        m_traceRootOverride >= 0 || mappedColumn(TraceRoot) >= 0;
+    if (m_traceRootOverride >= 0) {
+      importedTraceRoot = m_traceRootOverride == 1;
+    } else if (mappedColumn(TraceRoot) >= 0 &&
+               !parseTraceRootValue(mappedValue(row, TraceRoot),
+                                    &importedTraceRoot)) {
+      errors << QString("Ligne %1 : valeur de racine de traçabilité invalide « %2 ».")
+                    .arg(index + 1)
+                    .arg(mappedValue(row, TraceRoot));
+      continue;
+    }
     RequirementService service(m_connection);
     RequirementRecord record;
     bool rowRejected = false;
@@ -710,6 +799,8 @@ void RequirementImportDialog::runImport() {
     if (saveRecord) {
       record.title = title.isEmpty() ? record.title : title;
       record.description = description.isEmpty() ? record.description : description;
+      if (traceRootIsExplicit)
+        record.traceRoot = importedTraceRoot;
     }
     const QString source = mappedValue(row, Source);
     if (saveRecord && !source.isEmpty()) record.source = source;
@@ -979,6 +1070,11 @@ void RequirementImportDialog::runWordImport() {
     const bool checked = m_preview->item(row, WordSelected) && m_preview->item(row, WordSelected)->checkState() == Qt::Checked;
     selected.requirements[row].selected = checked;
     m_wordPreview.requirements[row].selected = checked;
+    const bool traceRoot = m_preview->item(row, WordTraceRoot) &&
+                           m_preview->item(row, WordTraceRoot)->checkState() ==
+                               Qt::Checked;
+    selected.requirements[row].record.traceRoot = traceRoot;
+    m_wordPreview.requirements[row].record.traceRoot = traceRoot;
   }
   ProductTreeService productTrees(m_connection);
   auto lookup = [&](const QString &table, const QStringList &columns, const QString &value) {

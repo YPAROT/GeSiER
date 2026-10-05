@@ -41,6 +41,8 @@ SOURCES += \
     verificationservice.cpp \
     verificationwidget.cpp \
     traceabilitywidget.cpp \
+    traceabilitycontrolservice.cpp \
+    traceabilitycontrolwidget.cpp \
     n2matrixwidget.cpp \
     interfaceservice.cpp \
     interfacewidget.cpp \
@@ -80,6 +82,9 @@ HEADERS += \
     verificationservice.h \
     verificationwidget.h \
     traceabilitywidget.h \
+    traceabilitycontrolservice.h \
+    traceabilitycontrolwidget.h \
+    projectpages.h \
     n2matrixwidget.h \
     interfaceservice.h \
     interfacewidget.h \

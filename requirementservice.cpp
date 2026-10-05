@@ -107,7 +107,8 @@ RequirementService::find(const RequirementFilter &filter,
       "AND X.TYPE_ID IN(1,2)),"
       "EXISTS(SELECT 1 FROM DOCUMENT_NODE N WHERE N.REQ_ID=R.ID),"
       "EXISTS(SELECT 1 FROM REQUIREMENT_VERIFICATION V WHERE V.REQ_ID=R.ID AND "
-      "V.METHOD_ID IS NOT NULL AND V.VERIFICATION_LEVEL_PT_ID IS NOT NULL) "
+      "V.METHOD_ID IS NOT NULL AND V.VERIFICATION_LEVEL_PT_ID IS NOT NULL),"
+      "COALESCE(R.IS_TRACE_ROOT,0) "
       "FROM REQUIREMENT R WHERE " +
       where.join(" AND ") + " ORDER BY R.CODE");
   for (const QVariant &value : values)
@@ -135,6 +136,7 @@ RequirementService::find(const RequirementFilter &filter,
     r.traced = query.value(12).toBool();
     r.documented = query.value(13).toBool();
     r.verified = query.value(14).toBool();
+    r.traceRoot = query.value(15).toBool();
     result << r;
   }
   return result;
@@ -293,7 +295,7 @@ RequirementResult RequirementService::save(const RequirementRecord &record,
         "INSERT INTO "
         "REQUIREMENT(PT_ID,CODE,DOC_ID,TITLE,DESCRIPTION,TYPE,STATUS,SOURCE,"
         "VERIF_LEVEL,VERIF_METHOD,VERIF_PROCEDURE,REDMINE_REF,VERIF_MEANS,"
-        "VERIF_STATUS) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+        "VERIF_STATUS,IS_TRACE_ROOT) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
     insert.addBindValue(record.primaryPtId);
     insert.addBindValue(record.code.trimmed());
     insert.addBindValue(defaults.value(0));
@@ -309,6 +311,7 @@ RequirementResult RequirementService::save(const RequirementRecord &record,
     insert.addBindValue(first ? first->redmine : QString());
     insert.addBindValue(first ? first->means : QString());
     insert.addBindValue(first ? first->verdict : QString());
+    insert.addBindValue(record.traceRoot ? 1 : 0);
     if (!insert.exec()) {
       if (manageTransaction) db.rollback();
       return RequirementResult::failure(insert.lastError().text());
@@ -320,7 +323,8 @@ RequirementResult RequirementService::save(const RequirementRecord &record,
                    "PT_ID=?,CODE=?,TITLE=?,DESCRIPTION=?,TYPE=?,STATUS=?,"
                    "SOURCE=?,VERIF_LEVEL=?,VERIF_METHOD=COALESCE(?,VERIF_"
                    "METHOD),VERIF_PROCEDURE=?,"
-                   "REDMINE_REF=?,VERIF_MEANS=?,VERIF_STATUS=? WHERE ID=?");
+                   "REDMINE_REF=?,VERIF_MEANS=?,VERIF_STATUS=?,IS_TRACE_ROOT=? "
+                   "WHERE ID=?");
     update.addBindValue(record.primaryPtId);
     update.addBindValue(record.code.trimmed());
     update.addBindValue(record.title.trimmed());
@@ -334,6 +338,7 @@ RequirementResult RequirementService::save(const RequirementRecord &record,
     update.addBindValue(first ? first->redmine : QString());
     update.addBindValue(first ? first->means : QString());
     update.addBindValue(first ? first->verdict : QString());
+    update.addBindValue(record.traceRoot ? 1 : 0);
     update.addBindValue(id);
     if (!update.exec()) {
       if (manageTransaction) db.rollback();

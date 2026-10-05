@@ -9,6 +9,7 @@ class QCheckBox;
 class QComboBox;
 class QLabel;
 class QLineEdit;
+class QPushButton;
 class QSpinBox;
 class QTableWidget;
 
@@ -17,6 +18,7 @@ class RequirementImportDialog : public QDialog {
 public:
   explicit RequirementImportDialog(const QString &connectionName,
                                    QWidget *parent = nullptr);
+  static bool parseTraceRootValue(const QString &raw, bool *value);
 
 signals:
   void imported();
@@ -33,6 +35,7 @@ private:
   void runWordImport();
   void editWordRequirement(int row);
   void refreshWordPreviewRow(int row);
+  void setAllTraceRoots(bool traceRoot);
   int mappedColumn(int field) const;
   QString mappedValue(const QStringList &row, int field) const;
   int resolveLevel(const QString &value, int occurrences,
@@ -60,6 +63,10 @@ private:
   QLineEdit *m_documentDescription;
   QLineEdit *m_wordTemplate;
   QComboBox *m_primaryPt;
+  QPushButton *m_allTraceRoots;
+  QPushButton *m_noTraceRoots;
+  QLabel *m_traceRootOverrideLabel;
+  int m_traceRootOverride = -1;
 };
 
 #endif

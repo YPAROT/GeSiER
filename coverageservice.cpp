@@ -1,4 +1,5 @@
 #include "coverageservice.h"
+#include "projectpages.h"
 
 #include <QSqlDatabase>
 #include <QSqlError>
@@ -155,9 +156,9 @@ QList<CoverageMetric> CoverageService::metrics(const CoverageScope &scope,
       scalar(db, "SELECT COUNT(*) FROM INTERFACE I WHERE "
                  "COALESCE(I.ARCHIVED,0)=0 AND EXISTS(SELECT 1 FROM "
                  "INTERFACE_DOCUMENT X WHERE X.INTERFACE_ID=I.ID)", error),
-      interfaces, 4, "covered", "uncovered"};
+      interfaces, InterfacesPage, "covered", "uncovered"};
   const int documents = scalar(db, "SELECT COUNT(*) FROM DOCUMENT", error);
-  result << CoverageMetric{"documents", "Documents", documents, documents, 2,
+  result << CoverageMetric{"documents", "Documents", documents, documents, DocumentsPage,
                            "all", "all"};
   const int publications = scalar(
       db, "SELECT COUNT(*) FROM DOCUMENT_EXPORT WHERE "
@@ -167,15 +168,15 @@ QList<CoverageMetric> CoverageService::metrics(const CoverageScope &scope,
       scalar(db, "SELECT COUNT(*) FROM DOCUMENT_EXPORT WHERE "
                  "EXPORT_KIND='PUBLICATION' AND "
                  "EXPORTED_AT>=DATETIME('now','-30 day')", error),
-      publications, 2, "publications", "publications"};
+      publications, DocumentsPage, "publications", "publications"};
   result << CoverageMetric{"open-changes", "Changements ouverts", openChanges,
-                           allChanges, 6, "open", "closed"};
+                           allChanges, ChangesPage, "open", "closed"};
   result << CoverageMetric{
       "decided-changes", "Changements décidés",
       scalar(db, "SELECT COUNT(*) FROM CHANGE_ITEM C JOIN CHANGE_STATUS S ON "
                  "S.ID=C.STATUS_ID WHERE COALESCE(C.ARCHIVED,0)=0 AND "
                  "S.IS_FINAL=1 AND TRIM(COALESCE(C.DECISION,''))<>''", error),
-      allChanges, 6, "decided", "incomplete"};
+      allChanges, ChangesPage, "decided", "incomplete"};
   return result;
 }
 
