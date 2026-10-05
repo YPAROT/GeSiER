@@ -79,7 +79,7 @@ if(WIN32)
         set(_gesier_icon_object "${CMAKE_CURRENT_BINARY_DIR}/GeSiER_icon.obj")
         add_custom_command(
             OUTPUT "${_gesier_icon_object}"
-            COMMAND "${CMAKE_RC_COMPILER}" --use-temp-file -O coff
+            COMMAND "${CMAKE_RC_COMPILER}" -O coff
                     -i "${CMAKE_CURRENT_SOURCE_DIR}/GeSiER.rc"
                     -o "${_gesier_icon_object}"
             DEPENDS GeSiER.rc GeSiER.ico

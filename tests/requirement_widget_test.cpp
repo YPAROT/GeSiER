@@ -3,6 +3,7 @@
 #include <QGraphicsLineItem>
 #include <QGraphicsRectItem>
 #include <QGraphicsView>
+#include <QLineEdit>
 #include <QPushButton>
 #include <QMessageBox>
 #include <QTimer>
@@ -80,14 +81,18 @@ void RequirementWidgetTest::keepsCurrentRequirementWhenDiscardIsRefused() {
   auto *title = widget.findChild<QLineEdit *>("requirementTitleEditor");
   QVERIFY(list); QVERIFY(title);
   widget.openRequirement(1);
-  title->setText("Modification locale");
+  const int initialRow = list->currentRow();
+  QVERIFY(initialRow > 0);
+  title->setFocus();
+  QTest::keyClick(title, Qt::Key_A, Qt::ControlModifier);
+  QTest::keyClicks(title, "Modification locale");
   list->setFocus();
   QTimer::singleShot(0, [] {
     if (auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget()))
       box->done(QMessageBox::No);
   });
-  QTest::keyClick(list, Qt::Key_Down);
-  QCOMPARE(list->currentRow(), 1);
+  QTest::keyClick(list, initialRow == 1 ? Qt::Key_Down : Qt::Key_Up);
+  QTRY_COMPARE(list->currentRow(), initialRow);
   QCOMPARE(widget.findChild<QLineEdit *>("requirementCodeEditor")->text(),
            QString("REQ-1"));
   QCOMPARE(title->text(), QString("Modification locale"));

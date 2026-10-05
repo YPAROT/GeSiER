@@ -882,11 +882,20 @@ void RequirementWidget::selectRow(int row, int) {
         break;
       }
     }
-    QSignalBlocker blocker(m_list);
-    if (currentEditorRow >= 0)
-      m_list->setCurrentCell(currentEditorRow, CodeCol);
-    else
-      m_list->clearSelection();
+    auto restoreSelection = [this, currentEditorRow] {
+      if (currentEditorRow >= 0) {
+        const QModelIndex index = m_list->model()->index(currentEditorRow, CodeCol);
+        m_list->selectionModel()->setCurrentIndex(
+            index, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+      } else {
+        m_list->clearSelection();
+      }
+    };
+    restoreSelection();
+    // A keyboard navigation event may finish updating the view after this
+    // signal handler returns. Restore the editor row once more afterwards so
+    // refusing the discard cannot leave the visual selection on another item.
+    QTimer::singleShot(0, this, restoreSelection);
     return;
   }
   loadEditor(id);
