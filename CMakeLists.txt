@@ -72,6 +72,29 @@ qt_add_executable(GeSiER WIN32
     qressources.qrc
 )
 
+if(WIN32)
+    if(MINGW)
+        # Do not let CMake pass the target's include paths to windres: its
+        # preprocessor mangles quoted paths containing spaces ("-\\" error).
+        set(_gesier_icon_object "${CMAKE_CURRENT_BINARY_DIR}/GeSiER_icon.obj")
+        add_custom_command(
+            OUTPUT "${_gesier_icon_object}"
+            COMMAND "${CMAKE_RC_COMPILER}" --use-temp-file -O coff
+                    -i "${CMAKE_CURRENT_SOURCE_DIR}/GeSiER.rc"
+                    -o "${_gesier_icon_object}"
+            DEPENDS GeSiER.rc GeSiER.ico
+            VERBATIM
+        )
+        set_source_files_properties("${_gesier_icon_object}" PROPERTIES
+            GENERATED TRUE
+            EXTERNAL_OBJECT TRUE
+        )
+        target_sources(GeSiER PRIVATE "${_gesier_icon_object}")
+    else()
+        target_sources(GeSiER PRIVATE GeSiER.rc)
+    endif()
+endif()
+
 target_link_libraries(GeSiER PRIVATE
     Qt6::Core Qt6::CorePrivate Qt6::Gui Qt6::Widgets Qt6::Sql Qt6::PrintSupport
 )
