@@ -84,6 +84,7 @@ private slots:
   void managesChangesAndExportsRegister();
   void opensVersion11ProjectWithRequiredLegacyIcd();
   void composesDocumentsInsideCallerTransaction();
+  void createsDocumentsWithProductTreeRequirements();
   void importsExportsReqIfAndRejectsUnsafeXml();
   void calculatesDashboardCoverageFromOneService();
   void controlsHighLevelTraceability();
@@ -511,6 +512,90 @@ void DatabaseMigratorTest::importsExportsReqIfAndRejectsUnsafeXml() {
   const QString output=directory.filePath("output.reqif");QVERIFY2(service.exportFile(output,&error),qPrintable(error));QVERIFY(QFileInfo(output).size()>0);ReqIfReport roundTrip=service.preview(output);QVERIFY2(roundTrip.valid(),qPrintable(roundTrip.errors.join('\n')));
   QFile unsafe(directory.filePath("unsafe.reqif"));QVERIFY(unsafe.open(QIODevice::WriteOnly));unsafe.write("<!DOCTYPE x [<!ENTITY e SYSTEM 'file:///etc/passwd'>]><REQ-IF>&e;</REQ-IF>");unsafe.close();QVERIFY(!service.preview(unsafe.fileName()).valid());
   q=QSqlQuery();db=QSqlDatabase();manager.close();
+}
+
+void DatabaseMigratorTest::createsDocumentsWithProductTreeRequirements() {
+  QTemporaryDir directory;
+  REQ_SQLManager manager;
+  const auto creation = manager.newDB(directory.filePath("document-create.db"));
+  QVERIFY2(creation.type() == QSqlError::NoError, qPrintable(creation.text()));
+  QSqlDatabase db = QSqlDatabase::database(manager.currentConnection());
+  QSqlQuery query(db);
+  QVERIFY(query.exec(
+      "INSERT INTO PT(ID,PARENT,NAME,SEGMENT,POSITION,ARCHIVED) VALUES"
+      "(101,NULL,'SYS','SYS',0,0),(102,101,'SYS-SUB','SUB',0,0),"
+      "(103,102,'SYS-SUB-UNIT','UNIT',0,0),"
+      "(104,101,'SYS-OLD','OLD',1,1)"));
+  QVERIFY(query.exec(
+      "INSERT INTO DOCUMENT(ID,PT_ID,TYPE,REFERENCE,TITLE) "
+      "VALUES(101,101,1,'SOURCE','Document source')"));
+  QVERIFY(query.exec(
+      "INSERT INTO REQUIREMENT(ID,PT_ID,CODE,DOC_ID,TITLE,TYPE,STATUS,"
+      "VERIF_METHOD) VALUES"
+      "(101,101,'REQ-B',101,'Directe',1,1,1),"
+      "(102,102,'REQ-A',101,'Secondaire racine',1,1,1),"
+      "(103,103,'REQ-C',101,'Petite-fille',1,1,1),"
+      "(104,102,'REQ-D',101,'Multi-PT',1,1,1),"
+      "(105,104,'REQ-Z',101,'Archivée',1,1,1)"));
+  QVERIFY(query.exec(
+      "INSERT INTO REQUIREMENT_PT(REQ_ID,PT_ID,IS_PRIMARY) VALUES"
+      "(101,101,1),(102,102,1),(102,101,0),(103,103,1),"
+      "(104,101,0),(104,102,1),(105,104,1)"));
+
+  DocumentService service(manager.currentConnection());
+  DocumentRecord exact;
+  exact.ptId = 101;
+  exact.typeId = 1;
+  exact.reference = "EXACT";
+  exact.title = "PT exact";
+  auto result = service.createDocument(exact, {true, false});
+  QVERIFY2(result.success, qPrintable(result.message));
+  auto exactNodes = service.nodes(result.id);
+  QCOMPARE(exactNodes.size(), 3);
+  QCOMPARE(exactNodes[0].requirementCode, QString("REQ-A"));
+  QCOMPARE(exactNodes[1].requirementCode, QString("REQ-B"));
+  QCOMPARE(exactNodes[2].requirementCode, QString("REQ-D"));
+  DocumentRecord updated = service.document(result.id);
+  updated.description = "Modification sans resynchronisation";
+  QVERIFY(service.saveDocument(updated).success);
+  QCOMPARE(service.nodes(result.id).size(), 3);
+
+  DocumentRecord recursive = exact;
+  recursive.reference = "RECURSIVE";
+  recursive.title = "Branche complète";
+  result = service.createDocument(recursive, {true, true});
+  QVERIFY2(result.success, qPrintable(result.message));
+  const auto recursiveNodes = service.nodes(result.id);
+  QCOMPARE(recursiveNodes.size(), 4);
+  QCOMPARE(recursiveNodes[0].requirementCode, QString("REQ-A"));
+  QCOMPARE(recursiveNodes[1].requirementCode, QString("REQ-B"));
+  QCOMPARE(recursiveNodes[2].requirementCode, QString("REQ-C"));
+  QCOMPARE(recursiveNodes[3].requirementCode, QString("REQ-D"));
+  for (int i = 0; i < recursiveNodes.size(); ++i) {
+    QCOMPARE(recursiveNodes[i].parentId, -1);
+    QCOMPARE(recursiveNodes[i].position, i);
+  }
+
+  DocumentRecord empty = exact;
+  empty.reference = "EMPTY";
+  empty.title = "Document vide";
+  result = service.createDocument(empty, {false, false});
+  QVERIFY2(result.success, qPrintable(result.message));
+  QVERIFY(service.nodes(result.id).isEmpty());
+
+  QVERIFY(query.exec("SELECT COUNT(*) FROM DOCUMENT"));
+  QVERIFY(query.next());
+  const int beforeFailure = query.value(0).toInt();
+  QVERIFY(query.exec("DROP TABLE EVENT_LOG"));
+  DocumentRecord failing = exact;
+  failing.reference = "ROLLBACK";
+  failing.title = "Doit être annulé";
+  result = service.createDocument(failing, {true, false});
+  QVERIFY(!result.success);
+  QVERIFY(query.exec("SELECT COUNT(*) FROM DOCUMENT"));
+  QVERIFY(query.next());
+  QCOMPARE(query.value(0).toInt(), beforeFailure);
+  manager.close();
 }
 
 void DatabaseMigratorTest::composesDocumentsInsideCallerTransaction() {

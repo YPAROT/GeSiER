@@ -1,4 +1,5 @@
 #include "documentwidget.h"
+#include "documentcreationdialog.h"
 #include "docxexportservice.h"
 #include "imageeditdialog.h"
 #include "producttreeservice.h"
@@ -130,15 +131,31 @@ DocumentWidget::DocumentWidget(QWidget *parent) : QWidget(parent) {
     else QMessageBox::warning(this, "Export tabulaire", error);
   });
   connect(addDocument, &QPushButton::clicked, this, [this] {
-    m_current = -1;
-    m_reference->clear(); m_secondary->clear(); m_title->clear();
-    m_description->clear(); m_template->clear(); m_metadata->setRowCount(0); m_tree->clear();
+    DocumentCreationDialog dialog(m_connection, this);
+    if (dialog.exec() != QDialog::Accepted)
+      return;
+    const RequirementResult result =
+        m_service.createDocument(dialog.record(), dialog.options());
+    if (!result.success) {
+      QMessageBox::warning(this, "Document", result.message);
+      return;
+    }
+    m_current = result.id;
+    refresh();
+    openDocument(m_current);
+    emit dataChanged();
   });
   connect(addMetadata, &QPushButton::clicked, this, [this] { m_metadata->insertRow(m_metadata->rowCount()); });
   connect(removeMetadata, &QPushButton::clicked, this, [this] {
     if (m_metadata->currentRow() >= 0) m_metadata->removeRow(m_metadata->currentRow());
   });
   connect(save, &QPushButton::clicked, this, [this] {
+    if (m_current < 0) {
+      QMessageBox::information(
+          this, "Document",
+          "Utilisez « Nouveau document » pour créer un document.");
+      return;
+    }
     DocumentRecord record;
     record.id = m_current;
     record.reference = m_reference->text();

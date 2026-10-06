@@ -33,12 +33,19 @@ struct DocumentNodeRecord {
   QString imageLegend;
 };
 
+struct DocumentCreationOptions {
+  bool attachPtRequirements = true;
+  bool includeChildPtRequirements = false;
+};
+
 class DocumentService {
 public:
   explicit DocumentService(QString connectionName = {});
   QList<DocumentRecord> documents() const;
   DocumentRecord document(int id) const;
   QList<DocumentNodeRecord> nodes(int documentId) const;
+  RequirementResult createDocument(const DocumentRecord &record,
+                                   const DocumentCreationOptions &options);
   RequirementResult saveDocument(const DocumentRecord &record);
   RequirementResult addChapter(int documentId, int parentId,
                                const QString &title,

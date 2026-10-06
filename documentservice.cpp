@@ -120,6 +120,90 @@ RequirementResult DocumentService::saveDocument(const DocumentRecord&r){
   if(!db.commit())return RequirementResult::failure(db.lastError().text());
   return RequirementResult::successResult("Document enregistré.",id);
 }
+RequirementResult DocumentService::createDocument(
+    const DocumentRecord &record, const DocumentCreationOptions &options) {
+  if (record.id >= 0)
+    return RequirementResult::failure("Le document existe déjà.");
+  if (record.title.trimmed().isEmpty() || record.reference.trimmed().isEmpty())
+    return RequirementResult::failure(
+        "La référence et le titre sont obligatoires.");
+
+  QSqlDatabase db = QSqlDatabase::database(m_connectionName);
+  if (!db.transaction())
+    return RequirementResult::failure(db.lastError().text());
+
+  QJsonObject object;
+  for (auto it = record.metadata.cbegin(); it != record.metadata.cend(); ++it)
+    object[it.key()] = it.value();
+  const QString json = QString::fromUtf8(
+      QJsonDocument(object).toJson(QJsonDocument::Compact));
+  QSqlQuery insert(db);
+  insert.prepare("INSERT INTO DOCUMENT(PT_ID,TYPE,REFERENCE,TITLE,DESCRIPTION,"
+                 "METADATA_JSON,TEMPLATE_PATH) VALUES(?,?,?,?,?,?,?)");
+  insert.addBindValue(record.ptId);
+  insert.addBindValue(record.typeId);
+  insert.addBindValue(record.reference.trimmed());
+  insert.addBindValue(record.title.trimmed());
+  insert.addBindValue(record.description);
+  insert.addBindValue(json);
+  insert.addBindValue(record.templatePath);
+  if (!insert.exec())
+    return rollback(db, insert.lastError().text());
+  const int documentId = insert.lastInsertId().toInt();
+
+  QStringList references = record.secondaryReferences;
+  references.prepend(record.reference.trimmed());
+  for (int i = 0; i < references.size(); ++i) {
+    const QString reference = references[i].trimmed();
+    if (reference.isEmpty())
+      continue;
+    QSqlQuery addReference(db);
+    addReference.prepare("INSERT INTO DOCUMENT_REFERENCE"
+                         "(DOC_ID,REFERENCE,IS_PRIMARY) VALUES(?,?,?)");
+    addReference.addBindValue(documentId);
+    addReference.addBindValue(reference);
+    addReference.addBindValue(i == 0);
+    if (!addReference.exec())
+      return rollback(db, addReference.lastError().text());
+  }
+
+  if (options.attachPtRequirements) {
+    QSqlQuery requirements(db);
+    if (options.includeChildPtRequirements) {
+      requirements.prepare(
+          "WITH RECURSIVE PT_SCOPE(ID) AS ("
+          "SELECT ID FROM PT WHERE ID=? AND ARCHIVED=0 UNION ALL "
+          "SELECT P.ID FROM PT P JOIN PT_SCOPE S ON P.PARENT=S.ID "
+          "WHERE P.ARCHIVED=0) "
+          "SELECT DISTINCT R.ID,R.CODE FROM REQUIREMENT R "
+          "JOIN REQUIREMENT_PT RP ON RP.REQ_ID=R.ID "
+          "WHERE RP.PT_ID IN (SELECT ID FROM PT_SCOPE) "
+          "ORDER BY R.CODE COLLATE NOCASE,R.ID");
+    } else {
+      requirements.prepare(
+          "SELECT DISTINCT R.ID,R.CODE FROM REQUIREMENT R "
+          "JOIN REQUIREMENT_PT RP ON RP.REQ_ID=R.ID WHERE RP.PT_ID=? "
+          "ORDER BY R.CODE COLLATE NOCASE,R.ID");
+    }
+    requirements.addBindValue(record.ptId);
+    if (!requirements.exec())
+      return rollback(db, requirements.lastError().text());
+    QList<int> requirementIds;
+    while (requirements.next())
+      requirementIds << requirements.value(0).toInt();
+    for (int requirementId : requirementIds) {
+      const RequirementResult placed = insertNode(
+          m_connectionName, documentId, -1, "REQUIREMENT", {}, requirementId,
+          {}, {}, {}, false);
+      if (!placed.success)
+        return rollback(db, placed.message);
+    }
+  }
+
+  if (!db.commit())
+    return RequirementResult::failure(db.lastError().text());
+  return RequirementResult::successResult("Document créé.", documentId);
+}
 RequirementResult DocumentService::addChapter(int d,int p,const QString&t,bool manageTransaction){if(t.trimmed().isEmpty())return RequirementResult::failure("Le titre du chapitre est obligatoire.");return insertNode(m_connectionName,d,p,"CHAPTER",t.trimmed(),-1,{},{},{},manageTransaction);}
 RequirementResult DocumentService::placeRequirement(int d,int p,int r,bool manageTransaction){QSqlQuery q(QSqlDatabase::database(m_connectionName));q.prepare("SELECT ID FROM DOCUMENT_NODE WHERE DOC_ID=? AND REQ_ID=? AND NODE_TYPE='REQUIREMENT'");q.addBindValue(d);q.addBindValue(r);if(q.exec()&&q.next())return moveNode(q.value(0).toInt(),p,-1,manageTransaction);return insertNode(m_connectionName,d,p,"REQUIREMENT",{},r,{},{},{},manageTransaction);}
 RequirementResult DocumentService::addText(int d,int p,const QString&h){if(h.trimmed().isEmpty())return RequirementResult::failure("Le texte est vide.");return insertNode(m_connectionName,d,p,"TEXT",{},-1,h,{},{});}

@@ -38,6 +38,7 @@ qt_add_executable(GeSiER WIN32
     docxexportservice.cpp docxexportservice.h
     docximportservice.cpp docximportservice.h
     documentwidget.cpp documentwidget.h
+    documentcreationdialog.cpp documentcreationdialog.h
     imageeditdialog.cpp imageeditdialog.h
     requirementwidget.cpp requirementwidget.h
     applicabilityservice.cpp applicabilityservice.h
@@ -161,6 +162,7 @@ if(BUILD_TESTING)
         tabularexportdialog.cpp tabularexportdialog.h
         requirementrelationservice.cpp requirementrelationservice.h
         documentservice.cpp documentservice.h
+        documentcreationdialog.cpp documentcreationdialog.h
         producttreeservice.cpp producttreeservice.h
         changeservice.cpp changeservice.h
         historyservice.cpp historyservice.h

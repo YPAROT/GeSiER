@@ -30,6 +30,7 @@
 #include "requirementwidget.h"
 #include "markdowndescriptioneditor.h"
 #include "requirementimportdialog.h"
+#include "documentcreationdialog.h"
 #include "referencedataservice.h"
 #include "referencedatawidget.h"
 
@@ -44,7 +45,30 @@ private slots:
   void referenceDataWidgetRefreshesCatalogs();
   void parsesTraceRootImportValues();
   void keepsCurrentRequirementWhenDiscardIsRefused();
+  void configuresDocumentCreationScope();
 };
+
+void RequirementWidgetTest::configuresDocumentCreationScope() {
+  QTemporaryDir directory;
+  REQ_SQLManager manager;
+  const auto creation = manager.newDB(directory.filePath("document-dialog.db"));
+  QVERIFY2(creation.type() == QSqlError::NoError, qPrintable(creation.text()));
+  DocumentCreationDialog dialog(manager.currentConnection());
+  auto *attach = dialog.findChild<QCheckBox *>("attachPtRequirements");
+  auto *children =
+      dialog.findChild<QCheckBox *>("includeChildPtRequirements");
+  QVERIFY(attach);
+  QVERIFY(children);
+  QVERIFY(attach->isChecked());
+  QVERIFY(attach->isEnabled());
+  QVERIFY(!children->isChecked());
+  children->setChecked(true);
+  QVERIFY(attach->isChecked());
+  QVERIFY(!attach->isEnabled());
+  children->setChecked(false);
+  QVERIFY(attach->isEnabled());
+  manager.close();
+}
 
 void RequirementWidgetTest::resolvesMarkdownImagesOnFirstPreview() {
   const QByteArray png = QByteArray::fromBase64(
