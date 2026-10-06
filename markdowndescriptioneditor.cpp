@@ -7,6 +7,7 @@
 #include <QFileInfo>
 #include <QFormLayout>
 #include <QHBoxLayout>
+#include <QHash>
 #include <QImage>
 #include <QInputDialog>
 #include <QMessageBox>
@@ -14,24 +15,52 @@
 #include <QPlainTextEdit>
 #include <QPainter>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QStackedWidget>
 #include <QTextBrowser>
 #include <QTextCursor>
 #include <QUrl>
 #include <QUuid>
 #include <QVBoxLayout>
-#include <algorithm>
 
 class LocalMarkdownBrowser final : public QTextBrowser {
 public:
   using QTextBrowser::QTextBrowser;
+  void setImages(const QList<RequirementImage> &images) {
+    m_images.clear();
+    const int availableWidth = qMax(64, viewport()->width() - 24);
+    for (const RequirementImage &image : images) {
+      QImage decoded;
+      if (decoded.loadFromData(image.data)) {
+        if (decoded.width() > availableWidth)
+          decoded = decoded.scaledToWidth(availableWidth,
+                                          Qt::SmoothTransformation);
+        m_images.insert(image.token, decoded);
+        document()->addResource(QTextDocument::ImageResource,
+                                QUrl(MarkdownUtility::imageUrl(image.token)),
+                                decoded);
+      }
+    }
+  }
 protected:
   QVariant loadResource(int type, const QUrl &name) override {
-    if (type == QTextDocument::ImageResource &&
-        name.scheme().compare("gesier-image", Qt::CaseInsensitive) != 0)
+    if (type != QTextDocument::ImageResource)
+      return QTextBrowser::loadResource(type, name);
+    if (name.scheme().compare("gesier-image", Qt::CaseInsensitive) != 0)
       return {};
-    return QTextBrowser::loadResource(type, name);
+    const QString token = MarkdownUtility::tokenFromUrl(name.toString());
+    const auto image = m_images.constFind(token);
+    if (image != m_images.cend()) return *image;
+    QImage missing(240, 48, QImage::Format_ARGB32_Premultiplied);
+    missing.fill(QColor(255, 245, 220));
+    QPainter painter(&missing);
+    painter.setPen(QColor(150, 70, 0));
+    painter.drawRect(missing.rect().adjusted(0, 0, -1, -1));
+    painter.drawText(missing.rect(), Qt::AlignCenter, "Image introuvable");
+    return missing;
   }
+private:
+  QHash<QString, QImage> m_images;
 };
 
 MarkdownDescriptionEditor::MarkdownDescriptionEditor(QWidget *parent)
@@ -113,35 +142,15 @@ void MarkdownDescriptionEditor::setEditing(bool editing) {
 
 void MarkdownDescriptionEditor::refreshPreview() {
   m_preview->clear();
-  const QString display = markdown();
+  static_cast<LocalMarkdownBrowser *>(m_preview)->setImages(m_images);
+  QString display = markdown();
+  display.replace(
+      QRegularExpression(
+          R"(!\[\s*\](\(\s*<?gesier-image://))",
+          QRegularExpression::CaseInsensitiveOption),
+      "![Image]\\1");
   m_preview->document()->setMarkdown(display,
                                      QTextDocument::MarkdownDialectGitHub);
-  for (const RequirementImage &image : m_images) {
-    QImage decoded;
-    if (decoded.loadFromData(image.data))
-      m_preview->document()->addResource(
-          QTextDocument::ImageResource,
-          QUrl(MarkdownUtility::imageUrl(image.token)), decoded);
-  }
-  for (const QString &token : MarkdownUtility::imageTokens(display)) {
-    const bool found = std::any_of(m_images.cbegin(), m_images.cend(),
-                                   [&](const RequirementImage &image) {
-                                     return image.token == token;
-                                   });
-    if (!found) {
-      QImage missing(240, 48, QImage::Format_ARGB32_Premultiplied);
-      missing.fill(QColor(255, 245, 220));
-      QPainter painter(&missing);
-      painter.setPen(QColor(150, 70, 0));
-      painter.drawRect(missing.rect().adjusted(0, 0, -1, -1));
-      painter.drawText(missing.rect(), Qt::AlignCenter, "Image introuvable");
-      m_preview->document()->addResource(
-          QTextDocument::ImageResource,
-          QUrl(MarkdownUtility::imageUrl(token)), missing);
-    }
-  }
-  m_preview->document()->markContentsDirty(0,
-                                           m_preview->document()->characterCount());
 }
 
 void MarkdownDescriptionEditor::wrapSelection(const QString &left,

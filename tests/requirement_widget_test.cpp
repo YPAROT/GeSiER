@@ -1,4 +1,5 @@
 #include <QComboBox>
+#include <QBuffer>
 #include <QCheckBox>
 #include <QGraphicsLineItem>
 #include <QGraphicsRectItem>
@@ -15,6 +16,10 @@
 #include <QSqlQuery>
 #include <QTableWidget>
 #include <QTemporaryDir>
+#include <QTextBrowser>
+#include <QTextBlock>
+#include <QTextFragment>
+#include <QTextImageFormat>
 #include <QTreeWidget>
 #include <QWidget>
 #include <QtTest>
@@ -32,6 +37,7 @@ class RequirementWidgetTest : public QObject {
   Q_OBJECT
 private slots:
   void editsMarkdownWithPreviewAndToolbar();
+  void resolvesMarkdownImagesOnFirstPreview();
   void startsWithoutEditingAndConstrainsPrimaryAllocation();
   void checkableFiltersSupportMultipleValues();
   void relationGraphLayersPlacementAndPreferences();
@@ -39,6 +45,59 @@ private slots:
   void parsesTraceRootImportValues();
   void keepsCurrentRequirementWhenDiscardIsRefused();
 };
+
+void RequirementWidgetTest::resolvesMarkdownImagesOnFirstPreview() {
+  const QByteArray png = QByteArray::fromBase64(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=");
+  RequirementImage first{"first", "image/png", {}, png};
+  RequirementImage second{"second", "image/png", {}, png};
+  QImage largeImage(1458, 1128, QImage::Format_ARGB32);
+  largeImage.fill(Qt::white);
+  QByteArray largePng;
+  QBuffer largeBuffer(&largePng);
+  QVERIFY(largeBuffer.open(QIODevice::WriteOnly));
+  QVERIFY(largeImage.save(&largeBuffer, "PNG"));
+  RequirementImage large{"large", "image/png", {}, largePng};
+  MarkdownDescriptionEditor editor;
+  editor.resize(700, 500);
+  editor.setContent(
+      "![](gesier-image://first)\n\n![](gesier-image://second)\n\n"
+      "![](gesier-image://large)\n\n![](gesier-image://missing)\n\n"
+      "![](https://example.invalid/image.png)",
+      {first, second, large});
+  auto *preview = editor.findChild<QTextBrowser *>("markdownPreview");
+  QVERIFY(preview);
+  bool foundFirstImage = false;
+  for (QTextBlock block = preview->document()->begin(); block.isValid();
+       block = block.next()) {
+    for (auto fragment = block.begin(); !fragment.atEnd(); ++fragment) {
+      if (fragment.fragment().charFormat().objectType() ==
+              QTextFormat::ImageObject &&
+          fragment.fragment().charFormat().toImageFormat().name() ==
+              "gesier-image://first")
+        foundFirstImage = true;
+    }
+  }
+  QVERIFY(foundFirstImage);
+  const auto resource = [&](const QString &url) {
+    return preview->document()
+        ->resource(QTextDocument::ImageResource, QUrl(url))
+        .value<QImage>();
+  };
+  QCOMPARE(resource("gesier-image://first").size(), QSize(1, 1));
+  QCOMPARE(resource("gesier-image://second").size(), QSize(1, 1));
+  QVERIFY(resource("gesier-image://large").width() <=
+          preview->viewport()->width());
+  QVERIFY(resource("gesier-image://large").height() > 0);
+  QCOMPARE(resource("gesier-image://missing").size(), QSize(240, 48));
+  QVERIFY(resource("https://example.invalid/image.png").isNull());
+
+  editor.setContent("![](gesier-image://late)");
+  QCOMPARE(resource("gesier-image://late").size(), QSize(240, 48));
+  RequirementImage late{"late", "image/png", {}, png};
+  editor.setContent("![](gesier-image://late)", {late});
+  QCOMPARE(resource("gesier-image://late").size(), QSize(1, 1));
+}
 
 void RequirementWidgetTest::editsMarkdownWithPreviewAndToolbar() {
   MarkdownDescriptionEditor editor;

@@ -422,7 +422,7 @@ QString markdownWithImages(const QString &html, const QString &sourcePath,
       image.mimeType = format == "jpg" || format == "jpeg" ? "image/jpeg"
                                                               : "image/" + format;
       image.data = data; images->append(image);
-      markdown += "\n\n![](gesier-image://" + image.token + ")\n\n";
+      markdown += "\n\n![Image](gesier-image://" + image.token + ")\n\n";
     }
     position = match.capturedEnd();
   }
