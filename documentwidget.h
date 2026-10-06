@@ -10,6 +10,7 @@ class QLineEdit;
 class QTextEdit;
 class QComboBox;
 class QTableWidget;
+class QCheckBox;
 
 class DocumentWidget : public QWidget {
   Q_OBJECT
@@ -44,6 +45,7 @@ private:
   QComboBox *m_type;
   QComboBox *m_pt;
   QTableWidget *m_metadata;
+  QCheckBox *m_exportObsolete;
 };
 
 #endif

@@ -14,6 +14,7 @@ struct RequirementFilter {
   QList<int> ptIds;
   QList<int> methodIds;
   QList<int> configurationIds;
+  QList<int> documentIds;
   bool includeObsolete = false;
   int allocated = -1;
   int traced = -1;
@@ -41,7 +42,7 @@ struct RequirementImage {
 struct RequirementRecord {
   int id = -1;
   QString code, title, description, source;
-  QString productTrees, verificationMethods, applicability;
+  QString productTrees, verificationMethods, applicability, documents;
   bool allocated = false, traced = false, documented = false, verified = false;
   bool traceRoot = false;
   int typeId = -1, statusId = -1, primaryPtId = -1;

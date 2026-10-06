@@ -20,6 +20,7 @@ struct DocxExportRequest {
   QString title;
   QString draftLabel;
   bool publication = false;
+  bool includeObsoleteRequirements = false;
 };
 
 struct DocumentExportRecord {

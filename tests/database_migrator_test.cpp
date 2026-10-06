@@ -850,6 +850,12 @@ void DatabaseMigratorTest::managesRelationsAndDocumentOccurrences() {
     }
   }
   QCOMPARE(occurrences, 1);
+  QVERIFY(query.exec(QString(
+      "INSERT INTO REQUIREMENT(ID,PT_ID,CODE,DOC_ID,TITLE,TYPE,STATUS,"
+      "VERIF_METHOD) VALUES(4,%1,'REQ-OBS',1,'Texte obsolète distinctif',1,"
+      "(SELECT ID FROM REQ_STATUS WHERE UPPER(SHORTCUT)='O' LIMIT 1),1)")
+                         .arg(root)));
+  QVERIFY(documents.placeRequirement(1, -1, 4).success);
   DocumentRecord saved = documents.document(1);
   saved.reference = "SPEC-A";
   saved.secondaryReferences = {"GED-42", "CUSTOMER-7"};
@@ -910,11 +916,22 @@ void DatabaseMigratorTest::managesRelationsAndDocumentOccurrences() {
   QVERIFY(templatedDocument.contains("Sommaire existant"));QVERIFY(templatedDocument.contains(" TOC "));
   QVERIFY(templatedDocument.contains("Specification"));QVERIFY(!templatedDocument.contains("Ancien titre"));
   QVERIFY(templatedDocument.contains("w:tblStyle w:val=\"ReqTable\""));QVERIFY(templatedDocument.contains("REQ-1"));QVERIFY(templatedDocument.contains("Dépend de REQ-3"));QVERIFY(templatedDocument.contains("Interface critique"));
+  QVERIFY(!templatedDocument.contains("Texte obsolète distinctif"));
   QVERIFY(templatedDocument.contains("w:pStyle w:val=\"Custom4\""));QVERIFY(templatedDocument.contains("w:pStyle w:val=\"Custom5\""));QVERIFY(!templatedDocument.contains("GESIER_CHAPTER_LEVEL"));QVERIFY(!templatedDocument.contains("GESIER_REQUIREMENT_TEMPLATE"));
   QVERIFY(templatedHeader.contains("SPEC-A"));QVERIFY(templatedHeader.contains(">B<"));QVERIFY(!templatedHeader.contains("GESIER_REFERENCE"));QVERIFY(!templatedHeader.contains("GESIER_METADATA"));
   QVERIFY(templatedFooter.contains("Équipe système"));QVERIFY(templatedFooter.contains("Indice : B"));QVERIFY(!templatedFooter.contains("GESIER_METADATA"));
   const QString settings=QString::fromUtf8(templatedZip.fileData("word/settings.xml"));QVERIFY(settings.contains("w:updateFields w:val=\"true\""));
   const QString coreProperties=QString::fromUtf8(templatedZip.fileData("docProps/core.xml"));QVERIFY(coreProperties.contains("<dc:title>Specification</dc:title>"));
+  DocxExportRequest withObsolete = templated;
+  withObsolete.includeObsoleteRequirements = true;
+  withObsolete.outputPath = directory.filePath("templated-obsolete.docx");
+  const auto obsoleteResult = exporter.exportDocument(withObsolete);
+  QVERIFY2(obsoleteResult.success, qPrintable(obsoleteResult.message));
+  QZipReader obsoleteZip(withObsolete.outputPath);
+  const QString obsoleteDocument =
+      QString::fromUtf8(obsoleteZip.fileData("word/document.xml"));
+  QVERIFY(obsoleteDocument.contains("Texte obsolète distinctif"));
+  QVERIFY(obsoleteDocument.contains("<w:color w:val=\"808080\"/>"));
   QVERIFY(query.exec(QString("INSERT INTO DOCUMENT(ID,PT_ID,TYPE,REFERENCE,TITLE) VALUES(2,%1,1,'SPEC-B','Autre')").arg(root)));
   QVERIFY(documents.placeRequirement(2,-1,1).success);
   QVERIFY(query.exec(QString("INSERT INTO DOCUMENT(ID,PT_ID,TYPE,REFERENCE,TITLE) VALUES(3,%1,1,'SPEC-C','Ordre')").arg(root)));

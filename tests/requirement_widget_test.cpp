@@ -187,7 +187,7 @@ void RequirementWidgetTest::keepsCurrentRequirementWhenDiscardIsRefused() {
   QVERIFY(list); QVERIFY(title);
   widget.openRequirement(1);
   const int initialRow = list->currentRow();
-  QVERIFY(initialRow > 0);
+  QVERIFY(initialRow >= 0);
   title->setFocus();
   QTest::keyClick(title, Qt::Key_A, Qt::ControlModifier);
   QTest::keyClicks(title, "Modification locale");
@@ -196,7 +196,7 @@ void RequirementWidgetTest::keepsCurrentRequirementWhenDiscardIsRefused() {
     if (auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget()))
       box->done(QMessageBox::No);
   });
-  QTest::keyClick(list, initialRow == 1 ? Qt::Key_Down : Qt::Key_Up);
+  QTest::keyClick(list, initialRow == 0 ? Qt::Key_Down : Qt::Key_Up);
   QTRY_COMPARE(list->currentRow(), initialRow);
   QCOMPARE(widget.findChild<QLineEdit *>("requirementCodeEditor")->text(),
            QString("REQ-1"));
@@ -405,21 +405,39 @@ void RequirementWidgetTest::
           "(1,%1,1),(2,%1,1)")
           .arg(rootId)));
   QVERIFY(query.exec("UPDATE REQUIREMENT SET IS_TRACE_ROOT=1 WHERE ID=2"));
+  QVERIFY(query.exec(
+      "INSERT INTO DOCUMENT_NODE(DOC_ID,NODE_TYPE,POSITION,REQ_ID) "
+      "VALUES(1,'REQUIREMENT',0,1)"));
 
   RequirementWidget widget;
   widget.setConnectionName(manager.currentConnection());
   QWidget *editor = widget.findChild<QWidget *>("requirementEditor");
   QTableWidget *list = widget.findChild<QTableWidget *>("requirementList");
+  QTableWidget *filters =
+      widget.findChild<QTableWidget *>("requirementFilters");
   QPushButton *create = widget.findChild<QPushButton *>("newRequirementButton");
   QTreeWidget *tree = widget.findChild<QTreeWidget *>("allocationProductTree");
   QComboBox *primary = widget.findChild<QComboBox *>("primaryProductTree");
+  auto *documentFilter =
+      widget.findChild<CheckableComboBox *>("documentFilter");
   QVERIFY(editor);
   QVERIFY(list);
+  QVERIFY(filters);
   QVERIFY(create);
   QVERIFY(tree);
   QVERIFY(primary);
+  QVERIFY(documentFilter);
   QVERIFY(!editor->isEnabled());
-  QCOMPARE(list->rowCount(), 3); // filter row plus the two requirements
+  QCOMPARE(list->rowCount(), 2);
+  QCOMPARE(filters->rowCount(), 1);
+  QVERIFY(filters->height() < list->height());
+  RequirementFilter byDocument;
+  byDocument.documentIds = {1};
+  widget.applyFilter(byDocument);
+  QCOMPARE(list->rowCount(), 1);
+  QCOMPARE(list->item(0, 0)->text(), QString("A-R-0001"));
+  widget.applyFilter({});
+  QCOMPARE(list->rowCount(), 2);
   QVERIFY(list->selectedItems().isEmpty());
   QCOMPARE(tree->topLevelItemCount(), 1);
   QCOMPARE(tree->topLevelItem(0)->text(0).section(" — ", 0, 0), QString("A"));
@@ -431,11 +449,11 @@ void RequirementWidgetTest::
 
   widget.openRequirement(1);
   QVERIFY(editor->isEnabled());
-  QCOMPARE(list->currentRow(), 1);
+  QCOMPARE(list->currentRow(), 0);
   list->setFocus();
   QTest::keyClick(list, Qt::Key_Down);
   QCoreApplication::processEvents();
-  QCOMPARE(list->currentRow(), 2);
+  QCOMPARE(list->currentRow(), 1);
   QCOMPARE(widget.findChild<QLineEdit *>("requirementCodeEditor")->text(),
            QString("A-R-0002"));
   QVERIFY(widget.findChild<QCheckBox *>("traceRootCheckBox")->isChecked());

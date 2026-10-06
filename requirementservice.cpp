@@ -76,6 +76,13 @@ RequirementService::find(const RequirementFilter &filter,
     for (int id : filter.configurationIds)
       values << id;
   }
+  if (!filter.documentIds.isEmpty()) {
+    where << "EXISTS(SELECT 1 FROM DOCUMENT_NODE N WHERE N.REQ_ID=R.ID AND "
+             "N.DOC_ID IN (" +
+                 QStringList(filter.documentIds.size(), "?").join(',') + "))";
+    for (int id : filter.documentIds)
+      values << id;
+  }
   auto coverage = [&](int requested, const QString &expression) {
     if (requested >= 0)
       where << (requested ? expression : "NOT (" + expression + ")");
@@ -105,6 +112,10 @@ RequirementService::find(const RequirementFilter &filter,
       "COALESCE((SELECT GROUP_CONCAT(CODE,' | ') FROM (SELECT C.CODE FROM "
       "REQUIREMENT_APPLICABILITY A JOIN CONFIGURATION C ON C.ID=A.CONFIG_ID "
       "WHERE A.REQ_ID=R.ID AND A.PT_ID IS NULL ORDER BY C.CODE)),''),"
+      "COALESCE((SELECT GROUP_CONCAT(REFERENCE,' | ') FROM (SELECT "
+      "COALESCE(NULLIF(D.REFERENCE,''),D.TITLE) AS REFERENCE FROM "
+      "DOCUMENT_NODE N JOIN DOCUMENT D ON D.ID=N.DOC_ID WHERE N.REQ_ID=R.ID "
+      "ORDER BY D.REFERENCE,D.TITLE)),''),"
       "EXISTS(SELECT 1 FROM REQUIREMENT_PT X WHERE X.REQ_ID=R.ID),"
       "EXISTS(SELECT 1 FROM REQUIREMENT_RELATION X WHERE X.TARGET_REQ_ID=R.ID "
       "AND X.TYPE_ID IN(1,2)),"
@@ -135,11 +146,12 @@ RequirementService::find(const RequirementFilter &filter,
     r.productTrees = query.value(8).toString();
     r.verificationMethods = query.value(9).toString();
     r.applicability = query.value(10).toString();
-    r.allocated = query.value(11).toBool();
-    r.traced = query.value(12).toBool();
-    r.documented = query.value(13).toBool();
-    r.verified = query.value(14).toBool();
-    r.traceRoot = query.value(15).toBool();
+    r.documents = query.value(11).toString();
+    r.allocated = query.value(12).toBool();
+    r.traced = query.value(13).toBool();
+    r.documented = query.value(14).toBool();
+    r.verified = query.value(15).toBool();
+    r.traceRoot = query.value(16).toBool();
     if (!filter.description.trimmed().isEmpty() &&
         !MarkdownUtility::toPlainText(r.description)
              .contains(filter.description.trimmed(), Qt::CaseInsensitive))

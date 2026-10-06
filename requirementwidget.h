@@ -82,7 +82,7 @@ private:
   QLabel *m_codeWarning;
   QComboBox *m_status, *m_type, *m_primary;
   QTreeWidget *m_pt;
-  QTableWidget *m_verifications, *m_list;
+  QTableWidget *m_verifications, *m_list, *m_filterList;
   QTableWidget *m_relations, *m_documents, *m_changes, *m_history;
   QGraphicsView *m_relationGraph;
   QSpinBox *m_graphDepth;
@@ -94,7 +94,7 @@ private:
   QLineEdit *m_codeFilter, *m_titleFilter, *m_descriptionFilter,
       *m_sourceFilter;
   CheckableComboBox *m_statusFilter, *m_typeFilter, *m_ptFilter,
-      *m_methodFilter, *m_applicabilityFilter;
+      *m_methodFilter, *m_applicabilityFilter, *m_documentFilter;
   CheckableComboBox *m_allocatedFilter, *m_tracedFilter, *m_documentedFilter,
       *m_verifiedFilter;
   QCheckBox *m_includeObsolete;

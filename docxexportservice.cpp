@@ -38,6 +38,33 @@ struct Range{int start=-1,end=-1;QString xml;};
 QList<Range> paras(const QString&xml){QList<Range>r;QRegularExpression e("<w:p(?:\\s[^>]*)?>[\\s\\S]*?</w:p>",QRegularExpression::CaseInsensitiveOption);auto it=e.globalMatch(xml);while(it.hasNext()){auto m=it.next();r<<Range{int(m.capturedStart()),int(m.capturedEnd()),m.captured()};}return r;}
 Range paraWith(const QString&xml,const QString&tag,int from=0){for(const auto&p:paras(xml))if(p.start>=from&&visible(p.xml).contains(tag,Qt::CaseInsensitive))return p;return {};}
 QString paragraph(const QString&t,const QString&style={}){const QString p=style.isEmpty()?QString():"<w:pPr><w:pStyle w:val=\""+style+"\"/></w:pPr>";return "<w:p>"+p+"<w:r><w:t xml:space=\"preserve\">"+multi(t)+"</w:t></w:r></w:p>";}
+QString grayText(QString xml) {
+  QRegularExpression run("<w:r(?:\\s[^>]*)?>[\\s\\S]*?</w:r>",
+                         QRegularExpression::CaseInsensitiveOption);
+  auto matches = run.globalMatch(xml);
+  QList<QRegularExpressionMatch> found;
+  while (matches.hasNext())
+    found << matches.next();
+  for (int i = found.size() - 1; i >= 0; --i) {
+    QString value = found[i].captured();
+    if (value.contains("<w:rPr")) {
+      if (value.contains("<w:color"))
+        value.replace(QRegularExpression("<w:color[^>]*/>"),
+                      "<w:color w:val=\"808080\"/>");
+      else {
+        const auto properties =
+            QRegularExpression("<w:rPr(?:\\s[^>]*)?>").match(value);
+        value.insert(properties.capturedEnd(),
+                     "<w:color w:val=\"808080\"/>");
+      }
+    } else {
+      const int end = value.indexOf('>');
+      value.insert(end + 1, "<w:rPr><w:color w:val=\"808080\"/></w:rPr>");
+    }
+    xml.replace(found[i].capturedStart(), found[i].capturedLength(), value);
+  }
+  return xml;
+}
 QString inlineMarkdown(QString text){
   QString out; int pos=0;
   QRegularExpression token(R"((\*\*([^*]+)\*\*)|(?<!\*)\*([^*]+)\*(?!\*))");
@@ -229,13 +256,27 @@ RequirementResult DocxExportService::exportDocument(const DocxExportRequest&r){
   const auto validation=validateTemplate(tpl,d.id);
   if(!validation.valid)
     return RequirementResult::failure(validation.errors.join('\n'));
-  const auto nodes=ds.nodes(d.id);
+  const auto allNodes=ds.nodes(d.id);
+  QSet<int> obsoleteRequirements;
+  QSqlQuery obsoleteQuery(QSqlDatabase::database(m_connectionName, false));
+  obsoleteQuery.prepare(
+      "SELECT R.ID FROM REQUIREMENT R JOIN REQ_STATUS S ON S.ID=R.STATUS "
+      "WHERE UPPER(S.STATUS)='OBSOLETE' OR UPPER(S.SHORTCUT)='O'");
+  if (!obsoleteQuery.exec())
+    return RequirementResult::failure(obsoleteQuery.lastError().text());
+  while (obsoleteQuery.next())
+    obsoleteRequirements.insert(obsoleteQuery.value(0).toInt());
+  QList<DocumentNodeRecord> nodes;
+  for (const auto &node : allNodes)
+    if (node.type != "REQUIREMENT" || r.includeObsoleteRequirements ||
+        !obsoleteRequirements.contains(node.requirementId))
+      nodes << node;
   QMap<int,QList<DocumentNodeRecord>> children;
   for(const auto&n:nodes)
     children[n.parentId]<<n;
   QMap<QString,QByteArray> files;QString doc,rels,types,reqModel;QMap<int,QString> prototypes;int base=0;if(!tpl.isEmpty()){QZipReader z(tpl);for(const auto&i:z.fileInfoList())if(i.isFile)files[i.filePath]=z.fileData(i.filePath);doc=QString::fromUtf8(files["word/document.xml"]);rels=QString::fromUtf8(files["word/_rels/document.xml.rels"]);types=QString::fromUtf8(files["[Content_Types].xml"]);const QString styles=QString::fromUtf8(files["word/styles.xml"]);const auto cp=paraWith(doc,ContentTag);base=precedingLevel(doc,cp.start,styles);const auto rb=paraWith(doc,ReqBegin),re=paraWith(doc,ReqEnd,rb.end);reqModel=doc.mid(rb.end,re.start-rb.end);doc.remove(rb.start,re.end-rb.start);for(int n=1;n<=6;++n){const QString tag="{{GESIER_CHAPTER_LEVEL_"+QString::number(n)+"}}";const auto p=paraWith(doc,tag);if(p.start>=0){prototypes[n]=p.xml;doc.remove(p.start,p.end-p.start);}}}else{doc="<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><w:body>"+paragraph(d.title,"Title")+paragraph(ContentTag)+"<w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/><w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr></w:body></w:document>";files["word/styles.xml"]=stylesDefault().toUtf8();rels="<?xml version=\"1.0\" encoding=\"UTF-8\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rIdStyles\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" Target=\"styles.xml\"/></Relationships>";types="<?xml version=\"1.0\" encoding=\"UTF-8\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\"application/xml\"/><Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/><Override PartName=\"/word/styles.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml\"/></Types>";files["_rels/.rels"]="<?xml version=\"1.0\" encoding=\"UTF-8\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"word/document.xml\"/></Relationships>";prototypes[1]=paragraph("{{GESIER_CHAPTER_LEVEL_1}}","Heading1");prototypes[2]=paragraph("{{GESIER_CHAPTER_LEVEL_2}}","Heading2");}
   int maxLevel=base;std::function<void(int,int)> depth=[&](int parent,int n){for(const auto&node:children[parent]){if(node.type=="CHAPTER")maxLevel=qMax(maxLevel,base+n);depth(node.id,n+(node.type=="CHAPTER"));}};depth(-1,1);if(!tpl.isEmpty())for(int n=qMax(1,base+1);n<=qMin(6,maxLevel);++n)if(!prototypes.contains(n))return RequirementResult::failure(QString("Le prototype {{GESIER_CHAPTER_LEVEL_%1}} requis par la structure est absent.").arg(n));
-  QList<QPair<QString,QByteArray>> images;int imageId=0;QString renderError;std::function<QString(int,int)> render=[&](int parent,int dep){QString out;for(const auto&n:children[parent]){int child=dep;if(n.type=="CHAPTER"){int wanted=qBound(1,base+dep,6),selected=wanted;while(selected>1&&!prototypes.contains(selected))--selected;if(!prototypes.contains(selected))selected=prototypes.lastKey();QString p=prototypes[selected];replaceTag(&p,"{{GESIER_CHAPTER_LEVEL_"+QString::number(selected)+"}}",n.title);out+=p;child=dep+1;}else if(n.type=="REQUIREMENT"){if(reqModel.isEmpty()){const auto requirement=RequirementService(m_connectionName).get(n.requirementId);out+=paragraph(n.requirementCode+" — "+n.requirementTitle,"Heading2")+markdownWord(requirement,&images,&imageId,&renderError);}else out+=reqBlock(reqModel,n.requirementId,m_connectionName,&images,&imageId,&renderError);}else if(n.type=="TEXT")for(const auto&line:plain(n.textContent).split('\n'))if(!line.trimmed().isEmpty())out+=paragraph(line);else{}else if(n.type=="IMAGE"){++imageId;QBuffer b;b.setData(n.imageData);b.open(QIODevice::ReadOnly);QImageReader ir(&b);QString ext=QString::fromLatin1(ir.format()).toLower();if(ext=="jpeg")ext="jpg";if(ext.isEmpty())ext="png";images<<qMakePair(ext,n.imageData);out+=drawing(imageId,"rIdGesier"+QString::number(imageId));if(!n.imageLegend.isEmpty())out+=paragraph(n.imageLegend,"Caption");}if(!renderError.isEmpty())return QString();out+=render(n.id,child);}return out;};const QString content=render(-1,1);if(!renderError.isEmpty())return RequirementResult::failure(renderError);const auto cp=paraWith(doc,ContentTag);if(cp.start<0)return RequirementResult::failure("La balise GESIER_CONTENT est introuvable dans le corps du document.");doc.replace(cp.start,cp.end-cp.start,content);files["word/document.xml"]=doc.toUtf8();QString refs=d.reference;if(!d.secondaryReferences.isEmpty())refs+="\n"+d.secondaryReferences.join('\n');QStringList meta;for(auto it=d.metadata.cbegin();it!=d.metadata.cend();++it)meta<<it.key()+" : "+it.value();replaceParts(&files,"{{GESIER_REFERENCE}}",refs);replaceParts(&files,"{{GESIER_METADATA}}",meta.join('\n'));doc=QString::fromUtf8(files["word/document.xml"]);processToc(&doc);files["word/document.xml"]=doc.toUtf8();const QString exportedTitle=r.publication?r.title:d.title;updateDocumentTitle(&files,exportedTitle,&types);doc=QString::fromUtf8(files["word/document.xml"]);
+  QList<QPair<QString,QByteArray>> images;int imageId=0;QString renderError;std::function<QString(int,int)> render=[&](int parent,int dep){QString out;for(const auto&n:children[parent]){int child=dep;if(n.type=="CHAPTER"){int wanted=qBound(1,base+dep,6),selected=wanted;while(selected>1&&!prototypes.contains(selected))--selected;if(!prototypes.contains(selected))selected=prototypes.lastKey();QString p=prototypes[selected];replaceTag(&p,"{{GESIER_CHAPTER_LEVEL_"+QString::number(selected)+"}}",n.title);out+=p;child=dep+1;}else if(n.type=="REQUIREMENT"){QString block;if(reqModel.isEmpty()){const auto requirement=RequirementService(m_connectionName).get(n.requirementId);block=paragraph(n.requirementCode+" — "+n.requirementTitle,"Heading2")+markdownWord(requirement,&images,&imageId,&renderError);}else block=reqBlock(reqModel,n.requirementId,m_connectionName,&images,&imageId,&renderError);if(obsoleteRequirements.contains(n.requirementId))block=grayText(block);out+=block;}else if(n.type=="TEXT")for(const auto&line:plain(n.textContent).split('\n'))if(!line.trimmed().isEmpty())out+=paragraph(line);else{}else if(n.type=="IMAGE"){++imageId;QBuffer b;b.setData(n.imageData);b.open(QIODevice::ReadOnly);QImageReader ir(&b);QString ext=QString::fromLatin1(ir.format()).toLower();if(ext=="jpeg")ext="jpg";if(ext.isEmpty())ext="png";images<<qMakePair(ext,n.imageData);out+=drawing(imageId,"rIdGesier"+QString::number(imageId));if(!n.imageLegend.isEmpty())out+=paragraph(n.imageLegend,"Caption");}if(!renderError.isEmpty())return QString();out+=render(n.id,child);}return out;};const QString content=render(-1,1);if(!renderError.isEmpty())return RequirementResult::failure(renderError);const auto cp=paraWith(doc,ContentTag);if(cp.start<0)return RequirementResult::failure("La balise GESIER_CONTENT est introuvable dans le corps du document.");doc.replace(cp.start,cp.end-cp.start,content);files["word/document.xml"]=doc.toUtf8();QString refs=d.reference;if(!d.secondaryReferences.isEmpty())refs+="\n"+d.secondaryReferences.join('\n');QStringList meta;for(auto it=d.metadata.cbegin();it!=d.metadata.cend();++it)meta<<it.key()+" : "+it.value();replaceParts(&files,"{{GESIER_REFERENCE}}",refs);replaceParts(&files,"{{GESIER_METADATA}}",meta.join('\n'));doc=QString::fromUtf8(files["word/document.xml"]);processToc(&doc);files["word/document.xml"]=doc.toUtf8();const QString exportedTitle=r.publication?r.title:d.title;updateDocumentTitle(&files,exportedTitle,&types);doc=QString::fromUtf8(files["word/document.xml"]);
   replaceMetadataTags(&files,d.metadata);
   doc=QString::fromUtf8(files["word/document.xml"]);
   if(rels.isEmpty())
