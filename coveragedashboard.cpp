@@ -1,5 +1,6 @@
 #include "coveragedashboard.h"
 #include <QDateTime>
+#include <QHelpEvent>
 #include <QPainter>
 #include <QSqlDatabase>
 #include <QSqlQuery>
@@ -31,6 +32,92 @@ class Bars:public QWidget{
 public:Bars(QList<CoverageSlice> r,bool s,QWidget*p=nullptr):QWidget(p),rows(std::move(r)),stacked(s){setMinimumHeight(stacked?102:qMax(120,rows.size()*31+12));}
 protected:void paintEvent(QPaintEvent*)override{QPainter p(this);p.setRenderHint(QPainter::Antialiasing);int maximum=1,total=0;for(const auto&r:rows){maximum=qMax(maximum,r.value);total+=r.value;}if(stacked){int x=8,y=12,w=width()-16,h=34,used=0;for(int i=0;i<rows.size();++i){auto&r=rows[i];int part=i==rows.size()-1?w-used:qRound(double(w)*r.value/qMax(1,total));p.fillRect(QRect(x+used,y,part,h),colorAt(i));if(part>28){p.setPen(Qt::white);p.drawText(QRect(x+used,y,part,h),Qt::AlignCenter,QString::number(r.value));}used+=part;}int lx=8,ly=62;for(int i=0;i<rows.size();++i){p.setBrush(colorAt(i));p.setPen(Qt::NoPen);p.drawEllipse(lx,ly,10,10);p.setPen(Ink);p.drawText(QRect(lx+15,ly-3,125,18),Qt::AlignLeft|Qt::AlignVCenter,rows[i].label);lx+=140;if(lx+125>width()){lx=8;ly+=20;}}}else for(int i=0;i<rows.size();++i){int y=8+i*31;p.setPen(Ink);p.drawText(QRect(4,y,185,22),Qt::AlignLeft|Qt::AlignVCenter,rows[i].label);int bw=qRound((width()-240.0)*rows[i].value/maximum);p.fillRect(190,y+2,qMax(2,bw),17,colorAt(i+1));p.setPen(Ink);p.drawText(QRect(200+bw,y,38,22),Qt::AlignLeft|Qt::AlignVCenter,QString::number(rows[i].value));}}
 private:QList<CoverageSlice> rows;bool stacked;};
+class DocumentBars:public QWidget{
+public:
+  explicit DocumentBars(QList<DocumentRequirementCoverage> r,QWidget*p=nullptr)
+      :QWidget(p),rows(std::move(r)){
+    setMinimumHeight(qMax(72,rows.size()*31+38));
+    setMouseTracking(true);
+  }
+protected:
+  void paintEvent(QPaintEvent*)override{
+    QPainter p(this);p.setRenderHint(QPainter::Antialiasing);
+    int maximum=1;for(const auto&r:rows)maximum=qMax(maximum,r.total);
+    const int labelWidth=qMin(175,qMax(105,width()/3));
+    const int valueWidth=125;
+    const int available=qMax(20,width()-labelWidth-valueWidth-12);
+    for(int i=0;i<rows.size();++i){
+      const auto&r=rows[i];const int y=8+i*31;
+      p.setPen(Ink);
+      p.drawText(QRect(4,y,labelWidth-8,22),Qt::AlignLeft|Qt::AlignVCenter,
+                 p.fontMetrics().elidedText(r.reference,Qt::ElideRight,labelWidth-12));
+      const int bw=r.total?qMax(2,qRound(double(available)*r.total/maximum)):0;
+      const int greenWidth=r.total?qRound(double(bw)*r.applicable/r.total):0;
+      if(bw>0){
+        p.fillRect(QRect(labelWidth,y+2,bw,17),QColor("#dce5ee"));
+        if(greenWidth>0)p.fillRect(QRect(labelWidth,y+2,greenWidth,17),Green);
+      }
+      p.setPen(Ink);
+      const QString value=r.total
+          ?QString("%1 / %2 — %3 %").arg(r.applicable).arg(r.total).arg(r.percent())
+          :QStringLiteral("0 / 0");
+      p.drawText(QRect(labelWidth+available+7,y,valueWidth,22),
+                 Qt::AlignLeft|Qt::AlignVCenter,value);
+    }
+    const int y=rows.size()*31+16;
+    p.setPen(Qt::NoPen);p.setBrush(Green);p.drawRect(4,y,11,11);
+    p.setPen(Ink);p.drawText(QRect(21,y-3,185,18),Qt::AlignVCenter,
+                             "Avec applicabilité");
+    p.setPen(Qt::NoPen);p.setBrush(QColor("#dce5ee"));p.drawRect(205,y,11,11);
+    p.setPen(Ink);p.drawText(QRect(222,y-3,180,18),Qt::AlignVCenter,
+                             "Sans applicabilité");
+  }
+  bool event(QEvent*event)override{
+    if(event->type()==QEvent::ToolTip){
+      auto*help=static_cast<QHelpEvent*>(event);
+      const int row=(help->pos().y()-8)/31;
+      const int labelWidth=qMin(175,qMax(105,width()/3));
+      const int valueWidth=125;
+      const int available=qMax(20,width()-labelWidth-valueWidth-12);
+      const int maximum=[this]{int value=1;for(const auto&r:rows)value=qMax(value,r.total);return value;}();
+      const int barWidth=row>=0&&row<rows.size()&&rows[row].total
+          ?qMax(2,qRound(double(available)*rows[row].total/maximum)):0;
+      const bool overReference=help->pos().x()>=0&&help->pos().x()<labelWidth;
+      const bool overBar=help->pos().x()>=labelWidth&&
+                         help->pos().x()<labelWidth+barWidth;
+      if(row>=0&&row<rows.size()&&help->pos().y()>=8&&
+         help->pos().y()<8+rows.size()*31&&
+         (overReference||overBar)){
+        const auto&r=rows[row];
+        auto safe=[](QString text){
+          if(text.size()>180)text=text.left(177)+"…";
+          return text.toHtmlEscaped();
+        };
+        QString publication="Jamais publié";
+        if(!r.publicationDate.isEmpty()){
+          QDateTime date=QDateTime::fromString(r.publicationDate,Qt::ISODate);
+          const QString shown=date.isValid()?date.toString("dd/MM/yyyy")
+                                            :r.publicationDate.left(10);
+          publication=(r.publicationVersion.isEmpty()?QStringLiteral("version —")
+                                                     :"version "+safe(r.publicationVersion))+
+                      " — "+safe(shown);
+        }
+        const QString tip=QString(
+          "<b>%1 — %2</b><br><br>Type : %3<br>Product Tree : %4<br><br>"
+          "Exigences : %5<br>Avec applicabilité : %6 (%7 %)<br>"
+          "Sans applicabilité : %8<br><br>Dernière publication : %9")
+          .arg(safe(r.reference),safe(r.title),safe(r.type),safe(r.productTree))
+          .arg(r.total).arg(r.applicable).arg(r.percent())
+          .arg(r.total-r.applicable).arg(publication);
+        QToolTip::showText(help->globalPos(),tip,this);
+        return true;
+      }
+      QToolTip::hideText();event->ignore();return true;
+    }
+    return QWidget::event(event);
+  }
+private:QList<DocumentRequirementCoverage> rows;
+};
 QFrame*panel(const QString&t){auto*f=new QFrame;f->setObjectName("dashboardPanel");auto*l=new QVBoxLayout(f);l->setContentsMargins(16,12,16,12);auto*h=new QLabel(t);h->setObjectName("sectionTitle");l->addWidget(h);return f;}
 QVBoxLayout*body(QFrame*p){return qobject_cast<QVBoxLayout*>(p->layout());}
 QLabel*kpi(const QString&n,const QString&l,const QColor&c){auto*w=new QLabel(QString("<span style='font-size:25px;font-weight:700;color:%1'>%2</span><br><span style='color:#29496c'>%3</span>").arg(c.name(),n,l));w->setObjectName("kpi");w->setMinimumHeight(78);w->setAlignment(Qt::AlignCenter);return w;}
@@ -54,5 +141,5 @@ void CoverageDashboard::clearContent(){clearLayout(m_content);}
 CoverageScope CoverageDashboard::scope()const{CoverageScope s;s.ptId=m_pt->currentData().toInt();s.documentId=m_document->currentData().toInt();s.configurationId=m_configuration->currentData().toInt();s.typeId=m_type->currentData().toInt();if(m_status->currentData().toInt()>=0)s.statusIds<<m_status->currentData().toInt();s.search=m_search->text();s.includeObsolete=m_obsolete->isChecked();return s;}
 void CoverageDashboard::refresh(){clearContent();QString error;auto s=m_service.snapshot(scope(),&error);if(!error.isEmpty()){m_state->setText(error);emit statusMessage(error);return;}m_state->setText(QString("%1 exigence(s) dans le périmètre — actualisé %2").arg(s.requirements).arg(QDateTime::currentDateTime().toString("dd/MM/yyyy HH:mm")));auto*kpis=new QHBoxLayout;int avg=0,n=0;for(auto key:{"allocation","traceability","documentation","verification","applicability"}){auto m=findMetric(s.metrics,key);if(m.total){avg+=m.percent();++n;}}kpis->addWidget(kpi(QString::number(s.requirements),"Exigences",Blue));kpis->addWidget(kpi(QString::number(n?avg/n:0)+" %","Couverture moyenne",Green));kpis->addWidget(kpi(QString::number(s.openChanges),"Changements non finalisés",Orange));kpis->addWidget(kpi(QString::number(s.documents),"Documents",Blue));kpis->addWidget(kpi(QString::number(s.activeConfigurations),"Configurations actives",Grey));m_content->addLayout(kpis);
 auto*req=panel("Exigences");auto*rr=new QHBoxLayout;auto*sb=new QVBoxLayout;sb->addWidget(new QLabel("Répartition par statut"));sb->addWidget(new Bars(s.requirementStatuses,true));rr->addLayout(sb,5);auto*rings=new QHBoxLayout;for(auto key:{"allocation","traceability","documentation","verification","applicability"}){auto m=findMetric(s.metrics,key);rings->addWidget(new Donut(m.label,m.covered,m.total,Green,[this,m]{emit navigateRequested(m.page,m.missingFilter);}));}rr->addLayout(rings,7);body(req)->addLayout(rr);m_content->addWidget(req);
-auto*mid=new QHBoxLayout;auto*changes=panel("Changements");auto*cr=new QHBoxLayout;auto*ct=new QVBoxLayout;ct->addWidget(new QLabel(QString("Par type (%1 changements)").arg(s.changes)));ct->addWidget(new Bars(s.changeTypes,false));cr->addLayout(ct,1);auto*cs=new QVBoxLayout;cs->addWidget(new QLabel("Par statut"));cs->addWidget(new Bars(s.changeStatuses,false));auto*pending=new QLabel(QString("%1 non finalisé(s)").arg(s.openChanges));pending->setStyleSheet("background:#fff4e5;color:#d66b00;padding:8px;font-weight:700;border:1px solid #efbd78;border-radius:4px");cs->addWidget(pending);cr->addLayout(cs,1);body(changes)->addLayout(cr);mid->addWidget(changes,1);auto*docs=panel("Documents");auto*dr=new QHBoxLayout;dr->addWidget(kpi(QString::number(s.documents),"documents",Blue));auto*dt=new QVBoxLayout;dt->addWidget(new QLabel("Par type"));dt->addWidget(new Bars(s.documentTypes,false));dr->addLayout(dt,1);body(docs)->addLayout(dr);auto*ds=new QHBoxLayout;ds->addWidget(kpi(QString::number(s.recentPublications),"publications sur 30 jours",Blue));ds->addWidget(kpi(QString::number(s.neverPublishedDocuments),"jamais publiés",Orange));body(docs)->addLayout(ds);mid->addWidget(docs,1);m_content->addLayout(mid);
+auto*mid=new QHBoxLayout;auto*changes=panel("Changements");auto*cr=new QHBoxLayout;auto*ct=new QVBoxLayout;ct->addWidget(new QLabel(QString("Par type (%1 changements)").arg(s.changes)));ct->addWidget(new Bars(s.changeTypes,false));cr->addLayout(ct,1);auto*cs=new QVBoxLayout;cs->addWidget(new QLabel("Par statut"));cs->addWidget(new Bars(s.changeStatuses,false));auto*pending=new QLabel(QString("%1 non finalisé(s)").arg(s.openChanges));pending->setStyleSheet("background:#fff4e5;color:#d66b00;padding:8px;font-weight:700;border:1px solid #efbd78;border-radius:4px");cs->addWidget(pending);cr->addLayout(cs,1);body(changes)->addLayout(cr);mid->addWidget(changes,1);auto*docs=panel("Documents");auto*dr=new QHBoxLayout;dr->addWidget(kpi(QString::number(s.documents),"documents",Blue));auto*dt=new QVBoxLayout;dt->addWidget(new QLabel("Par type"));dt->addWidget(new Bars(s.documentTypes,false));dr->addLayout(dt,1);body(docs)->addLayout(dr);auto*requirementsByDocument=new QLabel("Exigences par document");body(docs)->addWidget(requirementsByDocument);body(docs)->addWidget(new DocumentBars(s.documentRequirements));auto*ds=new QHBoxLayout;ds->addWidget(kpi(QString::number(s.recentPublications),"publications sur 30 jours",Blue));ds->addWidget(kpi(QString::number(s.neverPublishedDocuments),"jamais publiés",Orange));body(docs)->addLayout(ds);mid->addWidget(docs,1);m_content->addLayout(mid);
 auto*apps=panel("Applicabilité par configuration");if(s.configurations.isEmpty())body(apps)->addWidget(new QLabel("Aucune configuration définie."));for(const auto&c:s.configurations){auto*r=new QHBoxLayout;r->addWidget(new QLabel(c.code+" — "+c.label),2);auto*b=new QProgressBar;b->setRange(0,100);b->setValue(c.percent());b->setFormat(QString("%1 / %2 — %3 %").arg(c.applicable).arg(c.total).arg(c.percent()));b->setStyleSheet(QString("QProgressBar{border:0;background:#e5ebf1;height:19px;text-align:center}QProgressBar::chunk{background:%1}").arg(c.percent()>=80?Green.name():c.percent()>=60?Orange.name():Red.name()));r->addWidget(b,7);auto*a=new QLabel(c.active?"Active":"Archivée");a->setAlignment(Qt::AlignCenter);a->setStyleSheet(QString("color:white;background:%1;padding:3px;border-radius:4px").arg(c.active?Green.name():Grey.name()));r->addWidget(a);body(apps)->addLayout(r);}m_content->addWidget(apps);auto*hint=new QLabel("ⓘ Cliquez sur un indicateur de couverture pour ouvrir la liste filtrée.");hint->setStyleSheet("color:#476887;padding:6px");m_content->addWidget(hint);m_content->addStretch();}

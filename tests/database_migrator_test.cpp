@@ -401,11 +401,23 @@ void DatabaseMigratorTest::calculatesDashboardCoverageFromOneService() {
   QVERIFY(q.exec("INSERT INTO REQUIREMENT(ID,PT_ID,CODE,DOC_ID,TITLE,TYPE,"
                  "STATUS,VERIF_METHOD,IS_TRACE_ROOT) VALUES"
                  "(1,1,'SYS-001',1,'Couverte',1,1,1,1),"
-                 "(2,1,'SYS-002',1,'À compléter',1,1,1,0)"));
+                 "(2,1,'SYS-002',1,'À compléter',2,2,1,0)"));
   QVERIFY(q.exec("INSERT INTO REQUIREMENT_PT(REQ_ID,PT_ID,IS_PRIMARY) "
                  "VALUES(1,1,1)"));
   QVERIFY(q.exec("INSERT INTO DOCUMENT_NODE(DOC_ID,PARENT_ID,NODE_TYPE,TITLE,"
-                 "POSITION,REQ_ID) VALUES(1,NULL,'REQUIREMENT','Occurrence',1,1)"));
+                 "POSITION,REQ_ID) VALUES"
+                 "(1,NULL,'REQUIREMENT','Occurrence',1,1),"
+                 "(1,NULL,'REQUIREMENT','Deuxième',2,2)"));
+  QVERIFY(q.exec("INSERT INTO CONFIGURATION(ID,CODE,LABEL,ACTIVE,POSITION) VALUES"
+                 "(1,'ACTIVE','Active',1,1),(2,'ARCHIVE','Archivée',0,2)"));
+  QVERIFY(q.exec("INSERT INTO REQUIREMENT_APPLICABILITY(REQ_ID,CONFIG_ID,PT_ID,"
+                 "APPLICABLE) VALUES(1,1,NULL,1),(2,1,NULL,0),(2,2,NULL,1)"));
+  QVERIFY(q.exec("INSERT INTO DOCUMENT_EXPORT(DOC_ID,EXPORT_KIND,VERSION,TITLE,"
+                 "AUTHOR,EXPORTED_AT) VALUES(1,'PUBLICATION','2.3',"
+                 "'Spécification publiée','Auteur','2026-09-18 10:00:00')"));
+  QVERIFY(q.exec("INSERT INTO DOCUMENT(ID,PT_ID,TYPE,REFERENCE,TITLE) "
+                 "VALUES(2,1,1,NULL,'Document vide')"));
+  QVERIFY(q.exec("UPDATE DOCUMENT SET REFERENCE='SP-001' WHERE ID=1"));
 
   CoverageService service(manager.currentConnection());
   QString error;
@@ -419,22 +431,69 @@ void DatabaseMigratorTest::calculatesDashboardCoverageFromOneService() {
   QCOMPARE(metric("allocation").covered, 1);
   QCOMPARE(metric("allocation").percent(), 50);
   QCOMPARE(metric("traceability").total, 1); // la racine est hors dénominateur
-  QCOMPARE(metric("documentation").covered, 1);
+  QCOMPARE(metric("documentation").covered, 2);
   QCOMPARE(metric("interfaces").total, 0);
   QCOMPARE(metric("interfaces").percent(), 0);
+  QVERIFY(q.exec("SELECT COUNT(*) FROM DOCUMENT")); QVERIFY(q.next());
+  QCOMPARE(q.value(0).toInt(), 2);
   const auto snapshot = service.snapshot({}, &error);
   QVERIFY2(error.isEmpty(), qPrintable(error));
   QCOMPARE(snapshot.requirements, 2);
-  QCOMPARE(snapshot.documents, 1);
+  QCOMPARE(snapshot.documents, 2);
   QCOMPARE(snapshot.documentTypes.size(), 2);
   QCOMPARE(snapshot.documentTypes[0].code, QString("SP"));
-  QCOMPARE(snapshot.documentTypes[0].value, 1);
+  QCOMPARE(snapshot.documentTypes[0].value, 2);
   QCOMPARE(snapshot.documentTypes[1].code, QString("ICD"));
   QCOMPARE(snapshot.changeTypes.size(), 4);
   QCOMPARE(snapshot.changeTypes[0].label, QString("Demande de changement"));
   QCOMPARE(snapshot.changeTypes[1].label, QString("Waiver / Dérogation"));
   QCOMPARE(snapshot.changeTypes[2].label, QString("Déviation"));
   QCOMPARE(snapshot.changeStatuses.size(), 5);
+  QCOMPARE(snapshot.documentRequirements.size(), 2);
+  QCOMPARE(snapshot.documentRequirements[0].reference, QString("SP-001"));
+  QCOMPARE(snapshot.documentRequirements[0].total, 2);
+  QCOMPARE(snapshot.documentRequirements[0].applicable, 1); // archive ignorée
+  QCOMPARE(snapshot.documentRequirements[0].percent(), 50);
+  QCOMPARE(snapshot.documentRequirements[0].publicationVersion, QString("2.3"));
+  QCOMPARE(snapshot.documentRequirements[1].reference, QString("—"));
+  QCOMPARE(snapshot.documentRequirements[1].total, 0);
+
+  CoverageScope filtered;
+  filtered.search = "SYS-001";
+  const auto searched = service.snapshot(filtered, &error);
+  QVERIFY2(error.isEmpty(), qPrintable(error));
+  QCOMPARE(searched.documentRequirements.size(), 2);
+  QCOMPARE(searched.documentRequirements[0].total, 1);
+  QCOMPARE(searched.documentRequirements[0].applicable, 1);
+
+  filtered = {};
+  filtered.configurationId = 1;
+  const auto configured = service.snapshot(filtered, &error);
+  QVERIFY2(error.isEmpty(), qPrintable(error));
+  QCOMPARE(configured.documentRequirements[0].total, 2);
+  QCOMPARE(configured.documentRequirements[0].applicable, 1);
+
+  filtered = {};
+  filtered.typeId = 2;
+  filtered.statusIds = {2};
+  const auto typedAndReviewed = service.snapshot(filtered, &error);
+  QVERIFY2(error.isEmpty(), qPrintable(error));
+  QCOMPARE(typedAndReviewed.documentRequirements[0].total, 1);
+  QCOMPARE(typedAndReviewed.documentRequirements[0].applicable, 0);
+
+  filtered = {};
+  filtered.ptId = 1;
+  const auto productTree = service.snapshot(filtered, &error);
+  QVERIFY2(error.isEmpty(), qPrintable(error));
+  QCOMPARE(productTree.documentRequirements[0].total, 1);
+  QCOMPARE(productTree.documentRequirements[0].applicable, 1);
+
+  filtered = {};
+  filtered.documentId = 2;
+  const auto emptyDocument = service.snapshot(filtered, &error);
+  QVERIFY2(error.isEmpty(), qPrintable(error));
+  QCOMPARE(emptyDocument.documentRequirements.size(), 1);
+  QCOMPARE(emptyDocument.documentRequirements[0].total, 0);
   q = QSqlQuery();
   db = QSqlDatabase();
   manager.close();

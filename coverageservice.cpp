@@ -73,6 +73,9 @@ int CoverageMetric::percent() const {
 int ConfigurationCoverage::percent() const {
   return total > 0 ? qRound(100.0 * applicable / total) : 0;
 }
+int DocumentRequirementCoverage::percent() const {
+  return total > 0 ? qRound(100.0 * applicable / total) : 0;
+}
 
 CoverageService::CoverageService(QString connectionName)
     : m_connectionName(std::move(connectionName)) {}
@@ -203,6 +206,52 @@ CoverageSnapshot CoverageService::snapshot(const CoverageScope &scope,
   out.documentTypes = slices(db,
       "SELECT T.ID,T.TYPE,T.TYPE,COUNT(D.ID) FROM DOC_TYPE T LEFT JOIN DOCUMENT "
       "D ON D.TYPE=T.ID GROUP BY T.ID,T.TYPE ORDER BY T.ID", error);
+  {
+    const QString applicability = scope.configurationId >= 0
+        ? QString("A.CONFIG_ID=%1").arg(scope.configurationId)
+        : QStringLiteral("EXISTS(SELECT 1 FROM CONFIGURATION C WHERE "
+                         "C.ID=A.CONFIG_ID AND C.ACTIVE=1)");
+    QString sql =
+        "SELECT D.ID,COALESCE(NULLIF(D.REFERENCE,''),'—'),D.TITLE,"
+        "COALESCE(T.TYPE,'—'),COALESCE(P.NAME,'—'),"
+        "COUNT(DISTINCT R.ID),"
+        "COUNT(DISTINCT CASE WHEN EXISTS(SELECT 1 FROM "
+        "REQUIREMENT_APPLICABILITY A WHERE A.REQ_ID=R.ID AND A.APPLICABLE=1 "
+        "AND " + applicability + ") THEN R.ID END),"
+        "COALESCE((SELECT E.VERSION FROM DOCUMENT_EXPORT E WHERE E.DOC_ID=D.ID "
+        "AND E.EXPORT_KIND='PUBLICATION' ORDER BY E.EXPORTED_AT DESC,E.ID DESC "
+        "LIMIT 1),''),"
+        "COALESCE((SELECT E.EXPORTED_AT FROM DOCUMENT_EXPORT E WHERE E.DOC_ID=D.ID "
+        "AND E.EXPORT_KIND='PUBLICATION' ORDER BY E.EXPORTED_AT DESC,E.ID DESC "
+        "LIMIT 1),'') "
+        "FROM DOCUMENT D LEFT JOIN DOC_TYPE T ON T.ID=D.TYPE "
+        "LEFT JOIN PT P ON P.ID=D.PT_ID "
+        "LEFT JOIN DOCUMENT_NODE DN ON DN.DOC_ID=D.ID AND "
+        "DN.NODE_TYPE='REQUIREMENT' LEFT JOIN REQUIREMENT R ON R.ID=DN.REQ_ID "
+        "AND (" + where + ") ";
+    if (scope.documentId >= 0)
+      sql += QString("WHERE D.ID=%1 ").arg(scope.documentId);
+    sql += "GROUP BY D.ID,D.REFERENCE,D.TITLE,T.TYPE,P.NAME "
+           "ORDER BY COUNT(DISTINCT R.ID) DESC,D.REFERENCE,D.TITLE";
+    QSqlQuery documents(db);
+    if (!documents.exec(sql)) {
+      if (error && error->isEmpty()) *error = documents.lastError().text();
+      return out;
+    }
+    while (documents.next()) {
+      DocumentRequirementCoverage row;
+      row.id = documents.value(0).toInt();
+      row.reference = documents.value(1).toString();
+      row.title = documents.value(2).toString();
+      row.type = documents.value(3).toString();
+      row.productTree = documents.value(4).toString();
+      row.total = documents.value(5).toInt();
+      row.applicable = documents.value(6).toInt();
+      row.publicationVersion = documents.value(7).toString();
+      row.publicationDate = documents.value(8).toString();
+      out.documentRequirements << row;
+    }
+  }
   out.documents = scalar(db, "SELECT COUNT(*) FROM DOCUMENT", error);
   out.changes = scalar(db, "SELECT COUNT(*) FROM CHANGE_ITEM WHERE COALESCE(ARCHIVED,0)=0", error);
   out.openChanges = scalar(db, "SELECT COUNT(*) FROM CHANGE_ITEM C JOIN CHANGE_STATUS S ON S.ID=C.STATUS_ID WHERE COALESCE(C.ARCHIVED,0)=0 AND S.IS_FINAL=0", error);

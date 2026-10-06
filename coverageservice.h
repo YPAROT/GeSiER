@@ -31,6 +31,20 @@ struct ConfigurationCoverage {
   int percent() const;
 };
 
+struct DocumentRequirementCoverage {
+  int id = -1;
+  QString reference;
+  QString title;
+  QString type;
+  QString productTree;
+  int applicable = 0;
+  int total = 0;
+  QString publicationVersion;
+  QString publicationDate;
+
+  int percent() const;
+};
+
 struct CoverageMetric {
   QString key;
   QString label;
@@ -49,6 +63,7 @@ struct CoverageSnapshot {
   QList<CoverageSlice> changeTypes;
   QList<CoverageSlice> changeStatuses;
   QList<CoverageSlice> documentTypes;
+  QList<DocumentRequirementCoverage> documentRequirements;
   QList<ConfigurationCoverage> configurations;
   int requirements = 0;
   int documents = 0;
