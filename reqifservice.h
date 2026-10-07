@@ -10,7 +10,9 @@ struct ReqIfAttribute {
 };
 
 struct ReqIfObject {
-  QString externalId, code, title, description, type, status, parentExternalId;
+  QString externalId, code, title, description, type, status, parentExternalId,
+      comments;
+  bool commentsProvided = false;
   QStringList productTrees;
   QList<ReqIfAttribute> attributes;
 };

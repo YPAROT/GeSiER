@@ -41,7 +41,7 @@ struct RequirementImage {
 };
 struct RequirementRecord {
   int id = -1;
-  QString code, title, description, source;
+  QString code, title, description, source, comments;
   QString productTrees, verificationMethods, applicability, documents;
   bool allocated = false, traced = false, documented = false, verified = false;
   bool traceRoot = false;

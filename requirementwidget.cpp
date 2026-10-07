@@ -169,6 +169,10 @@ RequirementWidget::RequirementWidget(QWidget *p) : QWidget(p) {
   m_title->setObjectName("requirementTitleEditor");
   m_description = new MarkdownDescriptionEditor;
   m_source = new QLineEdit;
+  m_comments = new QTextEdit;
+  m_comments->setObjectName("requirementCommentsEditor");
+  m_comments->setAcceptRichText(false);
+  m_comments->setMaximumHeight(100);
   m_status = new QComboBox;
   m_type = new QComboBox;
   m_traceRoot = new QCheckBox("Exigence haut niveau / racine de traçabilité");
@@ -180,6 +184,7 @@ RequirementWidget::RequirementWidget(QWidget *p) : QWidget(p) {
   identityForm->addRow("Titre", m_title);
   identityForm->addRow("Description", m_description);
   identityForm->addRow("Source", m_source);
+  identityForm->addRow("Commentaires", m_comments);
   identityForm->addRow("Type", m_type);
   identityForm->addRow("Statut", m_status);
   identityForm->addRow(QString(), m_traceRoot);
@@ -359,6 +364,7 @@ RequirementWidget::RequirementWidget(QWidget *p) : QWidget(p) {
     QStringList availableHeaders;
     for (int column = 0; column < m_list->columnCount(); ++column)
       availableHeaders << m_list->horizontalHeaderItem(column)->text();
+    availableHeaders << "Commentaires";
     TabularExportDialog options("requirements-export", availableHeaders, this);
     if (options.exec() != QDialog::Accepted) return;
     QString path = QFileDialog::getSaveFileName(
@@ -373,8 +379,11 @@ RequirementWidget::RequirementWidget(QWidget *p) : QWidget(p) {
     for (int row = 0; row < m_list->rowCount(); ++row) {
       QStringList values;
       for (int column : columns)
-        values << (m_list->item(row, column) ? m_list->item(row, column)->text()
-                                             : QString());
+        values << (column == ColumnCount
+                       ? m_records.value(row).comments
+                       : (m_list->item(row, column)
+                              ? m_list->item(row, column)->text()
+                              : QString()));
       rows << values;
     }
     QString error;
@@ -395,6 +404,7 @@ RequirementWidget::RequirementWidget(QWidget *p) : QWidget(p) {
         source.description, &source.images);
     m_description->setContent(source.description, source.images);
     m_source->setText(source.source);
+    m_comments->setPlainText(source.comments);
     m_type->setCurrentIndex(m_type->findData(source.typeId));
     m_status->setCurrentIndex(m_status->findData(source.statusId));
     m_traceRoot->setChecked(source.traceRoot);
@@ -543,6 +553,10 @@ RequirementWidget::RequirementWidget(QWidget *p) : QWidget(p) {
   for (auto *w : {m_code, m_title, m_source})
     connect(w, &QLineEdit::textEdited, this, [this] { m_dirty = true; });
   connect(m_description, &MarkdownDescriptionEditor::contentChanged, this, [this] {
+    if (!m_loading)
+      m_dirty = true;
+  });
+  connect(m_comments, &QTextEdit::textChanged, this, [this] {
     if (!m_loading)
       m_dirty = true;
   });
@@ -893,6 +907,7 @@ void RequirementWidget::clearEditor() {
   m_title->clear();
   m_description->setContent({});
   m_source->clear();
+  m_comments->clear();
   m_codeWarning->clear();
   m_traceRoot->setChecked(false);
   if (m_status->count())
@@ -971,6 +986,7 @@ void RequirementWidget::loadEditor(int id) {
   m_title->setText(r.title);
   m_description->setContent(r.description, r.images);
   m_source->setText(r.source);
+  m_comments->setPlainText(r.comments);
   m_status->setCurrentIndex(qMax(0, m_status->findData(r.statusId)));
   m_type->setCurrentIndex(qMax(0, m_type->findData(r.typeId)));
   m_traceRoot->setChecked(r.traceRoot);
@@ -1208,6 +1224,7 @@ RequirementRecord RequirementWidget::editorRecord() const {
   r.description = m_description->markdown();
   r.images = m_description->images();
   r.source = m_source->text();
+  r.comments = m_comments->toPlainText();
   r.statusId = m_status->currentData().toInt();
   r.typeId = m_type->currentData().toInt();
   r.traceRoot = m_traceRoot->isChecked();

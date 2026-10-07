@@ -31,7 +31,7 @@
 
 namespace {
 QString writeDocxTemplate(const QString &path) {
-  const QByteArray document = R"(<?xml version="1.0" encoding="UTF-8"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body><w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText> TOC \o "1-6" \h </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>Sommaire existant</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p><w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText> DOCPROPERTY Title </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>Ancien titre</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p><w:p><w:r><w:t>Texte générique avant</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="Section3"/></w:pPr><w:r><w:t>3 Requirements</w:t></w:r></w:p><w:p><w:r><w:t>{{GESIER_CONTENT}}</w:t></w:r></w:p><w:p><w:r><w:t>Texte générique après</w:t></w:r></w:p><w:p><w:r><w:t>{{GESIER_REQUIREMENT_TEMPLATE_BEGIN}}</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblStyle w:val="ReqTable"/></w:tblPr><w:tr><w:tc><w:p><w:r><w:t>{{REQ_CODE}}</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>{{REQ_TITLE}}</w:t></w:r></w:p><w:p><w:r><w:t>{{REQ_DESCRIPTION}}</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Relations</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>{{REQ_RELATIONS}}</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>{{GESIER_REQUIREMENT_TEMPLATE_END}}</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="Custom4"/><w:keepNext/></w:pPr><w:r><w:rPr><w:b/><w:color w:val="123456"/></w:rPr><w:t>{{GESIER_CHAPTER_LEVEL_4}}</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="Custom5"/><w:ind w:left="720"/></w:pPr><w:r><w:rPr><w:i/></w:rPr><w:t>{{GESIER_CHAPTER_LEVEL_5}}</w:t></w:r></w:p><w:sectPr><w:headerReference w:type="default" r:id="rIdHeader"/></w:sectPr></w:body></w:document>)";
+  const QByteArray document = R"(<?xml version="1.0" encoding="UTF-8"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body><w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText> TOC \o "1-6" \h </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>Sommaire existant</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p><w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText> DOCPROPERTY Title </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>Ancien titre</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p><w:p><w:r><w:t>Texte générique avant</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="Section3"/></w:pPr><w:r><w:t>3 Requirements</w:t></w:r></w:p><w:p><w:r><w:t>{{GESIER_CONTENT}}</w:t></w:r></w:p><w:p><w:r><w:t>Texte générique après</w:t></w:r></w:p><w:p><w:r><w:t>{{GESIER_REQUIREMENT_TEMPLATE_BEGIN}}</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblStyle w:val="ReqTable"/></w:tblPr><w:tr><w:tc><w:p><w:r><w:t>{{REQ_CODE}}</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>{{REQ_TITLE}}</w:t></w:r></w:p><w:p><w:r><w:t>{{REQ_DESCRIPTION}}</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Commentaires</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>{{REQ_COMMENTS}}</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Relations</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>{{REQ_RELATIONS}}</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>{{GESIER_REQUIREMENT_TEMPLATE_END}}</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="Custom4"/><w:keepNext/></w:pPr><w:r><w:rPr><w:b/><w:color w:val="123456"/></w:rPr><w:t>{{GESIER_CHAPTER_LEVEL_4}}</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="Custom5"/><w:ind w:left="720"/></w:pPr><w:r><w:rPr><w:i/></w:rPr><w:t>{{GESIER_CHAPTER_LEVEL_5}}</w:t></w:r></w:p><w:sectPr><w:headerReference w:type="default" r:id="rIdHeader"/></w:sectPr></w:body></w:document>)";
   const QByteArray styles = R"(<?xml version="1.0" encoding="UTF-8"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="paragraph" w:styleId="Section3"><w:pPr><w:outlineLvl w:val="2"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="Custom4"><w:pPr><w:outlineLvl w:val="3"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="Custom5"><w:pPr><w:outlineLvl w:val="4"/></w:pPr></w:style></w:styles>)";
   const QByteArray header = R"(<?xml version="1.0" encoding="UTF-8"?><w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:r><w:t>{{GESIER_</w:t></w:r><w:r><w:t>REFERENCE}}</w:t></w:r></w:p><w:p><w:r><w:t>{{GESIER_META</w:t></w:r><w:r><w:t>DATA: Indice }}</w:t></w:r></w:p><w:p><w:r><w:t>{{GESIER_METADATA:Absente}}</w:t></w:r></w:p><w:p><w:r><w:t>{{GESIER_METADATA: AUTEUR }}</w:t></w:r></w:p><w:p><w:r><w:t>{{GESIER_METADATA:}}</w:t></w:r></w:p></w:hdr>)";
   const QByteArray footer = R"(<?xml version="1.0" encoding="UTF-8"?><w:ftr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:r><w:t>{{GESIER_METADATA:Auteur}}</w:t></w:r></w:p><w:p><w:r><w:t>{{GESIER_METADATA}}</w:t></w:r></w:p></w:ftr>)";
@@ -106,6 +106,7 @@ void DatabaseMigratorTest::storesMarkdownImagesAtomically() {
 
   RequirementRecord record;
   record.code = "SYS-R-0001"; record.title = "Markdown";
+  record.comments = "Première ligne accentuée\nDeuxième ligne";
   record.primaryPtId = pt; record.ptIds = {pt};
   RequirementImage image;
   image.token = "figure-1"; image.mimeType = "image/png";
@@ -118,6 +119,7 @@ void DatabaseMigratorTest::storesMarkdownImagesAtomically() {
   QVERIFY2(saved.success, qPrintable(saved.message));
   auto loaded = RequirementService(manager.currentConnection()).get(saved.id);
   QCOMPARE(loaded.description, record.description);
+  QCOMPARE(loaded.comments, record.comments);
   QCOMPARE(loaded.images.size(), 1);
   QCOMPARE(loaded.images.first().data, image.data);
   QVERIFY(query.exec("SELECT ID FROM DOCUMENT ORDER BY ID LIMIT 1"));
@@ -139,9 +141,11 @@ void DatabaseMigratorTest::storesMarkdownImagesAtomically() {
   QVERIFY(!archive.fileData("word/media/gesier1.png").isEmpty());
 
   loaded.description = "Image retirée";
+  loaded.comments = "Commentaire modifié";
   QVERIFY(RequirementService(manager.currentConnection()).save(loaded).success);
   loaded = RequirementService(manager.currentConnection()).get(saved.id);
   QVERIFY(loaded.images.isEmpty());
+  QCOMPARE(loaded.comments, QString("Commentaire modifié"));
   loaded.description = "![Absente](gesier-image://missing)";
   const auto rejected = RequirementService(manager.currentConnection()).save(loaded);
   QVERIFY(!rejected.success);
@@ -296,7 +300,7 @@ void DatabaseMigratorTest::previewsTaggedWordRoundTrip() {
   QSqlQuery query(db);
   QVERIFY(query.exec("INSERT INTO PT(ID,NAME,SEGMENT,POSITION) VALUES(1,'Système','SYS',0)"));
   QVERIFY(query.exec("INSERT INTO DOCUMENT(ID,PT_ID,TYPE,REFERENCE,TITLE) VALUES(1,1,1,'SPEC-W','Word')"));
-  QVERIFY(query.exec("INSERT INTO REQUIREMENT(ID,PT_ID,CODE,DOC_ID,TITLE,DESCRIPTION,TYPE,STATUS,VERIF_METHOD) VALUES(1,1,'SYS-R-0001',1,'Détection','<p>Détecter la panne</p>',1,1,1)"));
+  QVERIFY(query.exec("INSERT INTO REQUIREMENT(ID,PT_ID,CODE,DOC_ID,TITLE,DESCRIPTION,TYPE,STATUS,VERIF_METHOD,COMMENTS) VALUES(1,1,'SYS-R-0001',1,'Détection','<p>Détecter la panne</p>',1,1,1,'Avis initial')"));
   QVERIFY(query.exec("INSERT INTO REQUIREMENT_PT(REQ_ID,PT_ID,IS_PRIMARY) VALUES(1,1,1)"));
   QVERIFY(query.exec("INSERT INTO DOCUMENT_NODE(ID,DOC_ID,PARENT_ID,NODE_TYPE,TITLE,POSITION) VALUES(1,1,NULL,'CHAPTER','Fonctions',0)"));
   QVERIFY(query.exec("INSERT INTO DOCUMENT_NODE(DOC_ID,PARENT_ID,NODE_TYPE,POSITION,REQ_ID) VALUES(1,1,'REQUIREMENT',0,1)"));
@@ -313,6 +317,8 @@ void DatabaseMigratorTest::previewsTaggedWordRoundTrip() {
   QCOMPARE(preview.requirements.size(), 1);
   QCOMPARE(preview.requirements.first().record.code, QString("SYS-R-0001"));
   QCOMPARE(preview.requirements.first().record.title, QString("Détection"));
+  QCOMPARE(preview.requirements.first().record.comments, QString("Avis initial"));
+  QVERIFY(preview.requirements.first().commentsProvided);
   QCOMPARE(preview.documentTitle, QString("Word"));
   QCOMPARE(preview.documentReference, QString("SPEC-W"));
   QVERIFY(preview.requirements.first().record.description.contains("Détecter la panne"));
@@ -325,6 +331,8 @@ void DatabaseMigratorTest::previewsTaggedWordRoundTrip() {
   DocxImportRequirement imported; imported.selected = true; imported.ordinal = 2; imported.location = "Exigence 2 — Fonctions";
   imported.record.code = "SYS-R-0002"; imported.record.title = "Importée"; imported.record.description = "<p>Valide</p>";
   imported.record.traceRoot = true;
+  imported.record.comments = "Commentaire Word";
+  imported.commentsProvided = true;
   selective.requirements = {ignored, imported};
   DocxImportOptions importOptions; importOptions.documentId = 1; importOptions.primaryPtId = 1;
   QVERIFY2(importer.importPreview(selective, importOptions).success, "L'exigence cochée doit être importée");
@@ -332,10 +340,13 @@ void DatabaseMigratorTest::previewsTaggedWordRoundTrip() {
   QVERIFY(query.exec("SELECT COUNT(*) FROM REQUIREMENT WHERE CODE='SYS-R-0002'")); QVERIFY(query.next()); QCOMPARE(query.value(0).toInt(), 1);
   QVERIFY(query.exec("SELECT IS_TRACE_ROOT FROM REQUIREMENT WHERE CODE='SYS-R-0002'")); QVERIFY(query.next()); QVERIFY(query.value(0).toBool());
   imported.record.traceRoot = false;
+  imported.record.comments.clear();
+  imported.commentsProvided = false;
   selective.requirements = {imported};
   QVERIFY2(importer.importPreview(selective, importOptions).success,
            "La mise à jour doit appliquer la valeur root importée");
   QVERIFY(query.exec("SELECT IS_TRACE_ROOT FROM REQUIREMENT WHERE CODE='SYS-R-0002'")); QVERIFY(query.next()); QVERIFY(!query.value(0).toBool());
+  QVERIFY(query.exec("SELECT COMMENTS FROM REQUIREMENT WHERE CODE='SYS-R-0002'")); QVERIFY(query.next()); QCOMPARE(query.value(0).toString(), QString("Commentaire Word"));
 
   DocxImportPreview rollbackPreview;
   DocxImportRequirement beforeFailure; beforeFailure.selected = true; beforeFailure.ordinal = 3; beforeFailure.location = "Exigence 3";
@@ -506,10 +517,11 @@ void DatabaseMigratorTest::importsExportsReqIfAndRejectsUnsafeXml() {
   QSqlDatabase db=QSqlDatabase::database(manager.currentConnection());QSqlQuery q(db);
   QVERIFY(q.exec("INSERT INTO PT(ID,NAME,SEGMENT) VALUES(1,'System','SYS')"));
   const QString input=directory.filePath("input.reqif");QFile file(input);QVERIFY(file.open(QIODevice::WriteOnly));
-  file.write(R"(<?xml version="1.0"?><REQ-IF><CORE-CONTENT><REQ-IF-CONTENT><DATATYPES/><SPEC-TYPES><SPEC-OBJECT-TYPE IDENTIFIER="T" LONG-NAME="Requirement"><SPEC-ATTRIBUTES><ATTRIBUTE-DEFINITION-STRING IDENTIFIER="A-CODE" LONG-NAME="Code"/><ATTRIBUTE-DEFINITION-STRING IDENTIFIER="A-DESC" LONG-NAME="Description"/></SPEC-ATTRIBUTES></SPEC-OBJECT-TYPE></SPEC-TYPES><SPEC-OBJECTS><SPEC-OBJECT IDENTIFIER="EXT-1" LONG-NAME="Titre"><VALUES><ATTRIBUTE-VALUE-STRING THE-VALUE="SYS-001"><DEFINITION><ATTRIBUTE-DEFINITION-STRING-REF>A-CODE</ATTRIBUTE-DEFINITION-STRING-REF></DEFINITION></ATTRIBUTE-VALUE-STRING><ATTRIBUTE-VALUE-STRING THE-VALUE="Texte"><DEFINITION><ATTRIBUTE-DEFINITION-STRING-REF>A-DESC</ATTRIBUTE-DEFINITION-STRING-REF></DEFINITION></ATTRIBUTE-VALUE-STRING></VALUES></SPEC-OBJECT></SPEC-OBJECTS><SPEC-RELATIONS/><SPECIFICATIONS/></REQ-IF-CONTENT></CORE-CONTENT></REQ-IF>)");file.close();
-  ReqIfService service(manager.currentConnection());ReqIfReport report=service.preview(input);QVERIFY2(report.valid(),qPrintable(report.errors.join('\n')));QCOMPARE(report.creates,1);QString error;QVERIFY2(service.importFile(input,report,&error),qPrintable(error));
+  file.write(R"(<?xml version="1.0"?><REQ-IF><CORE-CONTENT><REQ-IF-CONTENT><DATATYPES/><SPEC-TYPES><SPEC-OBJECT-TYPE IDENTIFIER="T" LONG-NAME="Requirement"><SPEC-ATTRIBUTES><ATTRIBUTE-DEFINITION-STRING IDENTIFIER="A-CODE" LONG-NAME="Code"/><ATTRIBUTE-DEFINITION-STRING IDENTIFIER="A-DESC" LONG-NAME="Description"/><ATTRIBUTE-DEFINITION-STRING IDENTIFIER="A-COMMENT" LONG-NAME="Commentaire"/></SPEC-ATTRIBUTES></SPEC-OBJECT-TYPE></SPEC-TYPES><SPEC-OBJECTS><SPEC-OBJECT IDENTIFIER="EXT-1" LONG-NAME="Titre"><VALUES><ATTRIBUTE-VALUE-STRING THE-VALUE="SYS-001"><DEFINITION><ATTRIBUTE-DEFINITION-STRING-REF>A-CODE</ATTRIBUTE-DEFINITION-STRING-REF></DEFINITION></ATTRIBUTE-VALUE-STRING><ATTRIBUTE-VALUE-STRING THE-VALUE="Texte"><DEFINITION><ATTRIBUTE-DEFINITION-STRING-REF>A-DESC</ATTRIBUTE-DEFINITION-STRING-REF></DEFINITION></ATTRIBUTE-VALUE-STRING><ATTRIBUTE-VALUE-STRING THE-VALUE="À contrôler"><DEFINITION><ATTRIBUTE-DEFINITION-STRING-REF>A-COMMENT</ATTRIBUTE-DEFINITION-STRING-REF></DEFINITION></ATTRIBUTE-VALUE-STRING></VALUES></SPEC-OBJECT></SPEC-OBJECTS><SPEC-RELATIONS/><SPECIFICATIONS/></REQ-IF-CONTENT></CORE-CONTENT></REQ-IF>)");file.close();
+  ReqIfService service(manager.currentConnection());ReqIfReport report=service.preview(input);QVERIFY2(report.valid(),qPrintable(report.errors.join('\n')));QCOMPARE(report.creates,1);QCOMPARE(report.objects.first().comments,QString("À contrôler"));QString error;QVERIFY2(service.importFile(input,report,&error),qPrintable(error));
   QVERIFY(q.exec("SELECT COUNT(*) FROM REQIF_IDENTITY WHERE EXTERNAL_ID='EXT-1'"));QVERIFY(q.next());QCOMPARE(q.value(0).toInt(),1);
   const QString output=directory.filePath("output.reqif");QVERIFY2(service.exportFile(output,&error),qPrintable(error));QVERIFY(QFileInfo(output).size()>0);ReqIfReport roundTrip=service.preview(output);QVERIFY2(roundTrip.valid(),qPrintable(roundTrip.errors.join('\n')));
+  QCOMPARE(roundTrip.objects.first().comments,QString("À contrôler"));
   QFile unsafe(directory.filePath("unsafe.reqif"));QVERIFY(unsafe.open(QIODevice::WriteOnly));unsafe.write("<!DOCTYPE x [<!ENTITY e SYSTEM 'file:///etc/passwd'>]><REQ-IF>&e;</REQ-IF>");unsafe.close();QVERIFY(!service.preview(unsafe.fileName()).valid());
   q=QSqlQuery();db=QSqlDatabase();manager.close();
 }

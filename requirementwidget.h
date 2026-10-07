@@ -78,6 +78,7 @@ private:
   Qt::SortOrder m_sortOrder = Qt::AscendingOrder;
   QWidget *m_editor;
   QLineEdit *m_code, *m_title, *m_source;
+  QTextEdit *m_comments;
   MarkdownDescriptionEditor *m_description;
   QLabel *m_codeWarning;
   QComboBox *m_status, *m_type, *m_primary;

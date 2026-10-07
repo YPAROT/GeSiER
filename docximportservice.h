@@ -32,6 +32,7 @@ struct DocxImportDiagnostic {
 
 struct DocxImportRequirement {
   RequirementRecord record;
+  bool commentsProvided = false;
   QString type;
   QString status;
   QStringList productTreeCodes;

@@ -533,6 +533,8 @@ DocxImportPreview DocxImportService::preview(const QString &sourcePath,
     imported.type = values.value("REQ_TYPE").trimmed();
     imported.status = values.value("REQ_STATUS").trimmed();
     imported.record.source = values.value("REQ_SOURCE").trimmed();
+    imported.commentsProvided = values.contains("REQ_COMMENTS");
+    imported.record.comments = values.value("REQ_COMMENTS");
     imported.productTreeCodes = lines(values.value("REQ_PRODUCT_TREES"));
     imported.configurationCodes = lines(values.value("REQ_APPLICABILITY"));
     imported.recognition = recognition;
@@ -675,6 +677,8 @@ RequirementResult DocxImportService::importPreview(const DocxImportPreview &prev
         record.images = item.record.images;
         record.source = item.record.source;
         record.traceRoot = item.record.traceRoot;
+        if (item.commentsProvided)
+          record.comments = item.record.comments;
       }
     } else { record.primaryPtId = options.primaryPtId; record.ptIds = {options.primaryPtId}; }
     if (!item.type.isEmpty()) { const int id = lookup(db, "REQ_TYPE", {"TYPE", "CODE"}, item.type); if (id < 0) return fail(context + "type inconnu : " + item.type); record.typeId = id; }

@@ -31,13 +31,13 @@
 namespace {
 enum Field { Code, Title, Description, Type, Source, Applicability,
              Methods, VerificationLevel, Method1, Level1, Method2, Level2,
-             Section, TraceRoot,
+             Section, TraceRoot, Comments,
              FieldCount };
 const QStringList fieldNames = {
     "Code *", "Titre *", "Descriptif *", "Type", "Source",
     "Applicabilité / configurations", "Méthodes (liste)", "Niveau de vérification",
     "Méthode 1", "Niveau 1", "Méthode 2", "Niveau 2",
-    "Section / chapitre", "Racine de traçabilité"};
+    "Section / chapitre", "Racine de traçabilité", "Commentaires"};
 
 QString normalized(QString value) {
   return value.simplified().toUpper();
@@ -507,7 +507,8 @@ void RequirementImportDialog::rebuildMappings() {
       {"NIVEAU 1", "LEVEL 1"}, {"METHODE 2", "METHOD 2"},
       {"NIVEAU 2", "LEVEL 2"}, {"SECTION", "CHAPTER", "CHAPITRE"},
       {"RACINE DE TRACABILITE", "RACINE DE TRAÇABILITÉ", "TRACE ROOT",
-       "ROOT", "IS_TRACE_ROOT"}};
+       "ROOT", "IS_TRACE_ROOT"},
+      {"COMMENTAIRES", "COMMENTS", "COMMENT"}};
   const QString profileScope = "requirements-import-" +
                                normalized(headers.join("|"));
   const TabularProfile savedProfile = TabularService::loadProfile(profileScope);
@@ -806,6 +807,8 @@ void RequirementImportDialog::runImport() {
       record.description = description.isEmpty() ? record.description : description;
       if (traceRootIsExplicit)
         record.traceRoot = importedTraceRoot;
+      if (mappedColumn(Comments) >= 0)
+        record.comments = mappedValue(row, Comments);
     }
     const QString source = mappedValue(row, Source);
     if (saveRecord && !source.isEmpty()) record.source = source;

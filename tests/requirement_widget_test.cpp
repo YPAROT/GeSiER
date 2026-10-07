@@ -17,6 +17,7 @@
 #include <QTableWidget>
 #include <QTemporaryDir>
 #include <QTextBrowser>
+#include <QTextEdit>
 #include <QTextBlock>
 #include <QTextFragment>
 #include <QTextImageFormat>
@@ -172,8 +173,8 @@ void RequirementWidgetTest::keepsCurrentRequirementWhenDiscardIsRefused() {
                          .arg(ptId)));
   QVERIFY(query.exec(QString(
       "INSERT INTO REQUIREMENT(ID,PT_ID,CODE,DOC_ID,TITLE,TYPE,STATUS,"
-      "VERIF_METHOD) VALUES(1,%1,'REQ-1',1,'One',1,1,1),"
-      "(2,%1,'REQ-2',1,'Two',1,1,1)")
+      "VERIF_METHOD,COMMENTS) VALUES(1,%1,'REQ-1',1,'One',1,1,1,'Avis UI'),"
+      "(2,%1,'REQ-2',1,'Two',1,1,1,'')")
                          .arg(ptId)));
   QVERIFY(query.exec(QString(
       "INSERT INTO REQUIREMENT_PT(REQ_ID,PT_ID,IS_PRIMARY) VALUES"
@@ -184,8 +185,10 @@ void RequirementWidgetTest::keepsCurrentRequirementWhenDiscardIsRefused() {
   widget.setConnectionName(manager.currentConnection());
   auto *list = widget.findChild<QTableWidget *>("requirementList");
   auto *title = widget.findChild<QLineEdit *>("requirementTitleEditor");
-  QVERIFY(list); QVERIFY(title);
+  auto *comments = widget.findChild<QTextEdit *>("requirementCommentsEditor");
+  QVERIFY(list); QVERIFY(title); QVERIFY(comments);
   widget.openRequirement(1);
+  QCOMPARE(comments->toPlainText(), QString("Avis UI"));
   const int initialRow = list->currentRow();
   QVERIFY(initialRow >= 0);
   title->setFocus();
