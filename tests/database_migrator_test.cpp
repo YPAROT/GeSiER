@@ -8,6 +8,7 @@
 #include <algorithm>
 
 #include "databasemigrator.h"
+#include "applicationlanguage.h"
 #include "producttreeservice.h"
 #include "req_sqlmanager.h"
 #include "requirementservice.h"
@@ -64,6 +65,15 @@ QString writeImportFixture(const QString &path, const QByteArray &document,
   writer.close();
   return path;
 }
+QString writeStructuredDocxTemplate(const QString &path) {
+  const QByteArray document = R"(<?xml version="1.0" encoding="UTF-8"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>{{GESIER_CONTENT}}</w:t></w:r></w:p><w:p><w:r><w:t>{{GESIER_REQUIREMENT_TEMPLATE_BEGIN}}</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>{{REQ_CODE}}</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>{{REQ_TITLE}}</w:t></w:r></w:p><w:p><w:r><w:t>{{REQ_DESCRIPTION}}</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Applicabilité</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>{{REQ_APPLICABILITY}}</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>{{GESIER_VERIFICATION_TEMPLATE_BEGIN}}</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>{{VERIF_METHOD}}</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>{{VERIF_LEVEL}}</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>{{VERIF_PROCEDURE}}</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>{{VERIF_REDMINE}}</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>{{VERIF_MEANS}}</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>{{VERIF_VERDICT}}</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>{{VERIF_COMMENT}}</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>{{GESIER_VERIFICATION_TEMPLATE_END}}</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Relations structurées</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>{{GESIER_RELATION_TEMPLATE_BEGIN}}</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>{{RELATION_TYPE}}</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>{{RELATION_CODE}}</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>{{RELATION_TITLE}}</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>{{RELATION_COMMENT}}</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>{{GESIER_RELATION_TEMPLATE_END}}</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Agrégats</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>{{REQ_VERIFICATIONS}}</w:t></w:r></w:p><w:p><w:r><w:t>{{REQ_RELATIONS}}</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>{{GESIER_REQUIREMENT_TEMPLATE_END}}</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>{{GESIER_CHAPTER_LEVEL_1}}</w:t></w:r></w:p><w:sectPr/></w:body></w:document>)";
+  const QByteArray types = R"(<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>)";
+  QZipWriter writer(path); writer.addFile("[Content_Types].xml", types);
+  writer.addFile("_rels/.rels", R"(<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>)");
+  writer.addFile("word/document.xml", document);
+  writer.addFile("word/_rels/document.xml.rels", R"(<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>)");
+  writer.close(); return path;
+}
 }
 
 class DatabaseMigratorTest : public QObject {
@@ -91,6 +101,7 @@ private slots:
   void auditsDiagnosesBacksUpAndRestoresProject();
   void previewsTaggedWordRoundTrip();
   void parsesSemanticWordTablesAndMetadata();
+  void roundTripsStructuredDocxCollections();
 };
 
 void DatabaseMigratorTest::storesMarkdownImagesAtomically() {
@@ -1390,6 +1401,60 @@ void DatabaseMigratorTest::managesRequirementReferenceData() {
   }));
   query = QSqlQuery();
   db = QSqlDatabase();
+  manager.close();
+}
+
+void DatabaseMigratorTest::roundTripsStructuredDocxCollections() {
+  ApplicationLanguage::setCurrent("fr");
+  QTemporaryDir directory; QVERIFY(directory.isValid());
+  REQ_SQLManager manager;
+  const auto creation = manager.newDB(directory.filePath("structured-docx.db"));
+  QVERIFY2(creation.type() == QSqlError::NoError, qPrintable(creation.text()));
+  QSqlDatabase db = QSqlDatabase::database(manager.currentConnection()); QSqlQuery q(db);
+  QVERIFY(q.exec("INSERT INTO PT(ID,PARENT,NAME,SEGMENT,POSITION) VALUES(101,NULL,'Système','SYS',0),(102,101,'Puissance','PWR',0),(103,102,'Contrôle','CTRL',0)"));
+  QVERIFY(q.exec("INSERT INTO CONFIGURATION(ID,CODE,LABEL) VALUES(1,'FM','Flight Model')"));
+  QVERIFY(q.exec("INSERT INTO DOCUMENT(ID,PT_ID,TYPE,REFERENCE,TITLE) VALUES(1,101,1,'SPEC-STRUCT','Structurée')"));
+  QVERIFY(q.exec("INSERT INTO REQUIREMENT(ID,PT_ID,CODE,DOC_ID,TITLE,DESCRIPTION,TYPE,STATUS,VERIF_METHOD) VALUES(2,101,'PARENT-1',1,'Parent','Parent',1,1,1),(3,101,'ORIGIN-1',1,'Origine','Origine',1,1,1),(4,101,'DEPEND-1',1,'Dépendance','Dépendance',1,1,1)"));
+  RequirementRecord record; record.code="REQ-STRUCT"; record.title="Exigence structurée"; record.description="Description"; record.primaryPtId=101; record.ptIds={101}; record.configurationIds={1}; record.typeId=1; record.statusId=1;
+  RequirementVerification first; first.methodId=1; first.levelPtId=103; first.procedure="PROC-A"; first.redmine="RM-1"; first.means="Banc"; first.verdict="C"; first.comment="Premier";
+  RequirementVerification second; second.methodId=2; second.level="Niveau historique"; second.procedure="PROC-B"; second.redmine="RM-2"; second.means="Simulateur"; second.verdict="PC"; second.comment="Second";
+  record.verifications={first,second};
+  const auto saved=RequirementService(manager.currentConnection()).save(record); QVERIFY2(saved.success,qPrintable(saved.message));
+  QVERIFY(DocumentService(manager.currentConnection()).placeRequirement(1,-1,saved.id).success);
+  QVERIFY(q.exec(QString("INSERT INTO REQUIREMENT_RELATION(SOURCE_REQ_ID,TARGET_REQ_ID,TYPE_ID,COMMENT) VALUES(2,%1,1,'Parentage'),(3,%1,2,'Origine métier'),(%1,4,3,'Prérequis')").arg(saved.id)));
+  const QString model=writeStructuredDocxTemplate(directory.filePath("structured-model.docx"));
+  DocxExportService exporter(manager.currentConnection());
+  const auto validation=exporter.validateTemplate(model,1); QVERIFY2(validation.valid,qPrintable(validation.errors.join('\n')));
+  DocxExportRequest translated; translated.documentId=1; translated.templatePath=model; translated.outputPath=directory.filePath("translated.docx");
+  QVERIFY2(exporter.exportDocument(translated).success,"L'export structuré traduit doit réussir");
+  QZipReader translatedZip(translated.outputPath); const QString translatedXml=QString::fromUtf8(translatedZip.fileData("word/document.xml"));
+  QVERIFY(translatedXml.contains("SYS-PWR-CTRL")); QVERIFY(translatedXml.contains("Niveau historique"));
+  QVERIFY(translatedXml.contains(">FM<")); QVERIFY(!translatedXml.contains("Applicabilité</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>SYS-PWR-CTRL"));
+  QVERIFY(translatedXml.contains("Enfant de")); QVERIFY(translatedXml.contains("Dérive de")); QVERIFY(translatedXml.contains("Dépend de"));
+  QVERIFY(!translatedXml.contains(">IN<")); QVERIFY(!translatedXml.contains(">OUT<")); QVERIFY(!translatedXml.contains("RELATION_DIRECTION"));
+  QVERIFY(!translatedXml.contains("GESIER_VERIFICATION_TEMPLATE")); QVERIFY(!translatedXml.contains("GESIER_RELATION_TEMPLATE"));
+  const auto preview=DocxImportService(manager.currentConnection()).preview(translated.outputPath,model);
+  QVERIFY2(preview.valid(),qPrintable(preview.errors.join('\n'))); QCOMPARE(preview.requirements.size(),1);
+  const auto imported=preview.requirements.first(); QCOMPARE(imported.record.verifications.size(),2); QCOMPARE(imported.verificationMethods,QStringList({"Analysis","Test"}));
+  QCOMPARE(imported.record.verifications[0].level,QString("SYS-PWR-CTRL")); QCOMPARE(imported.record.verifications[1].level,QString("Niveau historique"));
+  QCOMPARE(imported.configurationCodes,QStringList({"FM"})); QCOMPARE(imported.relations.size(),3);
+  QCOMPARE(imported.relations[0].direction,QString("IN")); QCOMPARE(imported.relations[1].direction,QString("IN")); QCOMPARE(imported.relations[2].direction,QString("OUT"));
+  DocxImportOptions importOptions; importOptions.documentId=1; importOptions.primaryPtId=101;
+  const auto importedResult=DocxImportService(manager.currentConnection()).importPreview(preview,importOptions); QVERIFY2(importedResult.success,qPrintable(importedResult.message));
+  const auto reloaded=RequirementService(manager.currentConnection()).get(saved.id); QCOMPARE(reloaded.verifications.size(),2); QCOMPARE(reloaded.verifications[0].levelPtId,103); QCOMPARE(reloaded.verifications[1].level,QString("Niveau historique"));
+  QVERIFY(q.exec(QString("SELECT COUNT(*) FROM REQUIREMENT_RELATION WHERE (SOURCE_REQ_ID=2 AND TARGET_REQ_ID=%1 AND TYPE_ID=1) OR (SOURCE_REQ_ID=3 AND TARGET_REQ_ID=%1 AND TYPE_ID=2) OR (SOURCE_REQ_ID=%1 AND TARGET_REQ_ID=4 AND TYPE_ID=3)").arg(saved.id))); QVERIFY(q.next()); QCOMPARE(q.value(0).toInt(),3);
+  QVERIFY(q.exec(QString("SELECT COMMENT FROM REQUIREMENT_RELATION WHERE SOURCE_REQ_ID=3 AND TARGET_REQ_ID=%1 AND TYPE_ID=2").arg(saved.id))); QVERIFY(q.next()); QCOMPARE(q.value(0).toString(),QString("Origine métier"));
+  DocxExportRequest technical=translated; technical.outputPath=directory.filePath("technical.docx"); technical.relationPresentation=DocxExportRequest::RelationPresentation::TechnicalCodes;
+  QVERIFY(exporter.exportDocument(technical).success); QZipReader technicalZip(technical.outputPath); const QString technicalXml=QString::fromUtf8(technicalZip.fileData("word/document.xml"));
+  QVERIFY(technicalXml.contains("DECOMPOSE")); QVERIFY(technicalXml.contains("DERIVES_FROM")); QVERIFY(technicalXml.contains("DEPENDS_ON")); QVERIFY(!technicalXml.contains(">IN<")); QVERIFY(!technicalXml.contains(">OUT<"));
+  ApplicationLanguage::setCurrent("en");
+  QCOMPARE(ApplicationLanguage::current(),QString("en"));
+  QCOMPARE(ApplicationLanguage::relationLabel("DECOMPOSE"),QString("Child of"));
+  DocxExportRequest english=translated; english.outputPath=directory.filePath("english.docx");
+  QVERIFY(exporter.exportDocument(english).success); QZipReader englishZip(english.outputPath); const QString englishXml=QString::fromUtf8(englishZip.fileData("word/document.xml"));
+  QVERIFY(englishXml.contains("Child of")); QVERIFY(englishXml.contains("Derives from")); QVERIFY(englishXml.contains("Depends on"));
+  const auto englishPreview=DocxImportService(manager.currentConnection()).preview(english.outputPath,model); QVERIFY2(englishPreview.valid(),qPrintable(englishPreview.errors.join('\n'))); QCOMPARE(englishPreview.requirements.first().relations.size(),3);
+  ApplicationLanguage::setCurrent("fr");
   manager.close();
 }
 

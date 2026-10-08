@@ -12,6 +12,7 @@ set(QT_NO_PRIVATE_MODULE_WARNING ON)
 find_package(Qt6 6.5 REQUIRED COMPONENTS Core CorePrivate Gui Widgets Sql PrintSupport)
 
 qt_add_executable(GeSiER WIN32
+    applicationlanguage.h
     main.cpp
     mainwindow.cpp mainwindow.h mainwindow.ui
     coveragedashboard.cpp coveragedashboard.h

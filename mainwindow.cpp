@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
+#include "applicationlanguage.h"
 #include <QFileDialog>
 #include <QSettings>
 #include <QSqlError>
@@ -28,6 +29,8 @@
 #include "historyservice.h"
 #include "reqifservice.h"
 #include <QAction>
+#include <QActionGroup>
+#include <QMenu>
 
 #include "csvutility.h"
 
@@ -44,6 +47,21 @@ MainWindow::MainWindow(QWidget *parent)
     , ui(new Ui::MainWindow)
 {
     ui->setupUi(this);
+    auto *languageMenu = ui->menubar->addMenu(tr("Langue"));
+    auto *languageGroup = new QActionGroup(languageMenu);
+    languageGroup->setExclusive(true);
+    auto addLanguage = [&](const QString &label, const QString &code) {
+        auto *action = languageMenu->addAction(label);
+        action->setCheckable(true);
+        action->setData(code);
+        action->setChecked(ApplicationLanguage::current() == code);
+        languageGroup->addAction(action);
+    };
+    addLanguage(tr("Français"), "fr");
+    addLanguage(tr("English"), "en");
+    connect(languageGroup, &QActionGroup::triggered, this, [](QAction *action) {
+        ApplicationLanguage::setCurrent(action->data().toString());
+    });
     m_coverageDashboard = new CoverageDashboard(this);
     m_traceabilityWidget = new TraceabilityWidget(this);
     ui->ViewTabWidget->addTab(m_traceabilityWidget, tr("Traçabilité"));

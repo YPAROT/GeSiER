@@ -12,6 +12,8 @@ struct DocxTemplateValidation {
 };
 
 struct DocxExportRequest {
+  enum class RelationPresentation { TechnicalCodes, TranslatedLabels };
+
   int documentId = -1;
   QString outputPath;
   QString templatePath;
@@ -21,6 +23,7 @@ struct DocxExportRequest {
   QString draftLabel;
   bool publication = false;
   bool includeObsoleteRequirements = false;
+  RelationPresentation relationPresentation = RelationPresentation::TranslatedLabels;
 };
 
 struct DocumentExportRecord {

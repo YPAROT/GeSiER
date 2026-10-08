@@ -15,6 +15,7 @@
 #include <QUuid>
 #include "markdownutility.h"
 #include <private/qzipreader_p.h>
+#include <algorithm>
 
 namespace {
 const QString ReqBegin = "{{GESIER_REQUIREMENT_TEMPLATE_BEGIN}}";
@@ -31,6 +32,11 @@ const QStringList ReqTags = {
 struct Paragraph { QString xml, text, style; int outline = 0; };
 struct WordCell { QString xml, text, html; };
 struct WordTable { QString xml; QList<QList<WordCell>> rows; };
+struct RepeatTableBlock {
+  enum Kind { Verification, Relation } kind = Verification;
+  int insertionRow = 0;
+  QList<QList<WordCell>> prototypeRows;
+};
 struct BodyItem {
   enum Kind { ParagraphItem, TableItem } kind = ParagraphItem;
   Paragraph paragraph;
@@ -280,6 +286,68 @@ bool matchTable(const WordTable &pattern, const WordTable &source,
   return true;
 }
 
+QList<RepeatTableBlock> removeRepeatRows(WordTable *pattern) {
+  QList<RepeatTableBlock> blocks;
+  for (const auto &definition : {qMakePair(VerBegin, VerEnd), qMakePair(RelBegin, RelEnd)}) {
+    int begin = -1, end = -1;
+    for (int row = 0; row < pattern->rows.size(); ++row) {
+      QString text;
+      for (const auto &cell : pattern->rows[row]) text += cell.text;
+      if (text.contains(definition.first, Qt::CaseInsensitive)) begin = row;
+      if (text.contains(definition.second, Qt::CaseInsensitive)) { end = row; break; }
+    }
+    if (begin < 0 || end <= begin) continue;
+    RepeatTableBlock block;
+    block.kind = definition.first == VerBegin ? RepeatTableBlock::Verification : RepeatTableBlock::Relation;
+    block.insertionRow = begin;
+    for (int row = begin + 1; row < end; ++row) block.prototypeRows << pattern->rows[row];
+    for (int row = end; row >= begin; --row) pattern->rows.removeAt(row);
+    blocks << block;
+  }
+  std::sort(blocks.begin(), blocks.end(), [](const auto &a, const auto &b) { return a.insertionRow < b.insertionRow; });
+  return blocks;
+}
+bool rowMatches(const QList<WordCell> &pattern, const QList<WordCell> &source) {
+  WordTable p, s; p.rows << pattern; s.rows << source;
+  QMap<QString, QString> values, html; return matchTable(p, s, &values, &html, nullptr);
+}
+bool matchStructuredTable(const WordTable &basePattern,
+                          const QList<RepeatTableBlock> &blocks,
+                          const WordTable &source,
+                          QMap<QString, QString> *values,
+                          QMap<QString, QString> *htmlValues,
+                          QList<QMap<QString, QString>> *verifications,
+                          QList<QMap<QString, QString>> *relations,
+                          QString *diagnostic) {
+  if (blocks.isEmpty()) return matchTable(basePattern, source, values, htmlValues, diagnostic);
+  WordTable collapsed; int sourceRow = 0, baseRow = 0;
+  for (int blockIndex = 0; blockIndex < blocks.size(); ++blockIndex) {
+    const auto &block = blocks[blockIndex];
+    while (baseRow < block.insertionRow && sourceRow < source.rows.size()) {
+      collapsed.rows << source.rows[sourceRow++]; ++baseRow;
+    }
+    int boundary = source.rows.size();
+    if (baseRow < basePattern.rows.size()) {
+      for (int candidate = sourceRow; candidate < source.rows.size(); ++candidate)
+        if (rowMatches(basePattern.rows[baseRow], source.rows[candidate])) { boundary = candidate; break; }
+    }
+    const int prototypeSize = block.prototypeRows.size();
+    if (prototypeSize <= 0 || (boundary - sourceRow) % prototypeSize != 0) {
+      if (diagnostic) *diagnostic = "le nombre de lignes du sous-bloc répétable ne correspond pas au prototype";
+      return false;
+    }
+    while (sourceRow < boundary) {
+      WordTable prototype, instance; prototype.rows = block.prototypeRows;
+      for (int row = 0; row < prototypeSize; ++row) instance.rows << source.rows[sourceRow++];
+      QMap<QString, QString> item, itemHtml;
+      if (!matchTable(prototype, instance, &item, &itemHtml, diagnostic)) return false;
+      (block.kind == RepeatTableBlock::Verification ? verifications : relations)->append(item);
+    }
+  }
+  while (sourceRow < source.rows.size()) collapsed.rows << source.rows[sourceRow++];
+  return matchTable(basePattern, collapsed, values, htmlValues, diagnostic);
+}
+
 bool matchTableCandidate(const WordTable &pattern, const WordTable &source,
                          QMap<QString, QString> *values,
                          QMap<QString, QString> *htmlValues,
@@ -440,6 +508,25 @@ int lookup(QSqlDatabase db, const QString &table, const QStringList &columns,
   }
   return -1;
 }
+QString relationTypeCode(const QString &value) {
+  const QString type = normalized(value);
+  if (type == "DEPENDS_ON" || type.startsWith("DÉPEND") || type.startsWith("DEPEND")) return "DEPENDS_ON";
+  if (type == "DERIVES_FROM" || type.startsWith("DÉRIVE") || type.startsWith("DERIVE")) return "DERIVES_FROM";
+  if (type == "DECOMPOSE" || type.startsWith("ENFANT") || type.startsWith("CHILD OF")) return "DECOMPOSE";
+  return {};
+}
+QString inferredDirection(const QString &typeCode) {
+  return typeCode == "DEPENDS_ON" ? "OUT" : "IN";
+}
+int resolveProductTree(QSqlDatabase db, const ProductTreeService &service,
+                       const QString &value) {
+  if (value.trimmed().isEmpty()) return -1;
+  QSqlQuery all("SELECT ID FROM PT WHERE ARCHIVED=0", db);
+  while (all.next())
+    if (normalized(service.fullCode(all.value(0).toInt())) == normalized(value))
+      return all.value(0).toInt();
+  return lookup(db, "PT", {"SEGMENT", "NAME"}, value);
+}
 }
 
 DocxImportService::DocxImportService(QString connectionName)
@@ -469,8 +556,21 @@ DocxImportValidation DocxImportService::validateTemplate(const QString &path) co
     if (starts == 1) {
       const int a = text.indexOf(pair.first), b = text.indexOf(pair.second);
       if (a < begin || b > end || a >= b) result.errors << "Un sous-bloc est mal imbriqué dans le bloc d'exigence.";
+      else {
+        const QString prototype = text.mid(a + pair.first.size(), b - a - pair.first.size());
+        const QStringList mandatory = pair.first == VerBegin
+                                          ? QStringList{"VERIF_METHOD"}
+                                          : QStringList{"RELATION_TYPE", "RELATION_CODE"};
+        for (const QString &field : mandatory)
+          if (!prototype.contains("{{" + field + "}}", Qt::CaseInsensitive))
+            result.errors << "La balise {{" + field + "}} est obligatoire dans son sous-bloc.";
+      }
     }
   }
+  const int verStart=text.indexOf(VerBegin,0,Qt::CaseInsensitive),verStop=text.indexOf(VerEnd,0,Qt::CaseInsensitive);
+  const int relStart=text.indexOf(RelBegin,0,Qt::CaseInsensitive),relStop=text.indexOf(RelEnd,0,Qt::CaseInsensitive);
+  if(verStart>=0&&relStart>=0&&((verStart<relStart&&relStart<verStop)||(relStart<verStart&&verStart<relStop)))
+    result.errors<<"Les sous-blocs répétables ne doivent pas être imbriqués l'un dans l'autre.";
   if (!block.contains("{{REQ_TYPE}}")) result.warnings << "Le type ne sera pas importé.";
   if (!block.contains("{{REQ_STATUS}}")) result.warnings << "Le statut ne sera pas importé.";
   result.valid = result.errors.isEmpty();
@@ -505,6 +605,7 @@ DocxImportPreview DocxImportService::preview(const QString &sourcePath,
   }
   const QString prototypeXml = templateXml.mid(prototypeStart, prototypeEnd - prototypeStart);
   WordTable tablePattern;
+  QList<RepeatTableBlock> repeatBlocks;
   for (const WordTable &candidate : tables(prototypeXml)) {
     const QString text = visible(candidate.xml);
     if (text.contains("{{REQ_CODE}}", Qt::CaseInsensitive) &&
@@ -513,6 +614,9 @@ DocxImportPreview DocxImportService::preview(const QString &sourcePath,
       tablePattern = candidate; break;
     }
   }
+  if (!tablePattern.rows.isEmpty()) repeatBlocks = removeRepeatRows(&tablePattern);
+  const bool hasStructuredVerifications = std::any_of(repeatBlocks.cbegin(), repeatBlocks.cend(), [](const auto &block) { return block.kind == RepeatTableBlock::Verification; });
+  const bool hasStructuredRelations = std::any_of(repeatBlocks.cbegin(), repeatBlocks.cend(), [](const auto &block) { return block.kind == RepeatTableBlock::Relation; });
   const QString styles = stylesXml(sourcePath);
   const auto items = bodyItems(sourceXml, styles);
   QStringList chapterStack;
@@ -520,6 +624,8 @@ DocxImportPreview DocxImportService::preview(const QString &sourcePath,
   QString firstTableDiagnostic;
   auto appendRequirement = [&](const QMap<QString, QString> &values,
                                const QMap<QString, QString> &htmlValues,
+                               const QList<QMap<QString, QString>> &structuredVerifications = {},
+                               const QList<QMap<QString, QString>> &structuredRelations = {},
                                DocxImportRecognition recognition = DocxImportRecognition::Conformant,
                                const QList<DocxImportDiagnostic> &details = {}) {
     DocxImportRequirement imported; imported.ordinal = ++ordinal;
@@ -542,23 +648,45 @@ DocxImportPreview DocxImportService::preview(const QString &sourcePath,
     imported.detailedDiagnostics = details;
     for (const auto &detail : details)
       imported.diagnostics << detail.location + " : " + detail.message;
-    for (const QString &line : lines(values.value("REQ_VERIFICATIONS"))) {
+    if (hasStructuredVerifications) {
+      for (const auto &fields : structuredVerifications) {
+        RequirementVerification verification;
+        verification.level = fields.value("VERIF_LEVEL").trimmed();
+        verification.procedure = fields.value("VERIF_PROCEDURE").trimmed();
+        verification.redmine = fields.value("VERIF_REDMINE").trimmed();
+        verification.means = fields.value("VERIF_MEANS").trimmed();
+        verification.verdict = fields.value("VERIF_VERDICT").trimmed();
+        verification.comment = fields.value("VERIF_COMMENT").trimmed();
+        verification.methodId = -1; verification.id = -1;
+        imported.verificationMethods << fields.value("VERIF_METHOD").trimmed();
+        imported.record.verifications << verification;
+      }
+    } else for (const QString &line : lines(values.value("REQ_VERIFICATIONS"))) {
       RequirementVerification verification;
-      const QStringList fields = line.split('|');
-      verification.level = fields.value(1).trimmed();
-      verification.procedure = fields.value(2).trimmed();
-      verification.means = fields.value(3).trimmed();
-      verification.verdict = fields.value(4).trimmed();
-      verification.redmine = fields.value(5).trimmed();
-      verification.comment = fields.value(6).trimmed();
+      QString method; QStringList fields;
+      const int legacySeparator=line.indexOf(" — ");
+      if(legacySeparator>=0){method=line.left(legacySeparator).trimmed();fields=line.mid(legacySeparator+3).split('|');}
+      else{fields=line.split('|');method=fields.takeFirst().trimmed();}
+      verification.level = fields.value(0).trimmed();
+      verification.procedure = fields.value(1).trimmed();
+      verification.means = fields.value(2).trimmed();
+      verification.verdict = fields.value(3).trimmed();
+      verification.redmine = fields.value(4).trimmed();
+      verification.comment = fields.value(5).trimmed();
       verification.methodId = -1; verification.id = -1;
-      imported.verificationMethods << fields.value(0).trimmed();
+      imported.verificationMethods << method;
       imported.record.verifications << verification;
     }
-    for (const QString &line : lines(values.value("REQ_RELATIONS"))) {
-      auto match = QRegularExpression("^(Dépend de|Dérive de|Enfant de)\\s+([^ —(]+)(?:\\s+—[^()]*)?(?:\\s*\\((.*)\\))?$").match(line.trimmed());
-      if (match.hasMatch())
-        imported.relations << DocxImportRelation{match.captured(1), match.captured(1).startsWith("Enfant") ? "IN" : "OUT", match.captured(2), match.captured(3)};
+    if (hasStructuredRelations) {
+      for (const auto &fields : structuredRelations) {
+        const QString typeCode = relationTypeCode(fields.value("RELATION_TYPE"));
+        QString direction = fields.value("RELATION_DIRECTION").trimmed().toUpper();
+        if (direction != "IN" && direction != "OUT") direction = inferredDirection(typeCode);
+        if (!typeCode.isEmpty()) imported.relations << DocxImportRelation{typeCode, direction, fields.value("RELATION_CODE").trimmed(), fields.value("RELATION_COMMENT").trimmed()};
+      }
+    } else for (const QString &line : lines(values.value("REQ_RELATIONS"))) {
+      auto match = QRegularExpression("^(DECOMPOSE|DERIVES_FROM|DEPENDS_ON|Dépend de|Dérive de|Enfant de|Depends on|Derives from|Child of)\\s+([^ —(]+)(?:\\s+—[^()]*)?(?:\\s*\\((.*)\\))?$",QRegularExpression::CaseInsensitiveOption).match(line.trimmed());
+      if (match.hasMatch()) { const QString typeCode=relationTypeCode(match.captured(1)); imported.relations << DocxImportRelation{typeCode,inferredDirection(typeCode),match.captured(2),match.captured(3)}; }
     }
     if (imported.record.code.isEmpty()) imported.diagnostics << "Code absent";
     if (imported.record.title.isEmpty()) imported.diagnostics << "Titre absent";
@@ -574,16 +702,16 @@ DocxImportPreview DocxImportService::preview(const QString &sourcePath,
         }
         continue;
       }
-      QMap<QString, QString> values, htmlValues; QString diagnostic;
-      if (matchTable(tablePattern, item.table, &values, &htmlValues, &diagnostic))
-        appendRequirement(values, htmlValues);
+      QMap<QString, QString> values, htmlValues; QList<QMap<QString,QString>> structuredVerifications,structuredRelations; QString diagnostic;
+      if (matchStructuredTable(tablePattern,repeatBlocks,item.table,&values,&htmlValues,&structuredVerifications,&structuredRelations,&diagnostic))
+        appendRequirement(values, htmlValues, structuredVerifications, structuredRelations);
       else {
         QList<DocxImportDiagnostic> details;
         QMap<QString, QString> candidateValues, candidateHtml;
         if (matchTableCandidate(tablePattern, item.table, &candidateValues, &candidateHtml, &details)) {
           details.prepend({QString("Exigence candidate %1").arg(ordinal + 1), {},
                            "La structure diffère du gabarit et doit être vérifiée", false});
-          appendRequirement(candidateValues, candidateHtml, DocxImportRecognition::Candidate, details);
+          appendRequirement(candidateValues, candidateHtml, {}, {}, DocxImportRecognition::Candidate, details);
         } else if (firstTableDiagnostic.isEmpty() && item.table.rows.size() >= tablePattern.rows.size()) {
           firstTableDiagnostic = diagnostic;
         }
@@ -686,11 +814,7 @@ RequirementResult DocxImportService::importPreview(const DocxImportPreview &prev
     if (!item.productTreeCodes.isEmpty()) {
       record.ptIds.clear(); record.primaryPtId = -1;
       for (const QString &code : item.productTreeCodes) {
-        int id = lookup(db, "PT", {"SEGMENT", "NAME"}, code);
-        if (id < 0) {
-          QSqlQuery all("SELECT ID FROM PT WHERE ARCHIVED=0", db);
-          while (all.next()) if (normalized(productTrees.fullCode(all.value(0).toInt())) == normalized(code)) { id = all.value(0).toInt(); break; }
-        }
+        int id = resolveProductTree(db, productTrees, code);
         if (id < 0) return fail(context + "Product Tree inconnu : " + code);
         record.ptIds << id; if (record.primaryPtId < 0) record.primaryPtId = id;
       }
@@ -703,6 +827,8 @@ RequirementResult DocxImportService::importPreview(const DocxImportPreview &prev
       const QString method = item.verificationMethods.value(verificationIndex);
       verification.methodId = lookup(db, "REQ_METHOD", {"METHOD"}, method);
       if (verification.methodId < 0) return fail(context + "méthode inconnue : " + method);
+      verification.levelPtId = resolveProductTree(db, productTrees, verification.level);
+      if (verification.levelPtId >= 0) verification.level.clear();
       record.verifications << verification;
     }
     RequirementResult saved = item.importAction == "keep" && exists
@@ -724,7 +850,7 @@ RequirementResult DocxImportService::importPreview(const DocxImportPreview &prev
     const int owner = idsByCode.value(normalized(item.record.code), -1);
     QMap<int, QSet<QString>> synchronizedTypes;
     for (const auto &relation : item.relations) {
-      const QString code = relation.type.startsWith("Dépend") ? "DEPENDS_ON" : relation.type.startsWith("Dérive") ? "DERIVES_FROM" : "DECOMPOSE";
+      const QString code = relationTypeCode(relation.type);
       const int typeId = lookup(db, "REQUIREMENT_RELATION_TYPE", {"CODE", "LABEL"}, code);
       if (typeId >= 0) synchronizedTypes[typeId].insert(relation.direction);
     }
@@ -741,7 +867,7 @@ RequirementResult DocxImportService::importPreview(const DocxImportPreview &prev
     for (const auto &relation : item.relations) {
       int other = idsByCode.value(normalized(relation.otherCode), -1);
       if (other < 0) { QSqlQuery q(db); q.prepare("SELECT ID FROM REQUIREMENT WHERE CODE=? COLLATE NOCASE"); q.addBindValue(relation.otherCode.trimmed()); if (q.exec() && q.next()) other = q.value(0).toInt(); }
-      const QString typeCode = relation.type.startsWith("Dépend") ? "DEPENDS_ON" : relation.type.startsWith("Dérive") ? "DERIVES_FROM" : "DECOMPOSE";
+      const QString typeCode = relationTypeCode(relation.type);
       const int typeId = lookup(db, "REQUIREMENT_RELATION_TYPE", {"CODE", "LABEL"}, typeCode);
       if (owner < 0 || other < 0 || typeId < 0) return fail("Relation non résolue pour " + item.record.code + " vers " + relation.otherCode);
       QSqlQuery add(db); add.prepare("INSERT OR IGNORE INTO REQUIREMENT_RELATION(SOURCE_REQ_ID,TARGET_REQ_ID,TYPE_ID,COMMENT) VALUES(?,?,?,?)");

@@ -80,7 +80,7 @@ Documenter la syntaxe compacte compatible avec les exports GeSiER :
 - le titre de l'exigence liée peut suivre le code après `—` ;
 - un commentaire de relation peut être ajouté entre parenthèses.
 
-### Sous-blocs répétables d'import
+### Sous-blocs répétables d'import et d'export
 
 Présenter également les balises réservées à la description explicite des
 listes répétables :
@@ -88,12 +88,30 @@ listes répétables :
 | Sous-bloc | Balises de champ |
 |---|---|
 | `{{GESIER_VERIFICATION_TEMPLATE_BEGIN}}` … `{{GESIER_VERIFICATION_TEMPLATE_END}}` | `{{VERIF_METHOD}}`, `{{VERIF_LEVEL}}`, `{{VERIF_PROCEDURE}}`, `{{VERIF_REDMINE}}`, `{{VERIF_MEANS}}`, `{{VERIF_VERDICT}}`, `{{VERIF_COMMENT}}` |
-| `{{GESIER_RELATION_TEMPLATE_BEGIN}}` … `{{GESIER_RELATION_TEMPLATE_END}}` | `{{RELATION_TYPE}}`, `{{RELATION_DIRECTION}}`, `{{RELATION_CODE}}`, `{{RELATION_TITLE}}`, `{{RELATION_COMMENT}}` |
+| `{{GESIER_RELATION_TEMPLATE_BEGIN}}` … `{{GESIER_RELATION_TEMPLATE_END}}` | `{{RELATION_TYPE}}`, `{{RELATION_CODE}}`, `{{RELATION_TITLE}}`, `{{RELATION_COMMENT}}` |
 
 Indiquer que ces sous-blocs doivent rester à l'intérieur du bloc d'exigence,
 que leurs bornes doivent être appariées et dans le bon ordre, et que le gabarit
 doit conserver la même structure de paragraphes ou de tableau que le document
 Word à lire.
+
+Préciser que `VERIF_METHOD` est obligatoire dans le premier prototype, et
+`RELATION_TYPE` avec `RELATION_CODE` dans le second. Le contenu est répété à
+l'export pour chaque élément et supprimé si la collection est vide. À l'import,
+ces sous-blocs sont prioritaires sur `REQ_VERIFICATIONS` et `REQ_RELATIONS`.
+
+Expliquer la séparation stricte suivante : `REQ_APPLICABILITY` contient les
+codes de configurations (`FM`, `QM`), tandis que `VERIF_LEVEL` contient le code
+hiérarchique complet du Product Tree (`SYS-PWR-CTRL`). Un ancien niveau textuel
+reste accepté s'il ne correspond à aucun élément PT.
+
+Pour les relations, documenter les deux présentations d'export : **Codes
+techniques** (`DECOMPOSE`, `DERIVES_FROM`, `DEPENDS_ON`) et **Libellés traduits**
+(`Enfant de`, `Dérive de`, `Dépend de`). Le second choix est celui par défaut et
+suit le menu général **Langue** (français ou anglais). Cette préférence est
+persistée même si, dans cette première étape, elle ne traduit que les libellés
+DOCX. Aucun `IN` ou `OUT` n'est exposé. La
+balise historique `RELATION_DIRECTION` reste seulement tolérée à l'import.
 
 ### Procédure utilisateur et limites
 
