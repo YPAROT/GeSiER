@@ -28,6 +28,7 @@ struct DocumentNodeRecord {
   QString requirementCode;
   QString requirementTitle;
   QString requirementDescription;
+  bool requirementObsolete = false;
   QString textContent;
   QByteArray imageData;
   QString imageLegend;

@@ -14,6 +14,7 @@
 DocumentWidget::DocumentWidget(QWidget *parent) : QWidget(parent) {
   m_documents = new QListWidget;
   m_tree = new QTreeWidget;
+  m_tree->setObjectName("documentStructureTree");
   m_tree->setHeaderLabels({"Structure du document"});
   m_tree->setDragDropMode(QAbstractItemView::InternalMove);
   m_tree->setDefaultDropAction(Qt::MoveAction);
@@ -414,7 +415,7 @@ void DocumentWidget::loadTree(int id) {
             ? node.requirementCode
             : node.requirementCode + " — " + node.requirementTitle;
     QString label=node.title;
-    if(isRequirement) label=requirementLabel;
+    if(isRequirement) label=requirementLabel+(node.requirementObsolete?" [Obsolete]":"");
     else if(node.type=="TEXT") label="Texte — "+QTextDocumentFragment::fromHtml(node.textContent).toPlainText().simplified().left(60);
     else if(node.type=="IMAGE") label="Image — "+node.imageLegend;
     auto *item = new QTreeWidgetItem({label});
@@ -424,7 +425,9 @@ void DocumentWidget::loadTree(int id) {
     item->setData(0, Qt::UserRole + 3, node.textContent);
     if (isRequirement) {
       item->setToolTip(0, node.requirementCode + "\n" + node.requirementTitle);
-      item->setForeground(0, palette().brush(QPalette::Link));
+      item->setForeground(0, node.requirementObsolete
+                                 ? QBrush(QColor("#808080"))
+                                 : palette().brush(QPalette::Link));
     } else if(node.type == "CHAPTER") {
       QFont chapterFont = item->font(0);
       chapterFont.setBold(true);

@@ -32,6 +32,7 @@
 #include "markdowndescriptioneditor.h"
 #include "requirementimportdialog.h"
 #include "documentcreationdialog.h"
+#include "documentwidget.h"
 #include "referencedataservice.h"
 #include "referencedatawidget.h"
 
@@ -47,7 +48,50 @@ private slots:
   void parsesTraceRootImportValues();
   void keepsCurrentRequirementWhenDiscardIsRefused();
   void configuresDocumentCreationScope();
+  void marksObsoleteRequirementsInDocumentTree();
 };
+
+void RequirementWidgetTest::marksObsoleteRequirementsInDocumentTree() {
+  QTemporaryDir directory;
+  REQ_SQLManager manager;
+  const auto creation = manager.newDB(directory.filePath("document-tree.db"));
+  QVERIFY2(creation.type() == QSqlError::NoError, qPrintable(creation.text()));
+  ProductTreeService productTree(manager.currentConnection());
+  QVERIFY(productTree.addNode(-1, "SYS").success);
+  QSqlQuery query(QSqlDatabase::database(manager.currentConnection()));
+  QVERIFY(query.exec("SELECT ID FROM PT WHERE SEGMENT='SYS'"));
+  QVERIFY(query.next());
+  const int ptId = query.value(0).toInt();
+  QVERIFY(query.exec(QString(
+      "INSERT INTO DOCUMENT(ID,PT_ID,TYPE,REFERENCE,TITLE) "
+      "VALUES(1,%1,1,'SPEC-1','Spécification')")
+                         .arg(ptId)));
+  QVERIFY(query.exec(QString(
+      "INSERT INTO REQUIREMENT(ID,PT_ID,CODE,DOC_ID,TITLE,TYPE,STATUS,"
+      "VERIF_METHOD) VALUES"
+      "(1,%1,'REQ-ACT',1,'Active',1,1,1),"
+      "(2,%1,'REQ-OBS',1,'Ancienne',1,"
+      "(SELECT ID FROM REQ_STATUS WHERE UPPER(SHORTCUT)='O' LIMIT 1),1)")
+                         .arg(ptId)));
+  DocumentService service(manager.currentConnection());
+  QVERIFY(service.placeRequirement(1, -1, 1).success);
+  QVERIFY(service.placeRequirement(1, -1, 2).success);
+
+  DocumentWidget widget;
+  widget.setConnectionName(manager.currentConnection());
+  widget.openDocument(1);
+  auto *tree = widget.findChild<QTreeWidget *>("documentStructureTree");
+  QVERIFY(tree);
+  QCOMPARE(tree->topLevelItemCount(), 2);
+  QCOMPARE(tree->topLevelItem(0)->text(0), QString("REQ-ACT — Active"));
+  QCOMPARE(tree->topLevelItem(0)->foreground(0).color(),
+           widget.palette().brush(QPalette::Link).color());
+  QCOMPARE(tree->topLevelItem(1)->text(0),
+           QString("REQ-OBS — Ancienne [Obsolete]"));
+  QCOMPARE(tree->topLevelItem(1)->foreground(0).color(), QColor("#808080"));
+  widget.releaseDatabase();
+  manager.close();
+}
 
 void RequirementWidgetTest::configuresDocumentCreationScope() {
   QTemporaryDir directory;

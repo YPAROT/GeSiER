@@ -839,7 +839,7 @@ void DatabaseMigratorTest::managesRelationsAndDocumentOccurrences() {
   QVERIFY(!relations.add(2, 1, 1).success);
   QVERIFY(relations.add(2, 3, 1, "niveau 2").success);
   QVERIFY(!relations.add(3, 1, 1).success);
-  QVERIFY(relations.add(2, 1, 2).success); // sens inverse autorisé hors décomposition
+  QVERIFY(relations.add(2, 1, 2, "Choix d'architecture").success); // REQ-1 dérive de REQ-2
   QVERIFY(!relations.add(1, 1, 3).success);
   const auto linked = relations.relations(2);
   QVERIFY(linked.size() >= 3);
@@ -868,6 +868,19 @@ void DatabaseMigratorTest::managesRelationsAndDocumentOccurrences() {
       "(SELECT ID FROM REQ_STATUS WHERE UPPER(SHORTCUT)='O' LIMIT 1),1)")
                          .arg(root)));
   QVERIFY(documents.placeRequirement(1, -1, 4).success);
+  bool foundActiveRequirement = false;
+  bool foundObsoleteRequirement = false;
+  for (const DocumentNodeRecord &node : documents.nodes(1)) {
+    if (node.requirementId == 1) {
+      foundActiveRequirement = true;
+      QVERIFY(!node.requirementObsolete);
+    } else if (node.requirementId == 4) {
+      foundObsoleteRequirement = true;
+      QVERIFY(node.requirementObsolete);
+    }
+  }
+  QVERIFY(foundActiveRequirement);
+  QVERIFY(foundObsoleteRequirement);
   DocumentRecord saved = documents.document(1);
   saved.reference = "SPEC-A";
   saved.secondaryReferences = {"GED-42", "CUSTOMER-7"};
@@ -899,7 +912,12 @@ void DatabaseMigratorTest::managesRelationsAndDocumentOccurrences() {
   for(const auto &node:persisted){positions[node.parentId]<<node.position;foundText|=node.id==text.id&&node.textContent.contains("modifié");foundImage|=node.id==image.id&&node.imageLegend=="Vue logique";if(node.id==first.id)QCOMPARE(node.parentId,-1);if(node.id==nested.id)QCOMPARE(node.parentId,first.id);}
   QVERIFY(foundText); QVERIFY(foundImage);
   for(auto values:positions){std::sort(values.begin(),values.end());for(int i=0;i<values.size();++i)QCOMPARE(values[i],i);}
-  QVERIFY(reopened.previewHtml(1).contains("Texte modifié"));
+  const QString preview = reopened.previewHtml(1);
+  QVERIFY(preview.contains("Texte modifié"));
+  QVERIFY(preview.contains("REQ-OBS — Texte obsolète distinctif [Obsolete]"));
+  QVERIFY(preview.contains("<b style=\"color:#808080\">REQ-OBS"));
+  QVERIFY(preview.contains("<b>REQ-1 — Parent</b>"));
+  QVERIFY(!preview.contains("REQ-1 — Parent [Obsolete]"));
   const QString draftPath=directory.filePath("draft.docx");
   DocxExportService exporter(manager.currentConnection());
   DocxExportRequest draft;draft.documentId=1;draft.outputPath=draftPath;draft.draftLabel="Relecture interne";
@@ -913,6 +931,7 @@ void DatabaseMigratorTest::managesRelationsAndDocumentOccurrences() {
   QVERIFY(exporter.setGedInformation(published.id,"GED-001","https://ged.invalid/1").success);
   QVERIFY(!exporter.setGedInformation(draftResult.id,"GED-DRAFT",{}).success);
   QVERIFY(relations.add(1,3,3,"Interface critique").success);
+  QVERIFY(documents.placeRequirement(1, -1, 2).success);
   const QString templatePath=writeDocxTemplate(directory.filePath("template.docx"));
   const auto templateValidation=exporter.validateTemplate(templatePath,1);
   QVERIFY2(templateValidation.valid,qPrintable(templateValidation.errors.join('\n')));
@@ -928,6 +947,9 @@ void DatabaseMigratorTest::managesRelationsAndDocumentOccurrences() {
   QVERIFY(templatedDocument.contains("Sommaire existant"));QVERIFY(templatedDocument.contains(" TOC "));
   QVERIFY(templatedDocument.contains("Specification"));QVERIFY(!templatedDocument.contains("Ancien titre"));
   QVERIFY(templatedDocument.contains("w:tblStyle w:val=\"ReqTable\""));QVERIFY(templatedDocument.contains("REQ-1"));QVERIFY(templatedDocument.contains("Dépend de REQ-3"));QVERIFY(templatedDocument.contains("Interface critique"));
+  QVERIFY(templatedDocument.contains("Dérive de REQ-2 — Child"));
+  QVERIFY(templatedDocument.contains("Choix d&apos;architecture"));
+  QVERIFY(!templatedDocument.contains("Dérive de REQ-1"));
   QVERIFY(!templatedDocument.contains("Texte obsolète distinctif"));
   QVERIFY(templatedDocument.contains("w:pStyle w:val=\"Custom4\""));QVERIFY(templatedDocument.contains("w:pStyle w:val=\"Custom5\""));QVERIFY(!templatedDocument.contains("GESIER_CHAPTER_LEVEL"));QVERIFY(!templatedDocument.contains("GESIER_REQUIREMENT_TEMPLATE"));
   QVERIFY(templatedHeader.contains("SPEC-A"));QVERIFY(templatedHeader.contains(">B<"));QVERIFY(!templatedHeader.contains("GESIER_REFERENCE"));QVERIFY(!templatedHeader.contains("GESIER_METADATA"));

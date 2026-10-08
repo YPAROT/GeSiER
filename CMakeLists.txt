@@ -163,6 +163,9 @@ if(BUILD_TESTING)
         requirementrelationservice.cpp requirementrelationservice.h
         documentservice.cpp documentservice.h
         documentcreationdialog.cpp documentcreationdialog.h
+        documentwidget.cpp documentwidget.h
+        docxexportservice.cpp docxexportservice.h
+        imageeditdialog.cpp imageeditdialog.h
         producttreeservice.cpp producttreeservice.h
         changeservice.cpp changeservice.h
         historyservice.cpp historyservice.h
