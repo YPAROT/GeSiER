@@ -80,6 +80,7 @@ class DatabaseMigratorTest : public QObject {
   Q_OBJECT
   QTemporaryDir m_directory;
 private slots:
+  void createsNormalizedVersion18Schema();
   void storesMarkdownImagesAtomically();
   void migratesLegacySchemaWithoutLosingLinks();
   void migratesRequirementUniquenessToCode();
@@ -104,6 +105,46 @@ private slots:
   void roundTripsStructuredDocxCollections();
 };
 
+void DatabaseMigratorTest::createsNormalizedVersion18Schema() {
+  QTemporaryDir directory;
+  REQ_SQLManager manager;
+  const auto creation = manager.newDB(directory.filePath("normalized-v18.db"));
+  QVERIFY2(creation.type() == QSqlError::NoError, qPrintable(creation.text()));
+  QSqlDatabase db = QSqlDatabase::database(manager.currentConnection());
+  QSqlQuery q(db);
+  QVERIFY(q.exec("PRAGMA user_version"));
+  QVERIFY(q.next());
+  QCOMPARE(q.value(0).toInt(), 18);
+
+  const auto columns = [&](const QString &table) {
+    QSet<QString> names;
+    QSqlQuery info(db);
+    info.exec("PRAGMA table_info(" + table + ")");
+    while (info.next()) names.insert(info.value(1).toString().toUpper());
+    return names;
+  };
+  const QSet<QString> requirement = columns("REQUIREMENT");
+  for (const QString &removed : {"PARENT_ID", "PT_ID", "DOC_ID",
+                                 "DOC_CHAPTER", "VERIF_METHOD",
+                                 "VERIF_LEVEL", "VERIF_PROCEDURE",
+                                 "REDMINE_REF", "VERIF_STATUS",
+                                 "VERIF_MEANS"})
+    QVERIFY2(!requirement.contains(removed), qPrintable(removed));
+  QVERIFY(!columns("DOCUMENT").contains("REFERENCE"));
+  QVERIFY(!columns("INTERFACE").contains("DOC_ID"));
+  QVERIFY(!columns("INTERFACE").contains("DOC_CHAPTER"));
+  QVERIFY(!columns("CHANGE_ITEM").contains("TYPE"));
+  QVERIFY(!columns("CHANGE_ITEM").contains("STATUS"));
+  for (const QString &removed : {"REQ_CHAPTER", "IF_CHAPTER", "REQ_LOGS",
+                                 "REDMINE_ISSUES", "CONF_CHANGE", "CC_STATUS",
+                                 "MODEL"})
+    QVERIFY2(!db.tables().contains(removed), qPrintable(removed));
+  QVERIFY(columns("PART").contains("CONFIG_ID"));
+  QVERIFY(q.exec("PRAGMA foreign_key_check"));
+  QVERIFY(!q.next());
+  manager.close();
+}
+
 void DatabaseMigratorTest::storesMarkdownImagesAtomically() {
   QTemporaryDir directory;
   REQ_SQLManager manager;
@@ -114,6 +155,7 @@ void DatabaseMigratorTest::storesMarkdownImagesAtomically() {
   QSqlQuery query(QSqlDatabase::database(manager.currentConnection()));
   QVERIFY(query.exec("SELECT ID FROM PT WHERE SEGMENT='SYS'"));
   QVERIFY(query.next()); const int pt = query.value(0).toInt();
+  QVERIFY(query.exec(QString("INSERT INTO DOCUMENT(PT_ID,TYPE,TITLE) VALUES(%1,1,'Markdown')").arg(pt)));
 
   RequirementRecord record;
   record.code = "SYS-R-0001"; record.title = "Markdown";
@@ -177,19 +219,27 @@ void DatabaseMigratorTest::controlsHighLevelTraceability() {
                  "(3,NULL,'Archive','OLD',1)"));
   QVERIFY(q.exec("INSERT INTO DOCUMENT(ID,PT_ID,TYPE,TITLE) "
                  "VALUES(1,1,1,'Spécification')"));
-  QVERIFY(q.exec("INSERT INTO CONFIGURATION(ID,CODE,LABEL,ACTIVE,POSITION) "
-                 "VALUES(1,'FM','Vol',1,1),(2,'OLD','Archivée',0,2)"));
-  QVERIFY(q.exec("INSERT INTO REQUIREMENT(ID,PT_ID,CODE,DOC_ID,TITLE,TYPE,"
-                 "STATUS,VERIF_METHOD,IS_TRACE_ROOT) VALUES"
-                 "(1,1,'HL-1',1,'Racine conforme',1,1,1,1),"
-                 "(2,2,'LL-1',1,'Enfant',1,1,1,0),"
-                 "(3,2,'HL-2',1,'Mauvais PT',1,1,1,1),"
-                 "(4,1,'HL-OBS',1,'Obsolète',1,8,1,1)"));
+  QVERIFY(q.exec("UPDATE CONFIGURATION SET LABEL='Vol',ACTIVE=1,POSITION=1 WHERE CODE='FM'"));
+  QVERIFY(q.exec("INSERT INTO CONFIGURATION(CODE,LABEL,ACTIVE,POSITION) VALUES('OLD','Archivée',0,2)"));
+  QVERIFY(q.exec("SELECT ID FROM CONFIGURATION WHERE CODE='FM'"));
+  QVERIFY(q.next());
+  const int flightConfigurationId = q.value(0).toInt();
+  QVERIFY(q.exec("SELECT ID FROM CONFIGURATION WHERE CODE='OLD'"));
+  QVERIFY(q.next());
+  const int archivedConfigurationId = q.value(0).toInt();
+  QVERIFY(q.exec("INSERT INTO REQUIREMENT(ID,CODE,TITLE,TYPE,STATUS,IS_TRACE_ROOT) VALUES"
+                 "(1,'HL-1','Racine conforme',1,1,1),"
+                 "(2,'LL-1','Enfant',1,1,0),"
+                 "(3,'HL-2','Mauvais PT',1,1,1),"
+                 "(4,'HL-OBS','Obsolète',1,8,1)"));
   QVERIFY(q.exec("INSERT INTO REQUIREMENT_PT(REQ_ID,PT_ID,IS_PRIMARY) VALUES"
                  "(1,1,1),(2,2,1),(3,2,1),(4,1,1)"));
-  QVERIFY(q.exec("INSERT INTO REQUIREMENT_APPLICABILITY"
-                 "(REQ_ID,CONFIG_ID,PT_ID,APPLICABLE) VALUES"
-                 "(1,1,NULL,1),(1,1,1,0),(1,2,NULL,1),(3,1,NULL,1)"));
+  QVERIFY(q.exec(QString("INSERT INTO REQUIREMENT_APPLICABILITY"
+                         "(REQ_ID,CONFIG_ID,PT_ID,APPLICABLE) VALUES"
+                         "(1,%1,NULL,1),(1,%1,1,0),(1,%2,NULL,1),"
+                         "(3,%1,NULL,1)")
+                     .arg(flightConfigurationId)
+                     .arg(archivedConfigurationId)));
   QVERIFY(q.exec("INSERT INTO REQUIREMENT_RELATION(SOURCE_REQ_ID,TARGET_REQ_ID,"
                  "TYPE_ID) VALUES(1,2,1)"));
 
@@ -221,7 +271,8 @@ void DatabaseMigratorTest::controlsHighLevelTraceability() {
   // Retirer l'exception rend HL-1 applicable et ses trois liens qualifiants
   // sont Décompose + Dérive de + Dépend de. Les liens inversés restent ignorés.
   QVERIFY(q.exec("DELETE FROM REQUIREMENT_APPLICABILITY WHERE REQ_ID=1 AND "
-                 "CONFIG_ID=1 AND PT_ID=1"));
+                 "CONFIG_ID=" + QString::number(flightConfigurationId) +
+                 " AND PT_ID=1"));
   rows = service.rows({}, &error);
   QVERIFY(rows[0].applicable);
   QCOMPARE(rows[0].qualifyingRelationCount, 3);
@@ -310,8 +361,9 @@ void DatabaseMigratorTest::previewsTaggedWordRoundTrip() {
   QSqlDatabase db = QSqlDatabase::database(manager.currentConnection());
   QSqlQuery query(db);
   QVERIFY(query.exec("INSERT INTO PT(ID,NAME,SEGMENT,POSITION) VALUES(1,'Système','SYS',0)"));
-  QVERIFY(query.exec("INSERT INTO DOCUMENT(ID,PT_ID,TYPE,REFERENCE,TITLE) VALUES(1,1,1,'SPEC-W','Word')"));
-  QVERIFY(query.exec("INSERT INTO REQUIREMENT(ID,PT_ID,CODE,DOC_ID,TITLE,DESCRIPTION,TYPE,STATUS,VERIF_METHOD,COMMENTS) VALUES(1,1,'SYS-R-0001',1,'Détection','<p>Détecter la panne</p>',1,1,1,'Avis initial')"));
+  QVERIFY(query.exec("INSERT INTO DOCUMENT(ID,PT_ID,TYPE,TITLE) VALUES(1,1,1,'Word')"));
+  QVERIFY(query.exec("INSERT INTO DOCUMENT_REFERENCE(DOC_ID,REFERENCE,IS_PRIMARY) VALUES(1,'SPEC-W',1)"));
+  QVERIFY(query.exec("INSERT INTO REQUIREMENT(ID,CODE,TITLE,DESCRIPTION,TYPE,STATUS,COMMENTS) VALUES(1,'SYS-R-0001','Détection','<p>Détecter la panne</p>',1,1,'Avis initial')"));
   QVERIFY(query.exec("INSERT INTO REQUIREMENT_PT(REQ_ID,PT_ID,IS_PRIMARY) VALUES(1,1,1)"));
   QVERIFY(query.exec("INSERT INTO DOCUMENT_NODE(ID,DOC_ID,PARENT_ID,NODE_TYPE,TITLE,POSITION) VALUES(1,1,NULL,'CHAPTER','Fonctions',0)"));
   QVERIFY(query.exec("INSERT INTO DOCUMENT_NODE(DOC_ID,PARENT_ID,NODE_TYPE,POSITION,REQ_ID) VALUES(1,1,'REQUIREMENT',0,1)"));
@@ -421,16 +473,16 @@ void DatabaseMigratorTest::calculatesDashboardCoverageFromOneService() {
   QVERIFY(q.exec("INSERT INTO PT(ID,NAME,SEGMENT) VALUES(1,'System','SYS')"));
   QVERIFY(q.exec("INSERT INTO DOCUMENT(ID,PT_ID,TYPE,TITLE) "
                  "VALUES(1,1,1,'Spécification')"));
-  QVERIFY(q.exec("INSERT INTO REQUIREMENT(ID,PT_ID,CODE,DOC_ID,TITLE,TYPE,"
-                 "STATUS,VERIF_METHOD,IS_TRACE_ROOT) VALUES"
-                 "(1,1,'SYS-001',1,'Couverte',1,1,1,1),"
-                 "(2,1,'SYS-002',1,'À compléter',2,2,1,0)"));
+  QVERIFY(q.exec("INSERT INTO REQUIREMENT(ID,CODE,TITLE,TYPE,STATUS,IS_TRACE_ROOT) VALUES"
+                 "(1,'SYS-001','Couverte',1,1,1),"
+                 "(2,'SYS-002','À compléter',2,2,0)"));
   QVERIFY(q.exec("INSERT INTO REQUIREMENT_PT(REQ_ID,PT_ID,IS_PRIMARY) "
                  "VALUES(1,1,1)"));
   QVERIFY(q.exec("INSERT INTO DOCUMENT_NODE(DOC_ID,PARENT_ID,NODE_TYPE,TITLE,"
                  "POSITION,REQ_ID) VALUES"
                  "(1,NULL,'REQUIREMENT','Occurrence',1,1),"
                  "(1,NULL,'REQUIREMENT','Deuxième',2,2)"));
+  QVERIFY(q.exec("DELETE FROM CONFIGURATION"));
   QVERIFY(q.exec("INSERT INTO CONFIGURATION(ID,CODE,LABEL,ACTIVE,POSITION) VALUES"
                  "(1,'ACTIVE','Active',1,1),(2,'ARCHIVE','Archivée',0,2)"));
   QVERIFY(q.exec("INSERT INTO REQUIREMENT_APPLICABILITY(REQ_ID,CONFIG_ID,PT_ID,"
@@ -438,9 +490,8 @@ void DatabaseMigratorTest::calculatesDashboardCoverageFromOneService() {
   QVERIFY(q.exec("INSERT INTO DOCUMENT_EXPORT(DOC_ID,EXPORT_KIND,VERSION,TITLE,"
                  "AUTHOR,EXPORTED_AT) VALUES(1,'PUBLICATION','2.3',"
                  "'Spécification publiée','Auteur','2026-09-18 10:00:00')"));
-  QVERIFY(q.exec("INSERT INTO DOCUMENT(ID,PT_ID,TYPE,REFERENCE,TITLE) "
-                 "VALUES(2,1,1,NULL,'Document vide')"));
-  QVERIFY(q.exec("UPDATE DOCUMENT SET REFERENCE='SP-001' WHERE ID=1"));
+  QVERIFY(q.exec("INSERT INTO DOCUMENT(ID,PT_ID,TYPE,TITLE) VALUES(2,1,1,'Document vide')"));
+  QVERIFY(q.exec("INSERT INTO DOCUMENT_REFERENCE(DOC_ID,REFERENCE,IS_PRIMARY) VALUES(1,'SP-001',1)"));
 
   CoverageService service(manager.currentConnection());
   QString error;
@@ -550,16 +601,13 @@ void DatabaseMigratorTest::createsDocumentsWithProductTreeRequirements() {
       "(103,102,'SYS-SUB-UNIT','UNIT',0,0),"
       "(104,101,'SYS-OLD','OLD',1,1)"));
   QVERIFY(query.exec(
-      "INSERT INTO DOCUMENT(ID,PT_ID,TYPE,REFERENCE,TITLE) "
-      "VALUES(101,101,1,'SOURCE','Document source')"));
+      "INSERT INTO DOCUMENT(ID,PT_ID,TYPE,TITLE) VALUES(101,101,1,'Document source')"));
+  QVERIFY(query.exec("INSERT INTO DOCUMENT_REFERENCE(DOC_ID,REFERENCE,IS_PRIMARY) VALUES(101,'SOURCE',1)"));
   QVERIFY(query.exec(
-      "INSERT INTO REQUIREMENT(ID,PT_ID,CODE,DOC_ID,TITLE,TYPE,STATUS,"
-      "VERIF_METHOD) VALUES"
-      "(101,101,'REQ-B',101,'Directe',1,1,1),"
-      "(102,102,'REQ-A',101,'Secondaire racine',1,1,1),"
-      "(103,103,'REQ-C',101,'Petite-fille',1,1,1),"
-      "(104,102,'REQ-D',101,'Multi-PT',1,1,1),"
-      "(105,104,'REQ-Z',101,'Archivée',1,1,1)"));
+      "INSERT INTO REQUIREMENT(ID,CODE,TITLE,TYPE,STATUS) VALUES"
+      "(101,'REQ-B','Directe',1,1),(102,'REQ-A','Secondaire racine',1,1),"
+      "(103,'REQ-C','Petite-fille',1,1),(104,'REQ-D','Multi-PT',1,1),"
+      "(105,'REQ-Z','Archivée',1,1)"));
   QVERIFY(query.exec(
       "INSERT INTO REQUIREMENT_PT(REQ_ID,PT_ID,IS_PRIMARY) VALUES"
       "(101,101,1),(102,102,1),(102,101,0),(103,103,1),"
@@ -629,8 +677,8 @@ void DatabaseMigratorTest::composesDocumentsInsideCallerTransaction() {
   QSqlDatabase db = QSqlDatabase::database(manager.currentConnection());
   QSqlQuery query(db);
   QVERIFY(query.exec("INSERT INTO PT(ID,NAME,SEGMENT) VALUES(1,'System','SYS')"));
-  QVERIFY(query.exec("INSERT INTO DOCUMENT(ID,PT_ID,TYPE,REFERENCE,TITLE) "
-                     "VALUES(1,1,1,'SPEC-1','Spécification')"));
+  QVERIFY(query.exec("INSERT INTO DOCUMENT(ID,PT_ID,TYPE,TITLE) VALUES(1,1,1,'Spécification')"));
+  QVERIFY(query.exec("INSERT INTO DOCUMENT_REFERENCE(DOC_ID,REFERENCE,IS_PRIMARY) VALUES(1,'SPEC-1',1)"));
   DocumentService documents(manager.currentConnection());
   QVERIFY(db.transaction());
   const auto chapter = documents.addChapter(1, -1, "Chapitre importé", false);
@@ -652,9 +700,7 @@ void DatabaseMigratorTest::managesChangesAndExportsRegister() {
   QVERIFY(q.exec("INSERT INTO PT(ID,NAME,SEGMENT) VALUES(1,'System','SYS')"));
   QVERIFY(q.exec("INSERT INTO DOCUMENT(ID,PT_ID,TYPE,TITLE) "
                  "VALUES(1,1,1,'Spécification système')"));
-  QVERIFY(q.exec("INSERT INTO REQUIREMENT(ID,PT_ID,CODE,DOC_ID,TITLE,TYPE,"
-                 "STATUS,VERIF_METHOD) VALUES(1,1,'SYS-001',1,'Exigence "
-                 "système',1,1,1)"));
+  QVERIFY(q.exec("INSERT INTO REQUIREMENT(ID,CODE,TITLE,TYPE,STATUS) VALUES(1,'SYS-001','Exigence système',1,1)"));
   QVERIFY(q.exec("INSERT INTO REQUIREMENT_PT(REQ_ID,PT_ID,IS_PRIMARY) "
                  "VALUES(1,1,1)"));
   ChangeService service(manager.currentConnection());
@@ -748,11 +794,11 @@ void DatabaseMigratorTest::opensVersion11ProjectWithRequiredLegacyIcd() {
   QVERIFY2(opened.type() == QSqlError::NoError, qPrintable(opened.text()));
   QSqlDatabase db = QSqlDatabase::database(manager.currentConnection());
   QSqlQuery q("PRAGMA table_info(INTERFACE)", db);
-  bool docIdIsNullable = false;
+  bool hasLegacyDocId = false;
   while (q.next())
     if (q.value(1).toString() == "DOC_ID")
-      docIdIsNullable = !q.value(3).toBool();
-  QVERIFY(docIdIsNullable);
+      hasLegacyDocId = true;
+  QVERIFY(!hasLegacyDocId);
   q = QSqlQuery();
   db = QSqlDatabase();
   manager.close();
@@ -766,8 +812,9 @@ void DatabaseMigratorTest::managesInterfacesAndExportsN2() {
   ProductTreeService tree(manager.currentConnection());
   QVERIFY(tree.addNode(-1,"SYS").success);QSqlQuery q(db);QVERIFY(q.exec("SELECT ID FROM PT WHERE SEGMENT='SYS'"));QVERIFY(q.next());int sys=q.value(0).toInt();
   QVERIFY(tree.addNode(sys,"PAYLOAD").success);QVERIFY(q.exec("SELECT ID FROM PT WHERE SEGMENT='PAYLOAD'"));QVERIFY(q.next());int payload=q.value(0).toInt();
-  QVERIFY(q.exec(QString("INSERT INTO DOCUMENT(ID,PT_ID,TYPE,REFERENCE,TITLE) VALUES(1,%1,2,'ICD-001','ICD système')").arg(sys)));
-  QVERIFY(q.exec(QString("INSERT INTO REQUIREMENT(ID,PT_ID,CODE,DOC_ID,TITLE,TYPE,STATUS,VERIF_METHOD) VALUES(1,%1,'REQ-IF',1,'Interface',1,1,1)").arg(sys)));
+  QVERIFY(q.exec(QString("INSERT INTO DOCUMENT(ID,PT_ID,TYPE,TITLE) VALUES(1,%1,2,'ICD système')").arg(sys)));
+  QVERIFY(q.exec("INSERT INTO DOCUMENT_REFERENCE(DOC_ID,REFERENCE,IS_PRIMARY) VALUES(1,'ICD-001',1)"));
+  QVERIFY(q.exec("INSERT INTO REQUIREMENT(ID,CODE,TITLE,TYPE,STATUS) VALUES(1,'REQ-IF','Interface',1,1)"));
   InterfaceService service(manager.currentConnection());InterfaceRecord record;record.code="IF-SYS-PAY";record.element1Id=sys;record.element2Id=payload;record.description="Liaison bidirectionnelle";record.status="APPROVED";record.typeIds={1,2};record.requirementIds={1};record.documentIds={1};
   auto saved=service.save(record);QVERIFY2(saved.success,qPrintable(saved.message));
   InterfaceFilter reverse;reverse.ptId=payload;auto rows=service.find(reverse);QCOMPARE(rows.size(),1);QCOMPARE(rows[0].code,record.code);QVERIFY(rows[0].types.contains("Mécanique"));QVERIFY(rows[0].requirements.contains("REQ-IF"));QVERIFY(rows[0].documents.contains("ICD-001"));
@@ -786,8 +833,8 @@ void DatabaseMigratorTest::managesVerificationMatrixAndExport() {
   ProductTreeService tree(manager.currentConnection());
   QVERIFY(tree.addNode(-1,"SYS").success);QSqlQuery q(db);QVERIFY(q.exec("SELECT ID FROM PT WHERE SEGMENT='SYS'"));QVERIFY(q.next());const int pt=q.value(0).toInt();
   QVERIFY(q.exec(QString("INSERT INTO DOCUMENT(ID,PT_ID,TYPE,TITLE) VALUES(1,%1,1,'Vérification')").arg(pt)));
-  QVERIFY(q.exec(QString("INSERT INTO REQUIREMENT(ID,PT_ID,CODE,DOC_ID,TITLE,TYPE,STATUS,VERIF_METHOD) VALUES(1,%1,'SYS-001',1,'Couverte',1,1,1)").arg(pt)));
-  QVERIFY(q.exec(QString("INSERT INTO REQUIREMENT(ID,PT_ID,CODE,DOC_ID,TITLE,TYPE,STATUS,VERIF_METHOD) VALUES(2,%1,'SYS-002',1,'Manquante',1,1,1)").arg(pt)));
+  QVERIFY(q.exec("INSERT INTO REQUIREMENT(ID,CODE,TITLE,TYPE,STATUS) VALUES(1,'SYS-001','Couverte',1,1)"));
+  QVERIFY(q.exec("INSERT INTO REQUIREMENT(ID,CODE,TITLE,TYPE,STATUS) VALUES(2,'SYS-002','Manquante',1,1)"));
   QVERIFY(q.exec(QString("INSERT INTO REQUIREMENT_PT(REQ_ID,PT_ID,IS_PRIMARY) VALUES(1,%1,1),(2,%1,1)").arg(pt)));
   VerificationService service(manager.currentConnection());RequirementVerification v;v.methodId=1;v.levelPtId=pt;v.procedure="TC-001";v.redmine="https://redmine.invalid/1";v.means="Banc";v.verdict="PC";v.comment="Prévu";
   const auto saved=service.save(1,{v});QVERIFY2(saved.success,qPrintable(saved.message));
@@ -806,8 +853,10 @@ void DatabaseMigratorTest::managesApplicabilityAndExportsMatrix() {
   ProductTreeService tree(manager.currentConnection());
   QVERIFY(tree.addNode(-1, "SYS").success);
   QSqlQuery q(db); QVERIFY(q.exec("SELECT ID FROM PT WHERE SEGMENT='SYS'")); QVERIFY(q.next()); const int pt=q.value(0).toInt();
-  QVERIFY(q.exec(QString("INSERT INTO DOCUMENT(ID,PT_ID,TYPE,REFERENCE,TITLE) VALUES(1,%1,1,'SPEC','Specification')").arg(pt)));
-  QVERIFY(q.exec(QString("INSERT INTO REQUIREMENT(ID,PT_ID,CODE,DOC_ID,TITLE,TYPE,STATUS,VERIF_METHOD) VALUES(1,%1,'REQ-A',1,'A',1,1,1),(2,%1,'REQ-B',1,'B',1,1,1)").arg(pt)));
+  QVERIFY(q.exec("DELETE FROM CONFIGURATION"));
+  QVERIFY(q.exec(QString("INSERT INTO DOCUMENT(ID,PT_ID,TYPE,TITLE) VALUES(1,%1,1,'Specification')").arg(pt)));
+  QVERIFY(q.exec("INSERT INTO DOCUMENT_REFERENCE(DOC_ID,REFERENCE,IS_PRIMARY) VALUES(1,'SPEC',1)"));
+  QVERIFY(q.exec("INSERT INTO REQUIREMENT(ID,CODE,TITLE,TYPE,STATUS) VALUES(1,'REQ-A','A',1,1),(2,'REQ-B','B',1,1)"));
   QVERIFY(q.exec(QString("INSERT INTO REQUIREMENT_PT(REQ_ID,PT_ID,IS_PRIMARY) VALUES(1,%1,1),(2,%1,1)").arg(pt)));
   ApplicabilityService service(manager.currentConnection());
   ConfigurationRecord c;c.code="FM";c.label="Flight Model";c.description="Modèle de vol";c.position=1;
@@ -842,8 +891,9 @@ void DatabaseMigratorTest::managesRelationsAndDocumentOccurrences() {
   QSqlQuery query(db);
   QVERIFY(query.exec("SELECT ID FROM PT WHERE SEGMENT='SYS'")); QVERIFY(query.next());
   const int root = query.value(0).toInt();
-  QVERIFY(query.exec(QString("INSERT INTO DOCUMENT(ID,PT_ID,TYPE,REFERENCE,TITLE) VALUES(1,%1,1,'SPEC-A','Specification')").arg(root)));
-  QVERIFY(query.exec(QString("INSERT INTO REQUIREMENT(ID,PT_ID,CODE,DOC_ID,TITLE,TYPE,STATUS,VERIF_METHOD) VALUES(1,%1,'REQ-1',1,'Parent',1,1,1),(2,%1,'REQ-2',1,'Child',1,1,1),(3,%1,'REQ-3',1,'Grandchild',1,1,1)").arg(root)));
+  QVERIFY(query.exec(QString("INSERT INTO DOCUMENT(ID,PT_ID,TYPE,TITLE) VALUES(1,%1,1,'Specification')").arg(root)));
+  QVERIFY(query.exec("INSERT INTO DOCUMENT_REFERENCE(DOC_ID,REFERENCE,IS_PRIMARY) VALUES(1,'SPEC-A',1)"));
+  QVERIFY(query.exec("INSERT INTO REQUIREMENT(ID,CODE,TITLE,TYPE,STATUS) VALUES(1,'REQ-1','Parent',1,1),(2,'REQ-2','Child',1,1),(3,'REQ-3','Grandchild',1,1)"));
   RequirementRelationService relations(manager.currentConnection());
   QVERIFY(relations.add(1, 2, 1).success);
   QVERIFY(!relations.add(1, 2, 1).success);
@@ -873,11 +923,9 @@ void DatabaseMigratorTest::managesRelationsAndDocumentOccurrences() {
     }
   }
   QCOMPARE(occurrences, 1);
-  QVERIFY(query.exec(QString(
-      "INSERT INTO REQUIREMENT(ID,PT_ID,CODE,DOC_ID,TITLE,TYPE,STATUS,"
-      "VERIF_METHOD) VALUES(4,%1,'REQ-OBS',1,'Texte obsolète distinctif',1,"
-      "(SELECT ID FROM REQ_STATUS WHERE UPPER(SHORTCUT)='O' LIMIT 1),1)")
-                         .arg(root)));
+  QVERIFY(query.exec("INSERT INTO REQUIREMENT(ID,CODE,TITLE,TYPE,STATUS) "
+                     "VALUES(4,'REQ-OBS','Texte obsolète distinctif',1,"
+                     "(SELECT ID FROM REQ_STATUS WHERE UPPER(SHORTCUT)='O' LIMIT 1))"));
   QVERIFY(documents.placeRequirement(1, -1, 4).success);
   bool foundActiveRequirement = false;
   bool foundObsoleteRequirement = false;
@@ -977,9 +1025,11 @@ void DatabaseMigratorTest::managesRelationsAndDocumentOccurrences() {
       QString::fromUtf8(obsoleteZip.fileData("word/document.xml"));
   QVERIFY(obsoleteDocument.contains("Texte obsolète distinctif"));
   QVERIFY(obsoleteDocument.contains("<w:color w:val=\"808080\"/>"));
-  QVERIFY(query.exec(QString("INSERT INTO DOCUMENT(ID,PT_ID,TYPE,REFERENCE,TITLE) VALUES(2,%1,1,'SPEC-B','Autre')").arg(root)));
+  QVERIFY(query.exec(QString("INSERT INTO DOCUMENT(ID,PT_ID,TYPE,TITLE) VALUES(2,%1,1,'Autre')").arg(root)));
+  QVERIFY(query.exec("INSERT INTO DOCUMENT_REFERENCE(DOC_ID,REFERENCE,IS_PRIMARY) VALUES(2,'SPEC-B',1)"));
   QVERIFY(documents.placeRequirement(2,-1,1).success);
-  QVERIFY(query.exec(QString("INSERT INTO DOCUMENT(ID,PT_ID,TYPE,REFERENCE,TITLE) VALUES(3,%1,1,'SPEC-C','Ordre')").arg(root)));
+  QVERIFY(query.exec(QString("INSERT INTO DOCUMENT(ID,PT_ID,TYPE,TITLE) VALUES(3,%1,1,'Ordre')").arg(root)));
+  QVERIFY(query.exec("INSERT INTO DOCUMENT_REFERENCE(DOC_ID,REFERENCE,IS_PRIMARY) VALUES(3,'SPEC-C',1)"));
   const auto chapter1=documents.addChapter(3,-1,"Chapitre 1");
   const auto chapter2=documents.addChapter(3,-1,"Chapitre 2");
   const auto chapter3=documents.addChapter(3,-1,"Chapitre 3");
@@ -1141,12 +1191,8 @@ void DatabaseMigratorTest::migratesRequirementUniquenessToCode() {
                      "VALUES(1,'Système','SYS')"));
   QVERIFY(query.exec("INSERT INTO DOCUMENT(ID,PT_ID,TYPE,TITLE) "
                      "VALUES(1,1,1,'Spécification')"));
-  QVERIFY(query.exec("INSERT INTO REQUIREMENT(ID,PT_ID,CODE,DOC_ID,TITLE,"
-                     "TYPE,STATUS,VERIF_METHOD) "
-                     "VALUES(1,1,'REQ-001',1,'Premier titre',1,1,1)"));
-  QVERIFY(query.exec("INSERT INTO REQUIREMENT(ID,PT_ID,CODE,DOC_ID,TITLE,"
-                     "TYPE,STATUS,VERIF_METHOD) "
-                     "VALUES(2,1,'REQ-002',1,'Second titre',1,1,1)"));
+  QVERIFY(query.exec("INSERT INTO REQUIREMENT(ID,CODE,TITLE,TYPE,STATUS) VALUES(1,'REQ-001','Premier titre',1,1)"));
+  QVERIFY(query.exec("INSERT INTO REQUIREMENT(ID,CODE,TITLE,TYPE,STATUS) VALUES(2,'REQ-002','Second titre',1,1)"));
   QVERIFY(query.exec("INSERT INTO REQUIREMENT_PT(REQ_ID,PT_ID,IS_PRIMARY) "
                      "VALUES(1,1,1),(2,1,1)"));
   QVERIFY(query.exec("INSERT INTO REQUIREMENT_RELATION(SOURCE_REQ_ID,"
@@ -1180,9 +1226,8 @@ void DatabaseMigratorTest::migratesRequirementUniquenessToCode() {
                      "commun'"));
   QVERIFY(query.next());
   QCOMPARE(query.value(0).toInt(), 2);
-  QVERIFY(!query.exec("INSERT INTO REQUIREMENT(PT_ID,CODE,DOC_ID,TITLE,TYPE,"
-                      "STATUS,VERIF_METHOD) "
-                      "VALUES(1,'req-001',1,'Autre titre',1,1,1)"));
+  QVERIFY(!query.exec("INSERT INTO REQUIREMENT(CODE,TITLE,TYPE,STATUS) "
+                      "VALUES('req-001','Autre titre',1,1)"));
   QVERIFY(query.exec("SELECT COUNT(*) FROM REQUIREMENT_PT"));
   QVERIFY(query.next());
   QCOMPARE(query.value(0).toInt(), 2);
@@ -1240,7 +1285,7 @@ void DatabaseMigratorTest::storesMultipleVerificationMethods() {
   QVERIFY(query.next());
   const int rootId = query.value(0).toInt();
   QVERIFY(query.exec(QString("INSERT INTO DOCUMENT(ID,PT_ID,TYPE,TITLE) VALUES(1,%1,1,'Verification')").arg(rootId)));
-  QVERIFY(query.exec(QString("INSERT INTO REQUIREMENT(ID,PT_ID,CODE,DOC_ID,TITLE,TYPE,STATUS,VERIF_METHOD) VALUES(1,%1,'SYS-001',1,'Requirement',1,1,1)").arg(rootId)));
+  QVERIFY(query.exec("INSERT INTO REQUIREMENT(ID,CODE,TITLE,TYPE,STATUS) VALUES(1,'SYS-001','Requirement',1,1)"));
   QVERIFY(query.exec(QString("INSERT INTO REQUIREMENT_PT(REQ_ID,PT_ID,IS_PRIMARY) VALUES(1,%1,1)").arg(rootId)));
   QVERIFY(query.exec(QString("INSERT INTO REQUIREMENT_VERIFICATION(REQ_ID,METHOD_ID,VERIFICATION_LEVEL_PT_ID,POSITION) VALUES(1,1,%1,0)").arg(rootId)));
   QVERIFY(query.exec(
@@ -1268,12 +1313,12 @@ void DatabaseMigratorTest::storesMultipleVerificationMethods() {
   QCOMPARE(reloaded.verifications[0].level, QString("System"));
   QCOMPARE(reloaded.verifications[1].methodId, 2);
   QCOMPARE(reloaded.verifications[1].verdict, QString("PC"));
-  QVERIFY(
-      query.exec("SELECT VERIF_METHOD,VERIF_LEVEL,VERIF_PROCEDURE,VERIF_STATUS "
-                 "FROM REQUIREMENT WHERE ID=1"));
+  QVERIFY(query.exec("SELECT METHOD_ID,VERIF_LEVEL,PROCEDURE_REF,VERDICT "
+                     "FROM REQUIREMENT_VERIFICATION WHERE REQ_ID=1 "
+                     "ORDER BY POSITION LIMIT 1"));
   QVERIFY(query.next());
   QCOMPARE(query.value(0).toInt(), 1);
-  QCOMPARE(query.value(1).toString(), QString("SYS"));
+  QCOMPARE(query.value(1).toString(), QString("System"));
   QCOMPARE(query.value(2).toString(), QString("AN-001"));
   QCOMPARE(query.value(3).toString(), QString("C"));
   RequirementFilter covered;
@@ -1291,14 +1336,14 @@ void DatabaseMigratorTest::storesMultipleVerificationMethods() {
   combined.methodIds = {2};
   combined.verified = 1;
   QCOMPARE(service.find(combined).size(), 1);
-  QVERIFY(query.exec("INSERT INTO CONFIGURATION(ID,CODE,LABEL) "
-                     "VALUES(1,'FM','Flight Model')"));
+  QVERIFY(query.exec("SELECT ID FROM CONFIGURATION WHERE CODE='FM'"));
+  QVERIFY(query.next()); const int fmConfigurationId=query.value(0).toInt();
   QVERIFY(query.exec(
       "INSERT INTO REQUIREMENT_APPLICABILITY(REQ_ID,CONFIG_ID,PT_ID) "
-      "VALUES(1,1,1)"));
+      "VALUES(1,"+QString::number(fmConfigurationId)+",1)"));
   RequirementFilter applicable;
   applicable.includeObsolete = true;
-  applicable.configurationIds = {1};
+  applicable.configurationIds = {fmConfigurationId};
   QCOMPARE(service.find(applicable).size(), 1);
   record.verifications << test;
   QVERIFY(!service.save(record).success);
@@ -1382,7 +1427,8 @@ void DatabaseMigratorTest::managesRequirementReferenceData() {
   QVERIFY(query.next());
   const int ptId = query.value(0).toInt();
   QVERIFY(query.exec(QString("INSERT INTO DOCUMENT(ID,PT_ID,TYPE,TITLE) VALUES(1,%1,1,'Référentiels')").arg(ptId)));
-  QVERIFY(query.exec(QString("INSERT INTO REQUIREMENT(ID,PT_ID,CODE,DOC_ID,TITLE,TYPE,STATUS,VERIF_METHOD) VALUES(1,%1,'REF-1',1,'Référence',%2,1,%3)").arg(ptId).arg(type.id).arg(method.id)));
+  QVERIFY(query.exec(QString("INSERT INTO REQUIREMENT(ID,CODE,TITLE,TYPE,STATUS) VALUES(1,'REF-1','Référence',%1,1)").arg(type.id)));
+  QVERIFY(query.exec(QString("INSERT INTO REQUIREMENT_VERIFICATION(REQ_ID,METHOD_ID,POSITION) VALUES(1,%1,0)").arg(method.id)));
   QVERIFY(!service.deleteRequirementType(type.id).success);
   QVERIFY(!service.deleteVerificationMethod(method.id).success);
 
@@ -1412,10 +1458,13 @@ void DatabaseMigratorTest::roundTripsStructuredDocxCollections() {
   QVERIFY2(creation.type() == QSqlError::NoError, qPrintable(creation.text()));
   QSqlDatabase db = QSqlDatabase::database(manager.currentConnection()); QSqlQuery q(db);
   QVERIFY(q.exec("INSERT INTO PT(ID,PARENT,NAME,SEGMENT,POSITION) VALUES(101,NULL,'Système','SYS',0),(102,101,'Puissance','PWR',0),(103,102,'Contrôle','CTRL',0)"));
-  QVERIFY(q.exec("INSERT INTO CONFIGURATION(ID,CODE,LABEL) VALUES(1,'FM','Flight Model')"));
-  QVERIFY(q.exec("INSERT INTO DOCUMENT(ID,PT_ID,TYPE,REFERENCE,TITLE) VALUES(1,101,1,'SPEC-STRUCT','Structurée')"));
-  QVERIFY(q.exec("INSERT INTO REQUIREMENT(ID,PT_ID,CODE,DOC_ID,TITLE,DESCRIPTION,TYPE,STATUS,VERIF_METHOD) VALUES(2,101,'PARENT-1',1,'Parent','Parent',1,1,1),(3,101,'ORIGIN-1',1,'Origine','Origine',1,1,1),(4,101,'DEPEND-1',1,'Dépendance','Dépendance',1,1,1)"));
-  RequirementRecord record; record.code="REQ-STRUCT"; record.title="Exigence structurée"; record.description="Description"; record.primaryPtId=101; record.ptIds={101}; record.configurationIds={1}; record.typeId=1; record.statusId=1;
+  QVERIFY(q.exec("DELETE FROM CONFIGURATION WHERE CODE<>'FM'"));
+  QVERIFY(q.exec("UPDATE CONFIGURATION SET LABEL='Flight Model' WHERE CODE='FM'"));
+  QVERIFY(q.exec("SELECT ID FROM CONFIGURATION WHERE CODE='FM'"));QVERIFY(q.next());const int fmId=q.value(0).toInt();
+  QVERIFY(q.exec("INSERT INTO DOCUMENT(ID,PT_ID,TYPE,TITLE) VALUES(1,101,1,'Structurée')"));
+  QVERIFY(q.exec("INSERT INTO DOCUMENT_REFERENCE(DOC_ID,REFERENCE,IS_PRIMARY) VALUES(1,'SPEC-STRUCT',1)"));
+  QVERIFY(q.exec("INSERT INTO REQUIREMENT(ID,CODE,TITLE,DESCRIPTION,TYPE,STATUS) VALUES(2,'PARENT-1','Parent','Parent',1,1),(3,'ORIGIN-1','Origine','Origine',1,1),(4,'DEPEND-1','Dépendance','Dépendance',1,1)"));
+  RequirementRecord record; record.code="REQ-STRUCT"; record.title="Exigence structurée"; record.description="Description"; record.primaryPtId=101; record.ptIds={101}; record.configurationIds={fmId}; record.typeId=1; record.statusId=1;
   RequirementVerification first; first.methodId=1; first.levelPtId=103; first.procedure="PROC-A"; first.redmine="RM-1"; first.means="Banc"; first.verdict="C"; first.comment="Premier";
   RequirementVerification second; second.methodId=2; second.level="Niveau historique"; second.procedure="PROC-B"; second.redmine="RM-2"; second.means="Simulateur"; second.verdict="PC"; second.comment="Second";
   record.verifications={first,second};

@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
+#include "requirementimportdialog.h"
 #include "applicationlanguage.h"
 #include <QFileDialog>
 #include <QSettings>
@@ -9,7 +10,6 @@
 #include <qwidgetsettings.h>
 #include <QStandardItemModel>
 #include "exportcsvdialog.h"
-#include "importrequirementdialog.h"
 #include "importbasicdialog.h"
 #include "importlogdialog.h"
 #include "coveragedashboard.h"
@@ -349,74 +349,29 @@ void MainWindow::refreshViewTables()
       const QSqlDatabase db = QSqlDatabase::database(connection, false);
       if (!db.isValid() || !db.isOpen())
           return;
-      ui->docViewSqlTableWidget->execQuery("SELECT D.TITLE AS [Titre],D.DESCRIPTION AS [Description],REQLIST.REQ_COUNT [Nombre de Requirements],CC.CH_COUNT AS [Nombre de Chapitres] "
-                                           "FROM (SELECT R.DOC_ID,COUNT(*) AS [REQ_COUNT]FROM REQUIREMENT R GROUP BY R.DOC_ID) REQLIST "
-                                           "LEFT JOIN DOCUMENT D ON REQLIST.DOC_ID=D.ID "
-                                           "LEFT JOIN (SELECT RC.DOC_ID,COUNT(*) AS CH_COUNT FROM REQ_CHAPTER RC GROUP BY RC.DOC_ID) CC ON REQLIST.DOC_ID=CC.DOC_ID",m_SQLManager->currentConnection());
+      ui->docViewSqlTableWidget->execQuery("SELECT D.TITLE AS [Titre],D.DESCRIPTION AS [Description],COUNT(DISTINCT CASE WHEN N.NODE_TYPE='REQUIREMENT' THEN N.REQ_ID END) AS [Nombre de Requirements],COUNT(DISTINCT CASE WHEN N.NODE_TYPE='CHAPTER' THEN N.ID END) AS [Nombre de Chapitres] FROM DOCUMENT D LEFT JOIN DOCUMENT_NODE N ON N.DOC_ID=D.ID GROUP BY D.ID,D.TITLE,D.DESCRIPTION",m_SQLManager->currentConnection());
 
-      ui->docIFViewSqlTableWidget->execQuery("SELECT D.TITLE AS [Titre],D.DESCRIPTION AS [Description],IFLIST.IF_COUNT [Nombre d'Interfaces],CC.CH_COUNT AS [Nombre de Chapitres] "
-                                           "FROM (SELECT IF.DOC_ID,COUNT(*) AS [IF_COUNT]FROM INTERFACE IF GROUP BY IF.DOC_ID) IFLIST "
-                                           "LEFT JOIN DOCUMENT D ON IFLIST.DOC_ID=D.ID "
-                                           "LEFT JOIN (SELECT IFC.DOC_ID,COUNT(*) AS CH_COUNT FROM IF_CHAPTER IFC GROUP BY IFC.DOC_ID) CC ON IFLIST.DOC_ID=CC.DOC_ID",m_SQLManager->currentConnection());
+      ui->docIFViewSqlTableWidget->execQuery("SELECT D.TITLE AS [Titre],D.DESCRIPTION AS [Description],COUNT(DISTINCT L.INTERFACE_ID) AS [Nombre d'Interfaces],COUNT(DISTINCT CASE WHEN N.NODE_TYPE='CHAPTER' THEN N.ID END) AS [Nombre de Chapitres] FROM DOCUMENT D LEFT JOIN INTERFACE_DOCUMENT L ON L.DOC_ID=D.ID LEFT JOIN DOCUMENT_NODE N ON N.DOC_ID=D.ID GROUP BY D.ID,D.TITLE,D.DESCRIPTION",m_SQLManager->currentConnection());
 
-      ui->ReqViewSqlTableWidget->execQuery("SELECT R.CODE AS [Req. Code],R.TITLE AS [Titre],PT.NAME AS [Element du PT],D.TITLE AS [Document associé], RC.CHAPTER AS [Chapitre], R.DESCRIPTION AS [Description], "
-                                           "RT.TYPE AS [Type], RS.STATUS AS [Statut], R.SOURCE AS [Source], RP.CODE AS [Req. parent], R.VERIF_LEVEL AS [Niveau de vérification], RM.METHOD AS [Méthode de vérification], R.COMMENTS AS [Commentaires]"
-                                           "FROM REQUIREMENT R "
-                                           "LEFT JOIN PT ON R.PT_ID=PT.ID "
-                                           "LEFT JOIN DOCUMENT AS D ON R.DOC_ID=D.ID "
-                                           "LEFT JOIN REQ_CHAPTER AS RC ON R.DOC_CHAPTER=RC.ID "
-                                           "LEFT JOIN REQ_TYPE AS RT ON R.TYPE=RT.ID "
-                                           "LEFT JOIN REQ_STATUS AS RS ON R.STATUS=RS.ID "
-                                           "LEFT JOIN REQUIREMENT AS RP ON R.PARENT_ID=RP.ID "
-                                           "LEFT JOIN REQ_METHOD AS RM ON R.VERIF_METHOD=RM.ID ",m_SQLManager->currentConnection());
+      ui->ReqViewSqlTableWidget->execQuery("SELECT R.CODE AS [Req. Code],R.TITLE AS [Titre],COALESCE((SELECT GROUP_CONCAT(P.NAME,', ') FROM REQUIREMENT_PT A JOIN PT P ON P.ID=A.PT_ID WHERE A.REQ_ID=R.ID),'') AS [Elements du PT],COALESCE((SELECT GROUP_CONCAT(D.TITLE,', ') FROM DOCUMENT_NODE N JOIN DOCUMENT D ON D.ID=N.DOC_ID WHERE N.REQ_ID=R.ID),'') AS [Documents associés],R.DESCRIPTION AS [Description],RT.TYPE AS [Type],RS.STATUS AS [Statut],R.SOURCE AS [Source],COALESCE((SELECT GROUP_CONCAT(P.CODE,', ') FROM REQUIREMENT_RELATION L JOIN REQUIREMENT_RELATION_TYPE LT ON LT.ID=L.TYPE_ID JOIN REQUIREMENT P ON P.ID=L.SOURCE_REQ_ID WHERE L.TARGET_REQ_ID=R.ID AND LT.CODE='DECOMPOSE'),'') AS [Parents],COALESCE((SELECT GROUP_CONCAT(M.METHOD,', ') FROM REQUIREMENT_VERIFICATION V JOIN REQ_METHOD M ON M.ID=V.METHOD_ID WHERE V.REQ_ID=R.ID),'') AS [Méthodes de vérification],R.COMMENTS AS [Commentaires] FROM REQUIREMENT R LEFT JOIN REQ_TYPE RT ON RT.ID=R.TYPE LEFT JOIN REQ_STATUS RS ON RS.ID=R.STATUS",m_SQLManager->currentConnection());
 
       ui->ReqTrackViewWidget->refresh();
 
-      ui->ConfChangeWidget->execQuery("SELECT R.CODE AS [Req. Code], CC.DESCRIPTION AS [Description], CCS.STATUS AS [Statut] "
-                                      "FROM CONF_CHANGE CC "
-                                      "LEFT JOIN REQUIREMENT R ON CC.REQ_ID=R.ID "
-                                      "LEFT JOIN CC_STATUS CCS ON CC.STATUS=CCS.ID",m_SQLManager->currentConnection());
+      ui->ConfChangeWidget->execQuery("SELECT C.CODE AS [Code],C.DESCRIPTION AS [Description],S.LABEL AS [Statut],COALESCE((SELECT GROUP_CONCAT(R.CODE,', ') FROM CHANGE_LINK L JOIN REQUIREMENT R ON L.OBJECT_TYPE='REQUIREMENT' AND R.ID=L.OBJECT_ID WHERE L.CHANGE_ID=C.ID),'') AS [Exigences] FROM CHANGE_ITEM C JOIN CHANGE_STATUS S ON S.ID=C.STATUS_ID",m_SQLManager->currentConnection());
 
-      ui->IFWidget->execQuery("SELECT PT1.NAME AS [Element 1], PT2.NAME AS [Element 2], D.TITLE AS [Document associé], IF.DESCRIPTION AS [Description], DC.CHAPTER AS [Chapitre] "
+      ui->IFWidget->execQuery("SELECT PT1.NAME AS [Element 1], PT2.NAME AS [Element 2], COALESCE((SELECT GROUP_CONCAT(D.TITLE,', ') FROM INTERFACE_DOCUMENT L JOIN DOCUMENT D ON D.ID=L.DOC_ID WHERE L.INTERFACE_ID=IF.ID),'') AS [Documents associés], IF.DESCRIPTION AS [Description] "
                               "FROM INTERFACE IF "
                               "LEFT JOIN PT AS PT1 ON IF.ELEMENT1=PT1.ID "
-                              "LEFT JOIN PT AS PT2 ON IF.ELEMENT2=PT2.ID "
-                              "LEFT JOIN DOCUMENT D ON IF.DOC_ID=D.ID "
-                              "LEFT JOIN IF_CHAPTER DC ON IF.DOC_CHAPTER=DC.ID",m_SQLManager->currentConnection());
+                              "LEFT JOIN PT AS PT2 ON IF.ELEMENT2=PT2.ID",m_SQLManager->currentConnection());
 
-      ui->ModelWidget->execQuery("SELECT MODEL AS [Modèle Instrument] FROM MODEL",m_SQLManager->currentConnection());
+      ui->ModelWidget->execQuery("SELECT CODE AS [Modèle Instrument],LABEL AS [Libellé] FROM CONFIGURATION WHERE ACTIVE=1 ORDER BY POSITION,CODE",m_SQLManager->currentConnection());
 
-      ui->PartsWidget->execQuery("SELECT PT.NAME AS [Element du PT], P.NAME AS [Identifiant du composant], P.SERIAL AS [Numéro de série], M.MODEL AS [Modèle Instrument associé], P.DESCRIPTION AS [Description] "
+      ui->PartsWidget->execQuery("SELECT PT.NAME AS [Element du PT], P.NAME AS [Identifiant du composant], P.SERIAL AS [Numéro de série], C.CODE AS [Configuration associée], P.DESCRIPTION AS [Description] "
                                  "FROM PART P "
                                  "LEFT JOIN PT ON P.PT_ID=PT.ID "
-                                 "LEFT JOIN MODEL M ON P.MODEL=M.ID",m_SQLManager->currentConnection());
+                                 "LEFT JOIN CONFIGURATION C ON P.CONFIG_ID=C.ID",m_SQLManager->currentConnection());
 
-      ui->LogsWidget->execQuery("SELECT RL.LOG_TIME AS[Date de Changement],RL.USER_ACTION AS [Type de Changement],R.CODE AS [Code Requirement], "
-                                "CASE RL.OLD_DOC_ID WHEN RL.NEW_DOC_ID THEN \"No Change\" ELSE \"WAS: \"||ifnull(D_O.TITLE, \"NULL\")||char(10)||\"IS: \"||ifnull(D_N.TITLE,\"NULL\") END AS [Changement de Document], "
-                                "CASE RL.OLD_DOC_CHAPTER WHEN RL.NEW_DOC_CHAPTER THEN \"No Change\" ELSE \"WAS: \"||ifnull(RC_O.CHAPTER, \"NULL\")||char(10)||\"IS: \"||ifnull(RC_N.CHAPTER,\"NULL\") END AS [Changement de Chapitre], "
-                                "CASE RL.OLD_TITLE WHEN RL.NEW_TITLE THEN \"No Change\" ELSE \"WAS: \"||ifnull(RL.OLD_TITLE, \"NULL\")||char(10)||\"IS: \"||ifnull(RL.NEW_TITLE,\"NULL\") END AS [Changement de Titre], "
-                                "CASE RL.OLD_DESCRIPTION WHEN RL.NEW_DESCRIPTION THEN \"No Change\" ELSE \"WAS: \"||ifnull(RL.OLD_DESCRIPTION, \"NULL\")||char(10)||\"IS: \"||ifnull(RL.NEW_DESCRIPTION,\"NULL\") END AS [Changement de Description], "
-                                "CASE RL.OLD_TYPE WHEN RL.NEW_TYPE THEN \"No Change\" ELSE \"WAS: \"||ifnull(RT_O.TYPE, \"NULL\")||char(10)||\"IS: \"||ifnull(RT_N.TYPE,\"NULL\") END AS [Changement de Type], "
-                                "CASE RL.OLD_STATUS WHEN RL.NEW_STATUS THEN \"No Change\" ELSE \"WAS: \"||ifnull(RS_O.STATUS, \"NULL\")||char(10)||\"IS: \"||ifnull(RS_N.STATUS,\"NULL\") END AS [Changement de Statut], "
-                                "CASE RL.OLD_SOURCE WHEN RL.NEW_SOURCE THEN \"No Change\" ELSE \"WAS: \"||ifnull(RL.OLD_SOURCE, \"NULL\")||char(10)||\"IS: \"||ifnull(RL.NEW_SOURCE,\"NULL\") END AS [Changement de Source], "
-                                "CASE RL.OLD_PARENT_ID WHEN RL.NEW_PARENT_ID THEN \"No Change\" ELSE \"WAS: \"||ifnull(RP_O.CODE, \"NULL\")||char(10)||\"IS: \"||ifnull(RP_N.CODE,\"NULL\") END AS [Changement de Parent], "
-                                "CASE RL.OLD_VERIF_LEVEL WHEN RL.NEW_VERIF_LEVEL THEN \"No Change\" ELSE \"WAS: \"||ifnull(RL.OLD_VERIF_LEVEL, \"NULL\")||char(10)||\"IS: \"||ifnull(RL.NEW_VERIF_LEVEL,\"NULL\") END AS [Changement de Niveau de Vérification], "
-                                "CASE RL.OLD_VERIF_METHOD WHEN RL.NEW_VERIF_METHOD THEN \"No Change\" ELSE \"WAS: \"||ifnull(RM_O.METHOD, \"NULL\")||char(10)||\"IS: \"||ifnull(RM_N.METHOD,\"NULL\") END AS [Changement de Méthode de Vérification], "
-                                "CASE RL.OLD_COMMENTS WHEN RL.NEW_COMMENTS THEN \"No Change\" ELSE \"WAS: \"||ifnull(RL.OLD_COMMENTS, \"NULL\")||char(10)||\"IS: \"||ifnull(RL.NEW_COMMENTS,\"NULL\") END AS [Changement de Commentaire] "
-                                "FROM REQ_LOGS RL "
-                                "LEFT JOIN REQUIREMENT R ON RL.REQ_ID=R.ID "
-                                "LEFT JOIN REQ_CHAPTER RC_O ON RL.OLD_DOC_CHAPTER=RC_O.ID "
-                                "LEFT JOIN REQ_CHAPTER RC_N ON RL.NEW_DOC_CHAPTER=RC_N.ID "
-                                "LEFT JOIN DOCUMENT D_O ON RL.OLD_DOC_ID=D_O.ID "
-                                "LEFT JOIN DOCUMENT D_N ON RL.NEW_DOC_ID=D_N.ID "
-                                "LEFT JOIN REQ_TYPE RT_O ON RL.OLD_TYPE=RT_O.ID "
-                                "LEFT JOIN REQ_TYPE RT_N ON RL.NEW_TYPE=RT_N.ID "
-                                "LEFT JOIN REQ_STATUS RS_O ON RL.OLD_STATUS=RS_O.ID "
-                                "LEFT JOIN REQ_STATUS RS_N ON RL.NEW_STATUS=RS_N.ID "
-                                "LEFT JOIN REQUIREMENT RP_O ON RL.OLD_PARENT_ID=RP_O.ID "
-                                "LEFT JOIN REQUIREMENT RP_N ON RL.NEW_PARENT_ID=RP_N.ID "
-                                "LEFT JOIN REQ_METHOD RM_O ON RL.OLD_VERIF_METHOD=RM_O.ID "
-                                "LEFT JOIN REQ_METHOD RM_N ON RL.NEW_VERIF_METHOD=RM_N.ID",m_SQLManager->currentConnection());
+      ui->LogsWidget->execQuery("SELECT EVENT_TIME AS [Date],EVENT_TYPE AS [Type],OBJECT_TYPE AS [Objet],OBJECT_ID AS [Identifiant],AUTHOR AS [Auteur],BEFORE_JSON AS [Avant],AFTER_JSON AS [Après],COMMENT AS [Commentaire] FROM EVENT_LOG ORDER BY ID DESC",m_SQLManager->currentConnection());
 
 
 }
@@ -462,27 +417,17 @@ void MainWindow::refreshEditTables()
     m_PTmodel->setHeaderData(1,Qt::Horizontal,"Code Arbre Produit");
     ui->PTtreeView->expandAll();
 
-    ui->editReqSqlTableWidget->SetHorizontalHeaders(1,"Code Arbre Produit");
-    ui->editReqSqlTableWidget->SetHorizontalHeaders(2,"Code Requirement");
-    ui->editReqSqlTableWidget->SetHorizontalHeaders(3,"Document Associé");
-    ui->editReqSqlTableWidget->SetHorizontalHeaders(4,"Chapitre");
-    ui->editReqSqlTableWidget->SetHorizontalHeaders(5,"Titre du Requirement");
-    ui->editReqSqlTableWidget->SetHorizontalHeaders(6,"Description");
-    ui->editReqSqlTableWidget->SetHorizontalHeaders(7,"Type");
-    ui->editReqSqlTableWidget->SetHorizontalHeaders(8,"Statut");
-    ui->editReqSqlTableWidget->SetHorizontalHeaders(9,"Source");
-    ui->editReqSqlTableWidget->SetHorizontalHeaders(10,"Requirement Parent");
-    ui->editReqSqlTableWidget->SetHorizontalHeaders(11,"Niveau de Vérification");
-    ui->editReqSqlTableWidget->SetHorizontalHeaders(12,"Méthode de vérification");
-    ui->editReqSqlTableWidget->SetHorizontalHeaders(13,"Commentaires");
+    ui->editReqSqlTableWidget->SetHorizontalHeaders(1,"Code Requirement");
+    ui->editReqSqlTableWidget->SetHorizontalHeaders(2,"Titre du Requirement");
+    ui->editReqSqlTableWidget->SetHorizontalHeaders(3,"Description");
+    ui->editReqSqlTableWidget->SetHorizontalHeaders(4,"Type");
+    ui->editReqSqlTableWidget->SetHorizontalHeaders(5,"Statut");
+    ui->editReqSqlTableWidget->SetHorizontalHeaders(6,"Source");
+    ui->editReqSqlTableWidget->SetHorizontalHeaders(7,"Racine de traçabilité");
+    ui->editReqSqlTableWidget->SetHorizontalHeaders(8,"Commentaires");
     ui->editReqSqlTableWidget->showTable("REQUIREMENT", m_SQLManager->currentConnection());
-    ui->editReqSqlTableWidget->addRelationalTable(1,QSqlRelation("PT","ID","NAME"));
-    ui->editReqSqlTableWidget->addRelationalTable(3,QSqlRelation("DOCUMENT","ID","TITLE"));
-    ui->editReqSqlTableWidget->addRelationalTable(4,QSqlRelation("REQ_CHAPTER","ID","CHAPTER"));
-    ui->editReqSqlTableWidget->addRelationalTable(7,QSqlRelation("REQ_TYPE","ID","TYPE"));
-    ui->editReqSqlTableWidget->addRelationalTable(8,QSqlRelation("REQ_STATUS","ID","STATUS"));
-    ui->editReqSqlTableWidget->addRelationalTable(10,QSqlRelation("REQUIREMENT","ID","CODE"));
-    ui->editReqSqlTableWidget->addRelationalTable(12,QSqlRelation("REQ_METHOD","ID","METHOD"));
+    ui->editReqSqlTableWidget->addRelationalTable(4,QSqlRelation("REQ_TYPE","ID","TYPE"));
+    ui->editReqSqlTableWidget->addRelationalTable(5,QSqlRelation("REQ_STATUS","ID","STATUS"));
     ui->editReqSqlTableWidget->setColumnHidden(0,true);
     //on désactive l'édition classique sur double click
     ui->editReqSqlTableWidget->SetEditionTriggers(QAbstractItemView::NoEditTriggers);
@@ -515,40 +460,41 @@ void MainWindow::refreshEditTables()
     ui->editDocTypeSqlTableWidget->showTable("DOC_TYPE", m_SQLManager->currentConnection());
     ui->editDocTypeSqlTableWidget->setColumnHidden(0,true);
 
-    ui->editReqChapterSqlTableWidget->SetHorizontalHeaders(1,"Titre du document associé");
-    ui->editReqChapterSqlTableWidget->SetHorizontalHeaders(2,"Nom du chapitre");
-    ui->editReqChapterSqlTableWidget->showTable("REQ_CHAPTER", m_SQLManager->currentConnection());
-    ui->editReqChapterSqlTableWidget->addRelationalTable(1,QSqlRelation("DOCUMENT","ID","TITLE"));
+    ui->editReqChapterSqlTableWidget->SetHorizontalHeaders(1,"Document");
+    ui->editReqChapterSqlTableWidget->SetHorizontalHeaders(2,"Parent");
+    ui->editReqChapterSqlTableWidget->SetHorizontalHeaders(3,"Type de nœud");
+    ui->editReqChapterSqlTableWidget->SetHorizontalHeaders(5,"Titre");
+    ui->editReqChapterSqlTableWidget->showTable("DOCUMENT_NODE", m_SQLManager->currentConnection());
     ui->editReqChapterSqlTableWidget->setColumnHidden(0,true);
 
-    ui->editConfChangeWidget->SetHorizontalHeaders(1,"Code Requirement");
-    ui->editConfChangeWidget->SetHorizontalHeaders(2,"Description");
+    ui->editConfChangeWidget->SetHorizontalHeaders(1,"Code");
+    ui->editConfChangeWidget->SetHorizontalHeaders(2,"Type");
     ui->editConfChangeWidget->SetHorizontalHeaders(3,"Statut");
-    ui->editConfChangeWidget->showTable("CONF_CHANGE",m_SQLManager->currentConnection());
-    ui->editConfChangeWidget->addRelationalTable(1,QSqlRelation("REQUIREMENT","ID","CODE"));
-    ui->editConfChangeWidget->addRelationalTable(3,QSqlRelation("CC_STATUS","ID","STATUS"));
+    ui->editConfChangeWidget->SetHorizontalHeaders(4,"Description");
+    ui->editConfChangeWidget->showTable("CHANGE_ITEM",m_SQLManager->currentConnection());
+    ui->editConfChangeWidget->addRelationalTable(2,QSqlRelation("CHANGE_TYPE","ID","LABEL"));
+    ui->editConfChangeWidget->addRelationalTable(3,QSqlRelation("CHANGE_STATUS","ID","LABEL"));
     ui->editConfChangeWidget->setColumnHidden(0,true);
 
     ui->editIFWidget->SetHorizontalHeaders(1,"Element n°1");
     ui->editIFWidget->SetHorizontalHeaders(2,"Element n°2");
-    ui->editIFWidget->SetHorizontalHeaders(3,"Titre du document associé");
-    ui->editIFWidget->SetHorizontalHeaders(4,"Description");
-    ui->editIFWidget->SetHorizontalHeaders(5,"Chapitre associé");
+    ui->editIFWidget->SetHorizontalHeaders(3,"Description");
+    ui->editIFWidget->SetHorizontalHeaders(4,"Code");
     ui->editIFWidget->showTable("INTERFACE",m_SQLManager->currentConnection());
     ui->editIFWidget->addRelationalTable(1,QSqlRelation("PT","ID","NAME"));
     ui->editIFWidget->addRelationalTable(2,QSqlRelation("PT","ID","NAME"));
-    ui->editIFWidget->addRelationalTable(3,QSqlRelation("DOCUMENT","ID","TITLE"));
-    ui->editIFWidget->addRelationalTable(5,QSqlRelation("IF_CHAPTER","ID","CHAPTER"));
     ui->editIFWidget->setColumnHidden(0,true);
 
-    ui->editIFChaptersWidget->SetHorizontalHeaders(1,"Titre du document");
-    ui->editIFChaptersWidget->SetHorizontalHeaders(2,"Nom du chapitre");
-    ui->editIFChaptersWidget->showTable("IF_CHAPTER",m_SQLManager->currentConnection());
-    ui->editIFChaptersWidget->addRelationalTable(1,QSqlRelation("DOCUMENT","ID","TITLE"));
+    ui->editIFChaptersWidget->SetHorizontalHeaders(1,"Document");
+    ui->editIFChaptersWidget->SetHorizontalHeaders(2,"Parent");
+    ui->editIFChaptersWidget->SetHorizontalHeaders(3,"Type de nœud");
+    ui->editIFChaptersWidget->SetHorizontalHeaders(5,"Titre");
+    ui->editIFChaptersWidget->showTable("DOCUMENT_NODE",m_SQLManager->currentConnection());
     ui->editIFChaptersWidget->setColumnHidden(0,true);
 
-    ui->editModelWidget->SetHorizontalHeaders(1,"Modèle instrument");
-    ui->editModelWidget->showTable("MODEL",m_SQLManager->currentConnection());
+    ui->editModelWidget->SetHorizontalHeaders(1,"Code configuration");
+    ui->editModelWidget->SetHorizontalHeaders(2,"Libellé");
+    ui->editModelWidget->showTable("CONFIGURATION",m_SQLManager->currentConnection());
     ui->editModelWidget->setColumnHidden(0,true);
 
     ui->editPartsWidget->SetHorizontalHeaders(1,"Code Arbre Produit");
@@ -558,7 +504,7 @@ void MainWindow::refreshEditTables()
     ui->editPartsWidget->SetHorizontalHeaders(5,"Description");
     ui->editPartsWidget->showTable("PART",m_SQLManager->currentConnection());
     ui->editPartsWidget->addRelationalTable(1,QSqlRelation("PT","ID","NAME"));
-    ui->editPartsWidget->addRelationalTable(4,QSqlRelation("MODEL","ID","MODEL"));
+    ui->editPartsWidget->addRelationalTable(4,QSqlRelation("CONFIGURATION","ID","CODE"));
     ui->editPartsWidget->setColumnHidden(0,true);
 
 }
@@ -884,10 +830,6 @@ void MainWindow::on_importTablePushButton_clicked()
     {
         //2 tables à gérer? Type de doc peut être supprimée je pense...
     }
-    else if(current_tab=="tab_ReqDocChapter_edit")
-    {
-        importChapter(ui->editReqChapterSqlTableWidget);
-    }
 
 
 }
@@ -900,6 +842,12 @@ void MainWindow::importReq()
 
     if (!hasOpenProject())
         return;
+    RequirementImportDialog normalizedImport(m_SQLManager->currentConnection(), this);
+    if (normalizedImport.exec() == QDialog::Accepted)
+        refreshViewTables();
+    return;
+
+#if 0 // Ancien import positionnel, conservé uniquement pour référence de migration.
     QSqlDatabase db = QSqlDatabase::database(m_SQLManager->currentConnection(), false);
 
     if(!db.isValid())
@@ -1111,6 +1059,7 @@ void MainWindow::importReq()
         delete logDialog;
 //        QMessageBox::warning(this,"Erreur Log",QString("Les erreurs suivantes ont eu lieu lors de l'import:\n%1").arg(m_importLog));
     }
+#endif
 }
 
 void MainWindow::importBasic(SQLTableForm *tableform)
@@ -1221,7 +1170,7 @@ void MainWindow::importChapter(SQLTableForm *tableform)
 
     //Chapitres déjà en BD
     QSqlQuery query(db);
-    query.exec("SELECT T.DOC_ID,T.CHAPTER FROM "+tableform->tableName());
+    query.exec("SELECT DOC_ID,TITLE FROM DOCUMENT_NODE WHERE NODE_TYPE='CHAPTER'");
     QMap<int,QStringList> chapters;
     int ID;
     if(query.first())

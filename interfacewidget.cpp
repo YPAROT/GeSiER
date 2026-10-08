@@ -232,8 +232,8 @@ void InterfaceWidget::edit(int id) {
       db, "SELECT ID,CODE||' — '||TITLE FROM REQUIREMENT ORDER BY CODE",
       r.requirementIds, &d);
   auto *docList = checkList(db,
-                            "SELECT ID,COALESCE(NULLIF(REFERENCE,''),TITLE)||' "
-                            "— '||TITLE FROM DOCUMENT ORDER BY TITLE",
+                            "SELECT D.ID,COALESCE((SELECT R.REFERENCE FROM DOCUMENT_REFERENCE R WHERE R.DOC_ID=D.ID AND R.IS_PRIMARY=1),D.TITLE)||' "
+                            "— '||D.TITLE FROM DOCUMENT D ORDER BY D.TITLE",
                             r.documentIds, &d);
   for (auto *w : {typeList, reqList, docList})
     w->setMaximumHeight(125);

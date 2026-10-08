@@ -123,7 +123,7 @@ RequirementImportDialog::RequirementImportDialog(const QString &connectionName,
   QSqlQuery pts("SELECT ID,COALESCE(NAME,DESCRIPTION,SEGMENT) FROM PT WHERE ARCHIVED=0 ORDER BY POSITION,ID",
                 QSqlDatabase::database(m_connection));
   while (pts.next()) m_primaryPt->addItem(productTrees.fullCode(pts.value(0).toInt()) + " — " + pts.value(1).toString(), pts.value(0));
-  QSqlQuery documents("SELECT ID,COALESCE(REFERENCE,'')||' — '||TITLE FROM DOCUMENT ORDER BY TITLE",
+  QSqlQuery documents("SELECT D.ID,COALESCE((SELECT R.REFERENCE FROM DOCUMENT_REFERENCE R WHERE R.DOC_ID=D.ID AND R.IS_PRIMARY=1 ORDER BY R.ID LIMIT 1),'')||' — '||D.TITLE FROM DOCUMENT D ORDER BY D.TITLE",
                       QSqlDatabase::database(m_connection));
   while (documents.next())
     m_existingDocument->addItem(documents.value(1).toString(), documents.value(0));
@@ -940,7 +940,7 @@ void RequirementImportDialog::runImport() {
   if (m_documentMode->currentData().toString() == "existing") {
     documentId = m_existingDocument->currentData().toInt();
     QSqlQuery document(db);
-    document.prepare("SELECT COALESCE(REFERENCE,'') FROM DOCUMENT WHERE ID=?");
+    document.prepare("SELECT COALESCE((SELECT REFERENCE FROM DOCUMENT_REFERENCE WHERE DOC_ID=? AND IS_PRIMARY=1 ORDER BY ID LIMIT 1),'')");
     document.addBindValue(documentId);
     if (document.exec() && document.next())
       documentReference = document.value(0).toString();
@@ -957,9 +957,8 @@ void RequirementImportDialog::runImport() {
       return;
     }
     QSqlQuery document(db);
-    document.prepare("INSERT INTO DOCUMENT(PT_ID,TYPE,REFERENCE,TITLE,DESCRIPTION) VALUES(?,COALESCE((SELECT ID FROM DOC_TYPE WHERE UPPER(TYPE)='SP' LIMIT 1),(SELECT ID FROM DOC_TYPE ORDER BY ID LIMIT 1)),?,?,?)");
+    document.prepare("INSERT INTO DOCUMENT(PT_ID,TYPE,TITLE,DESCRIPTION) VALUES(?,COALESCE((SELECT ID FROM DOC_TYPE WHERE UPPER(TYPE)='SP' LIMIT 1),(SELECT ID FROM DOC_TYPE ORDER BY ID LIMIT 1)),?,?)");
     document.addBindValue(rootId);
-    document.addBindValue(documentReference);
     document.addBindValue(m_documentTitle->text().trimmed());
     document.addBindValue(m_documentDescription->text());
     if (!document.exec()) {

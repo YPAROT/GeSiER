@@ -90,12 +90,12 @@ DocumentService::DocumentService(QString connectionName):m_connectionName(std::m
 
 QList<DocumentRecord> DocumentService::documents() const {
   QList<DocumentRecord> out;
-  QSqlQuery q("SELECT ID,PT_ID,TYPE,COALESCE(REFERENCE,''),TITLE,COALESCE(DESCRIPTION,'') FROM DOCUMENT ORDER BY TITLE",QSqlDatabase::database(m_connectionName));
+  QSqlQuery q("SELECT D.ID,D.PT_ID,D.TYPE,COALESCE((SELECT R.REFERENCE FROM DOCUMENT_REFERENCE R WHERE R.DOC_ID=D.ID AND R.IS_PRIMARY=1 ORDER BY R.ID LIMIT 1),''),D.TITLE,COALESCE(D.DESCRIPTION,'') FROM DOCUMENT D ORDER BY D.TITLE",QSqlDatabase::database(m_connectionName));
   while(q.next()){DocumentRecord r;r.id=q.value(0).toInt();r.ptId=q.value(1).toInt();r.typeId=q.value(2).toInt();r.reference=q.value(3).toString();r.title=q.value(4).toString();r.description=q.value(5).toString();out<<r;} return out;
 }
 DocumentRecord DocumentService::document(int id) const {
   DocumentRecord r; QSqlQuery q(QSqlDatabase::database(m_connectionName));
-  q.prepare("SELECT ID,PT_ID,TYPE,COALESCE(REFERENCE,''),TITLE,COALESCE(DESCRIPTION,''),COALESCE(METADATA_JSON,'{}'),COALESCE(TEMPLATE_PATH,'') FROM DOCUMENT WHERE ID=?");q.addBindValue(id);
+  q.prepare("SELECT D.ID,D.PT_ID,D.TYPE,COALESCE((SELECT R.REFERENCE FROM DOCUMENT_REFERENCE R WHERE R.DOC_ID=D.ID AND R.IS_PRIMARY=1 ORDER BY R.ID LIMIT 1),''),D.TITLE,COALESCE(D.DESCRIPTION,''),COALESCE(D.METADATA_JSON,'{}'),COALESCE(D.TEMPLATE_PATH,'') FROM DOCUMENT D WHERE D.ID=?");q.addBindValue(id);
   if(!q.exec()||!q.next())return r;
   r.id=q.value(0).toInt();r.ptId=q.value(1).toInt();r.typeId=q.value(2).toInt();r.reference=q.value(3).toString();r.title=q.value(4).toString();r.description=q.value(5).toString();
   const auto object=QJsonDocument::fromJson(q.value(6).toByteArray()).object();for(auto it=object.begin();it!=object.end();++it)r.metadata[it.key()]=it.value().toVariant().toString();r.templatePath=q.value(7).toString();
@@ -112,8 +112,8 @@ RequirementResult DocumentService::saveDocument(const DocumentRecord&r){
   QSqlDatabase db=QSqlDatabase::database(m_connectionName);
   if(!db.transaction())return RequirementResult::failure(db.lastError().text());
   QJsonObject object;for(auto it=r.metadata.cbegin();it!=r.metadata.cend();++it)object[it.key()]=it.value();const QString json=QString::fromUtf8(QJsonDocument(object).toJson(QJsonDocument::Compact));int id=r.id;QSqlQuery q(db);
-  if(id<0){q.prepare("INSERT INTO DOCUMENT(PT_ID,TYPE,REFERENCE,TITLE,DESCRIPTION,METADATA_JSON,TEMPLATE_PATH) VALUES(?,?,?,?,?,?,?)");q.addBindValue(r.ptId);q.addBindValue(r.typeId);q.addBindValue(r.reference.trimmed());q.addBindValue(r.title.trimmed());q.addBindValue(r.description);q.addBindValue(json);q.addBindValue(r.templatePath);if(q.exec())id=q.lastInsertId().toInt();}
-  else{q.prepare("UPDATE DOCUMENT SET PT_ID=?,TYPE=?,REFERENCE=?,TITLE=?,DESCRIPTION=?,METADATA_JSON=?,TEMPLATE_PATH=? WHERE ID=?");q.addBindValue(r.ptId);q.addBindValue(r.typeId);q.addBindValue(r.reference.trimmed());q.addBindValue(r.title.trimmed());q.addBindValue(r.description);q.addBindValue(json);q.addBindValue(r.templatePath);q.addBindValue(id);q.exec();}
+  if(id<0){q.prepare("INSERT INTO DOCUMENT(PT_ID,TYPE,TITLE,DESCRIPTION,METADATA_JSON,TEMPLATE_PATH) VALUES(?,?,?,?,?,?)");q.addBindValue(r.ptId);q.addBindValue(r.typeId);q.addBindValue(r.title.trimmed());q.addBindValue(r.description);q.addBindValue(json);q.addBindValue(r.templatePath);if(q.exec())id=q.lastInsertId().toInt();}
+  else{q.prepare("UPDATE DOCUMENT SET PT_ID=?,TYPE=?,TITLE=?,DESCRIPTION=?,METADATA_JSON=?,TEMPLATE_PATH=? WHERE ID=?");q.addBindValue(r.ptId);q.addBindValue(r.typeId);q.addBindValue(r.title.trimmed());q.addBindValue(r.description);q.addBindValue(json);q.addBindValue(r.templatePath);q.addBindValue(id);q.exec();}
   if(q.lastError().isValid())return rollback(db,q.lastError().text());
   QSqlQuery clear(db);clear.prepare("DELETE FROM DOCUMENT_REFERENCE WHERE DOC_ID=?");clear.addBindValue(id);if(!clear.exec())return rollback(db,clear.lastError().text());QStringList refs=r.secondaryReferences;refs.prepend(r.reference.trimmed());
   for(int i=0;i<refs.size();++i){const QString ref=refs[i].trimmed();if(ref.isEmpty())continue;QSqlQuery add(db);add.prepare("INSERT INTO DOCUMENT_REFERENCE(DOC_ID,REFERENCE,IS_PRIMARY) VALUES(?,?,?)");add.addBindValue(id);add.addBindValue(ref);add.addBindValue(i==0);if(!add.exec())return rollback(db,add.lastError().text());}
@@ -138,11 +138,10 @@ RequirementResult DocumentService::createDocument(
   const QString json = QString::fromUtf8(
       QJsonDocument(object).toJson(QJsonDocument::Compact));
   QSqlQuery insert(db);
-  insert.prepare("INSERT INTO DOCUMENT(PT_ID,TYPE,REFERENCE,TITLE,DESCRIPTION,"
-                 "METADATA_JSON,TEMPLATE_PATH) VALUES(?,?,?,?,?,?,?)");
+  insert.prepare("INSERT INTO DOCUMENT(PT_ID,TYPE,TITLE,DESCRIPTION,"
+                 "METADATA_JSON,TEMPLATE_PATH) VALUES(?,?,?,?,?,?)");
   insert.addBindValue(record.ptId);
   insert.addBindValue(record.typeId);
-  insert.addBindValue(record.reference.trimmed());
   insert.addBindValue(record.title.trimmed());
   insert.addBindValue(record.description);
   insert.addBindValue(json);

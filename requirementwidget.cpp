@@ -687,8 +687,10 @@ void RequirementWidget::loadLookups() {
                 "SELECT ID,CODE FROM CONFIGURATION WHERE ACTIVE=1 "
                 "ORDER BY POSITION,CODE");
   fillCheckable(m_documentFilter, db,
-                "SELECT ID,COALESCE(NULLIF(REFERENCE,''),TITLE) FROM DOCUMENT "
-                "ORDER BY REFERENCE,TITLE");
+                "SELECT D.ID,COALESCE(NULLIF((SELECT R.REFERENCE FROM "
+                "DOCUMENT_REFERENCE R WHERE R.DOC_ID=D.ID AND R.IS_PRIMARY=1 "
+                "ORDER BY R.ID LIMIT 1),''),D.TITLE) FROM DOCUMENT D "
+                "ORDER BY 2,D.TITLE");
   fillCombo(m_status, db, "SELECT ID,STATUS FROM REQ_STATUS ORDER BY ID",
             QString());
   fillCombo(
@@ -1589,7 +1591,8 @@ void RequirementWidget::loadRelationGraph(int id) {
 void RequirementWidget::loadDocuments(int id) {
   m_documents->setRowCount(0);
   QSqlQuery query(QSqlDatabase::database(m_connection));
-  query.prepare("SELECT N.ID,D.TITLE,COALESCE(D.REFERENCE,''),"
+  query.prepare("SELECT N.ID,D.TITLE,COALESCE((SELECT X.REFERENCE FROM "
+                "DOCUMENT_REFERENCE X WHERE X.DOC_ID=D.ID AND X.IS_PRIMARY=1),''),"
                 "COALESCE(P.TITLE,'Racine') FROM DOCUMENT_NODE N "
                 "JOIN DOCUMENT D ON D.ID=N.DOC_ID LEFT JOIN DOCUMENT_NODE P "
                 "ON P.ID=N.PARENT_ID WHERE N.REQ_ID=? AND "

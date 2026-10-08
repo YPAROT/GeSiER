@@ -21,8 +21,8 @@ QString requirementScope(const CoverageScope &scope) {
   if (scope.typeId >= 0)
     clauses << QString("R.TYPE=%1").arg(scope.typeId);
   if (scope.documentId >= 0)
-    clauses << QString("(R.DOC_ID=%1 OR EXISTS(SELECT 1 FROM DOCUMENT_NODE DN "
-                       "WHERE DN.REQ_ID=R.ID AND DN.DOC_ID=%1))")
+    clauses << QString("EXISTS(SELECT 1 FROM DOCUMENT_NODE DN WHERE "
+                       "DN.REQ_ID=R.ID AND DN.DOC_ID=%1)")
                    .arg(scope.documentId);
   if (scope.ptId >= 0)
     clauses << QString("EXISTS(SELECT 1 FROM REQUIREMENT_PT RP WHERE "
@@ -212,7 +212,8 @@ CoverageSnapshot CoverageService::snapshot(const CoverageScope &scope,
         : QStringLiteral("EXISTS(SELECT 1 FROM CONFIGURATION C WHERE "
                          "C.ID=A.CONFIG_ID AND C.ACTIVE=1)");
     QString sql =
-        "SELECT D.ID,COALESCE(NULLIF(D.REFERENCE,''),'—'),D.TITLE,"
+        "SELECT D.ID,COALESCE((SELECT X.REFERENCE FROM DOCUMENT_REFERENCE X "
+        "WHERE X.DOC_ID=D.ID AND X.IS_PRIMARY=1),'—'),D.TITLE,"
         "COALESCE(T.TYPE,'—'),COALESCE(P.NAME,'—'),"
         "COUNT(DISTINCT R.ID),"
         "COUNT(DISTINCT CASE WHEN EXISTS(SELECT 1 FROM "
@@ -231,8 +232,8 @@ CoverageSnapshot CoverageService::snapshot(const CoverageScope &scope,
         "AND (" + where + ") ";
     if (scope.documentId >= 0)
       sql += QString("WHERE D.ID=%1 ").arg(scope.documentId);
-    sql += "GROUP BY D.ID,D.REFERENCE,D.TITLE,T.TYPE,P.NAME "
-           "ORDER BY COUNT(DISTINCT R.ID) DESC,D.REFERENCE,D.TITLE";
+    sql += "GROUP BY D.ID,D.TITLE,T.TYPE,P.NAME "
+           "ORDER BY COUNT(DISTINCT R.ID) DESC,D.TITLE";
     QSqlQuery documents(db);
     if (!documents.exec(sql)) {
       if (error && error->isEmpty()) *error = documents.lastError().text();

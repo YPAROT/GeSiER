@@ -113,9 +113,9 @@ RequirementService::find(const RequirementFilter &filter,
       "REQUIREMENT_APPLICABILITY A JOIN CONFIGURATION C ON C.ID=A.CONFIG_ID "
       "WHERE A.REQ_ID=R.ID AND A.PT_ID IS NULL ORDER BY C.CODE)),''),"
       "COALESCE((SELECT GROUP_CONCAT(REFERENCE,' | ') FROM (SELECT "
-      "COALESCE(NULLIF(D.REFERENCE,''),D.TITLE) AS REFERENCE FROM "
+      "COALESCE((SELECT X.REFERENCE FROM DOCUMENT_REFERENCE X WHERE X.DOC_ID=D.ID AND X.IS_PRIMARY=1),D.TITLE) AS REFERENCE FROM "
       "DOCUMENT_NODE N JOIN DOCUMENT D ON D.ID=N.DOC_ID WHERE N.REQ_ID=R.ID "
-      "ORDER BY D.REFERENCE,D.TITLE)),''),"
+      "ORDER BY REFERENCE,D.TITLE)),''),"
       "EXISTS(SELECT 1 FROM REQUIREMENT_PT X WHERE X.REQ_ID=R.ID),"
       "EXISTS(SELECT 1 FROM REQUIREMENT_RELATION X WHERE X.TARGET_REQ_ID=R.ID "
       "AND X.TYPE_ID IN(1,2)),"
@@ -308,41 +308,14 @@ RequirementResult RequirementService::save(const RequirementRecord &record,
   if (manageTransaction && !db.transaction())
     return RequirementResult::failure(db.lastError().text());
   int id = record.id;
-  const RequirementVerification *first =
-      record.verifications.isEmpty() ? nullptr : &record.verifications.first();
   ProductTreeService pt(m_connectionName);
-  const QString firstLevel = first && first->levelPtId >= 0
-                                 ? pt.fullCode(first->levelPtId)
-                                 : (first ? first->level : QString());
   if (id < 0) {
-    QSqlQuery documentCount(db);
-    if (!documentCount.exec("SELECT 1 FROM DOCUMENT LIMIT 1")) {
-      if (manageTransaction)
-        db.rollback();
-      return RequirementResult::failure(documentCount.lastError().text());
-    }
-    if (!documentCount.next()) {
-      QSqlQuery compatibilityDocument(db);
-      compatibilityDocument.prepare(
-          "INSERT INTO DOCUMENT(PT_ID,TYPE,TITLE,DESCRIPTION) "
-          "VALUES(?,COALESCE((SELECT ID FROM DOC_TYPE ORDER BY ID LIMIT 1),1),"
-          "'Exigences non affectées à un document',"
-          "'Conteneur technique de compatibilité ; ne constitue pas une "
-          "couverture documentaire.')");
-      compatibilityDocument.addBindValue(record.primaryPtId);
-      if (!compatibilityDocument.exec()) {
-        if (manageTransaction)
-          db.rollback();
-        return RequirementResult::failure(
-            compatibilityDocument.lastError().text());
-      }
-    }
     QSqlQuery defaults(db);
     if (!defaults.exec(
-            "SELECT (SELECT ID FROM DOCUMENT LIMIT 1),(SELECT ID FROM REQ_TYPE "
-            "ORDER BY ID LIMIT 1),(SELECT ID FROM REQ_STATUS ORDER BY ID LIMIT "
-            "1),(SELECT ID FROM REQ_METHOD ORDER BY ID LIMIT 1)") ||
-        !defaults.next() || defaults.value(0).isNull()) {
+            "SELECT (SELECT ID FROM REQ_TYPE ORDER BY ID LIMIT 1),(SELECT ID "
+            "FROM REQ_STATUS ORDER BY ID LIMIT 1)") ||
+        !defaults.next() || defaults.value(0).isNull() ||
+        defaults.value(1).isNull()) {
       if (manageTransaction) db.rollback();
       return RequirementResult::failure(
           "Les catalogues nécessaires à la création sont incomplets.");
@@ -350,24 +323,15 @@ RequirementResult RequirementService::save(const RequirementRecord &record,
     QSqlQuery insert(db);
     insert.prepare(
         "INSERT INTO "
-        "REQUIREMENT(PT_ID,CODE,DOC_ID,TITLE,DESCRIPTION,TYPE,STATUS,SOURCE,"
-        "VERIF_LEVEL,VERIF_METHOD,VERIF_PROCEDURE,REDMINE_REF,VERIF_MEANS,"
-        "VERIF_STATUS,IS_TRACE_ROOT,COMMENTS) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
-    insert.addBindValue(record.primaryPtId);
+        "REQUIREMENT(CODE,TITLE,DESCRIPTION,TYPE,STATUS,SOURCE,IS_TRACE_ROOT,"
+        "COMMENTS) VALUES(?,?,?,?,?,?,?,?)");
     insert.addBindValue(record.code.trimmed());
-    insert.addBindValue(defaults.value(0));
     insert.addBindValue(record.title.trimmed());
     insert.addBindValue(description);
-    insert.addBindValue(record.typeId < 0 ? defaults.value(1) : record.typeId);
-    insert.addBindValue(record.statusId < 0 ? defaults.value(2)
+    insert.addBindValue(record.typeId < 0 ? defaults.value(0) : record.typeId);
+    insert.addBindValue(record.statusId < 0 ? defaults.value(1)
                                             : record.statusId);
     insert.addBindValue(record.source);
-    insert.addBindValue(first ? QVariant(firstLevel) : QVariant());
-    insert.addBindValue(first ? QVariant(first->methodId) : defaults.value(3));
-    insert.addBindValue(first ? first->procedure : QString());
-    insert.addBindValue(first ? first->redmine : QString());
-    insert.addBindValue(first ? first->means : QString());
-    insert.addBindValue(first ? first->verdict : QString());
     insert.addBindValue(record.traceRoot ? 1 : 0);
     insert.addBindValue(record.comments);
     if (!insert.exec()) {
@@ -377,25 +341,14 @@ RequirementResult RequirementService::save(const RequirementRecord &record,
     id = insert.lastInsertId().toInt();
   } else {
     QSqlQuery update(db);
-    update.prepare("UPDATE REQUIREMENT SET "
-                   "PT_ID=?,CODE=?,TITLE=?,DESCRIPTION=?,TYPE=?,STATUS=?,"
-                   "SOURCE=?,VERIF_LEVEL=?,VERIF_METHOD=COALESCE(?,VERIF_"
-                   "METHOD),VERIF_PROCEDURE=?,"
-                   "REDMINE_REF=?,VERIF_MEANS=?,VERIF_STATUS=?,IS_TRACE_ROOT=?,COMMENTS=? "
-                   "WHERE ID=?");
-    update.addBindValue(record.primaryPtId);
+    update.prepare("UPDATE REQUIREMENT SET CODE=?,TITLE=?,DESCRIPTION=?,TYPE=?,"
+                   "STATUS=?,SOURCE=?,IS_TRACE_ROOT=?,COMMENTS=? WHERE ID=?");
     update.addBindValue(record.code.trimmed());
     update.addBindValue(record.title.trimmed());
     update.addBindValue(description);
     update.addBindValue(record.typeId);
     update.addBindValue(record.statusId);
     update.addBindValue(record.source);
-    update.addBindValue(firstLevel);
-    update.addBindValue(first ? QVariant(first->methodId) : QVariant());
-    update.addBindValue(first ? first->procedure : QString());
-    update.addBindValue(first ? first->redmine : QString());
-    update.addBindValue(first ? first->means : QString());
-    update.addBindValue(first ? first->verdict : QString());
     update.addBindValue(record.traceRoot ? 1 : 0);
     update.addBindValue(record.comments);
     update.addBindValue(id);

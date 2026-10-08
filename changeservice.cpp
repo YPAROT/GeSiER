@@ -44,8 +44,9 @@ QString linkLabel(QSqlDatabase db, const QString &t, int id) {
   else if (t == "INTERFACE")
     sql = "SELECT COALESCE(CODE,'IF-'||ID) FROM INTERFACE WHERE ID=?";
   else if (t == "DOCUMENT")
-    sql =
-        "SELECT COALESCE(NULLIF(REFERENCE,''),TITLE) FROM DOCUMENT WHERE ID=?";
+    sql = "SELECT COALESCE((SELECT R.REFERENCE FROM DOCUMENT_REFERENCE R "
+          "WHERE R.DOC_ID=D.ID AND R.IS_PRIMARY=1),D.TITLE) FROM DOCUMENT D "
+          "WHERE D.ID=?";
   else
     return {};
   QSqlQuery q(db);
@@ -259,7 +260,6 @@ RequirementResult ChangeService::save(const ChangeRecord &r) {
   if (!status.exec() || !status.next())
     return RequirementResult::failure("Statut invalide.");
   bool final = status.value(0).toBool();
-  QString statusCode = status.value(1).toString();
   if (final && r.decision.trimmed().isEmpty())
     return RequirementResult::failure(
         "Une décision est obligatoire pour un statut final.");
@@ -297,22 +297,14 @@ RequirementResult ChangeService::save(const ChangeRecord &r) {
   QSqlQuery q(db);
   if (r.id < 0)
     q.prepare(
-        "INSERT INTO "
-        "CHANGE_ITEM(CODE,TYPE,STATUS,TYPE_ID,STATUS_ID,DESCRIPTION,DECISION,"
+        "INSERT INTO CHANGE_ITEM(CODE,TYPE_ID,STATUS_ID,DESCRIPTION,DECISION,"
         "OPENED_AT,CLOSED_AT,EXTERNAL_REFERENCE,EXTERNAL_LINK,ARCHIVED,UPDATED_"
-        "AT) VALUES(?,(SELECT CASE WHEN CODE "
-        "IN('CHANGE_REQUEST','WAIVER','DEVIATION') THEN CODE ELSE 'OTHER' END "
-        "FROM CHANGE_TYPE WHERE ID=?),?,?,?,?,?,?,?,?,?,0,CURRENT_TIMESTAMP)");
+        "AT) VALUES(?,?,?,?,?,?,?,?,?,0,CURRENT_TIMESTAMP)");
   else
-    q.prepare("UPDATE CHANGE_ITEM SET CODE=?,TYPE=(SELECT CASE WHEN CODE "
-              "IN('CHANGE_REQUEST','WAIVER','DEVIATION') THEN CODE ELSE "
-              "'OTHER' END FROM CHANGE_TYPE WHERE "
-              "ID=?),STATUS=?,TYPE_ID=?,STATUS_ID=?,DESCRIPTION=?,DECISION=?,"
+    q.prepare("UPDATE CHANGE_ITEM SET CODE=?,TYPE_ID=?,STATUS_ID=?,DESCRIPTION=?,DECISION=?,"
               "OPENED_AT=?,CLOSED_AT=?,EXTERNAL_REFERENCE=?,EXTERNAL_LINK=?,"
               "UPDATED_AT=CURRENT_TIMESTAMP WHERE ID=?");
   q.addBindValue(r.code.trimmed());
-  q.addBindValue(r.typeId);
-  q.addBindValue(statusCode);
   q.addBindValue(r.typeId);
   q.addBindValue(r.statusId);
   q.addBindValue(r.description);

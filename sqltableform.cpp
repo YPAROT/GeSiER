@@ -505,15 +505,6 @@ void SQLTableForm::on_sqlTableView_doubleClicked(const QModelIndex &index)
     if(!m_isEditable || !m_sqlTableModel)
         return;
 
-    if(m_sqlTableModel->tableName()=="\"REQUIREMENT\"")
-    {
-        EditRequirement *edit = new EditRequirement(this->m_proxies.last(),index,this);
-        int result=edit->exec();
-        if(result==QDialog::Accepted)
-        {
-            edit->ApplyFieldsChanges();
-        }
-        delete edit;
-    }
+    Q_UNUSED(index);
 
 }

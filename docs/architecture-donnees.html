@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>GeSiER — Architecture des données</title>
+  <style>
+    :root{--bg:#07111f;--panel:#0d1b2d;--panel2:#10233a;--text:#e8f0f8;--muted:#93a8be;--line:#28445f;--accent:#5eead4;--accent2:#60a5fa;--warn:#fbbf24;--danger:#fb7185}
+    *{box-sizing:border-box} body{margin:0;background:linear-gradient(140deg,#07111f,#0a1728 55%,#07111f);color:var(--text);font:14px/1.45 Inter,Segoe UI,Arial,sans-serif}
+    header{padding:34px clamp(20px,5vw,72px) 24px;border-bottom:1px solid #183049;background:radial-gradient(circle at 78% 0,#123c55 0,transparent 38%)}
+    h1{margin:0 0 8px;font-size:clamp(28px,4vw,46px);letter-spacing:-.04em}.lead{margin:0;color:var(--muted);max-width:850px;font-size:16px}
+    .meta{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}.pill{border:1px solid #31516d;background:#0b1c2e;border-radius:999px;padding:6px 10px;color:#b8cada}.pill b{color:var(--accent)}
+    main{max-width:1600px;margin:auto;padding:24px}.toolbar{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;position:sticky;top:0;z-index:5;padding:10px 0;background:#07111fee;backdrop-filter:blur(8px)}
+    input,select,button{border:1px solid #29465f;background:#0d1b2d;color:var(--text);border-radius:9px;padding:10px 12px;font:inherit}input{min-width:280px;flex:1}button{cursor:pointer}button:hover{border-color:var(--accent)}
+    .graph-wrap{height:72vh;min-height:560px;border:1px solid #203b54;border-radius:14px;overflow:hidden;background:#081522;position:relative}.graph-wrap svg{width:100%;height:100%}.hint{position:absolute;left:12px;bottom:10px;color:#7890a8;background:#07111fcc;padding:5px 8px;border-radius:6px;font-size:12px}
+    .edge{stroke:#3b617e;stroke-width:1.3;opacity:.48;fill:none}.edge.poly{stroke:var(--warn);stroke-dasharray:6 4}.node rect{fill:#10243a;stroke:#34516b;stroke-width:1.2;rx:8}.node text{fill:#ddecf8;font-weight:650;font-size:11px;pointer-events:none}.node.core rect{stroke:var(--accent);stroke-width:1.8}.node:hover rect,.node.active rect{fill:#173853;stroke:#fff}.node{cursor:pointer}
+    h2{font-size:22px;margin:32px 0 12px}.legend{display:flex;gap:18px;flex-wrap:wrap;color:var(--muted);margin:10px 0 18px}.key{display:inline-flex;align-items:center;gap:7px}.swatch{width:25px;border-top:2px solid #3b617e}.swatch.poly{border-color:var(--warn);border-top-style:dashed}
+    .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:12px}.card{background:linear-gradient(155deg,#10233a,#0b192a);border:1px solid #233f59;border-radius:12px;overflow:hidden}.card.hide{display:none}.card-head{padding:12px 14px;border-bottom:1px solid #20384e;display:flex;justify-content:space-between;gap:8px;align-items:center}.card h3{margin:0;font-size:15px;color:#e8f4ff}.domain{font-size:11px;color:#9bb0c5;background:#172b42;border-radius:99px;padding:3px 7px}.cols{padding:8px 14px 12px}.col{display:grid;grid-template-columns:minmax(100px,1fr) auto;gap:8px;padding:4px 0;border-bottom:1px solid #162d43}.col:last-child{border:0}.ctype{color:#7892aa;font-family:Consolas,monospace;font-size:12px;text-align:right}.pk{color:var(--warn)}.fk{color:var(--accent2)}.nullable{opacity:.68}.relations{padding:0 14px 12px;color:#a9bdd0;font-size:12px}.relations div{margin:3px 0}.relations code{color:#79dccc}footer{padding:35px 24px;color:#7890a8;text-align:center}.note{border-left:3px solid var(--warn);padding:9px 12px;background:#2b2515;color:#dec98b;border-radius:0 8px 8px 0;margin:16px 0}
+  </style>
+</head>
+<body>
+<header><h1>Architecture des données GeSiER</h1><p class="lead">Vue du schéma SQLite normalisé après migration (version 18). Le périmètre de ce rapport est volontairement limité aux tables, colonnes structurantes et relations.</p><div class="meta"><span class="pill"><b id="tableCount"></b> tables</span><span class="pill"><b id="fkCount"></b> clés étrangères</span><span class="pill">Source : <b>createTables.sql + DatabaseMigrator</b></span><span class="pill">État : <b>schéma v18</b></span></div></header>
+<main>
+  <div class="toolbar"><input id="search" placeholder="Rechercher une table, une colonne…"><select id="domain"><option value="">Tous les domaines</option></select><button id="reset">Réinitialiser le graphe</button></div>
+  <section class="graph-wrap"><svg id="graph" viewBox="0 0 1500 850" role="img" aria-label="Diagramme des relations entre tables"></svg><div class="hint">Glisser les tables · molette pour zoomer · clic pour filtrer le catalogue</div></section>
+  <div class="legend"><span class="key"><i class="swatch"></i> clé étrangère SQL</span><span class="key"><i class="swatch poly"></i> relation polymorphe logique</span><span class="key"><span class="pk">PK</span> clé primaire</span><span class="key"><span class="fk">FK</span> clé étrangère</span></div>
+  <div class="note">Schéma normalisé v18. CHANGE_LINK.OBJECT_ID et EVENT_LOG.OBJECT_ID restent des références polymorphes : leur cible dépend de OBJECT_TYPE et SQLite ne les garantit pas par une contrainte FOREIGN KEY.</div>
+  <h2>Catalogue des tables</h2><section id="cards" class="cards"></section>
+</main><footer>Rapport généré à partir du code source du projet GeSiER — 8 octobre 2026.</footer>
+<script>
+const T=(name,domain,cols)=>({name,domain,cols});
+const tables=[
+T('PT','Produit',['ID INTEGER PK','NAME STRING UQ NN','PARENT INTEGER FK?','SEGMENT TEXT','DESCRIPTION TEXT','POSITION INTEGER NN','ARCHIVED INTEGER NN','CREATED_AT TEXT','UPDATED_AT TEXT']),
+T('PART','Produit',['ID INTEGER PK','PT_ID INTEGER FK NN','NAME STRING UQ NN','SERIAL INTEGER UQ NN','CONFIG_ID INTEGER FK NN','DESCRIPTION TEXT']),
+T('DOCUMENT','Documents',['ID INTEGER PK','PT_ID INTEGER FK NN','TYPE INTEGER FK NN','TITLE STRING UQ NN','DESCRIPTION TEXT','TEMPLATE_PATH TEXT','METADATA_JSON TEXT']),
+T('DOC_TYPE','Référentiel',['ID INTEGER PK','TYPE STRING NN','DESCRIPTION TEXT']),
+T('DOCUMENT_REFERENCE','Documents',['ID INTEGER PK','DOC_ID INTEGER FK NN','REFERENCE TEXT NN','IS_PRIMARY INTEGER NN']),
+T('DOCUMENT_NODE','Documents',['ID INTEGER PK','DOC_ID INTEGER FK NN','PARENT_ID INTEGER FK?','NODE_TYPE TEXT NN','POSITION INTEGER NN','TITLE TEXT','REQ_ID INTEGER FK?','TEXT_CONTENT TEXT','IMAGE_DATA BLOB','IMAGE_LEGEND TEXT']),
+T('DOCUMENT_EXPORT','Documents',['ID INTEGER PK','DOC_ID INTEGER FK NN','EXPORT_KIND TEXT NN','VERSION TEXT','TITLE TEXT','AUTHOR TEXT','EXPORTED_AT TEXT NN','FILE_PATH TEXT','FILE_SHA256 TEXT','GED_REFERENCE TEXT','GED_LINK TEXT','SNAPSHOT_JSON TEXT','TEMPLATE_PATH TEXT','TEMPLATE_SHA256 TEXT','METADATA_JSON TEXT','DRAFT_LABEL TEXT']),
+T('REQUIREMENT','Exigences',['ID INTEGER PK','CODE TEXT NN','TITLE TEXT NN','DESCRIPTION TEXT','TYPE INTEGER FK NN','STATUS INTEGER FK NN','SOURCE TEXT','IS_TRACE_ROOT INTEGER NN','COMMENTS TEXT']),
+T('REQ_TYPE','Référentiel',['ID INTEGER PK','TYPE TEXT NN UQ','CODE TEXT']),T('REQ_STATUS','Référentiel',['ID INTEGER PK','SHORTCUT STRING UQ NN','STATUS STRING UQ NN']),T('REQ_METHOD','Référentiel',['ID INTEGER PK','METHOD STRING NN']),
+T('REQ_IMAGE','Exigences',['ID INTEGER PK','REQ_ID INTEGER FK NN','TOKEN TEXT UQ NN','MIME_TYPE TEXT NN','LEGEND TEXT','IMAGE BLOB NN']),
+T('REQUIREMENT_RELATION_TYPE','Référentiel',['ID INTEGER PK','CODE TEXT UQ NN','LABEL TEXT NN']),T('REQUIREMENT_RELATION','Exigences',['ID INTEGER PK','SOURCE_REQ_ID INTEGER FK NN','TARGET_REQ_ID INTEGER FK NN','TYPE_ID INTEGER FK NN','CREATED_AT TEXT NN','COMMENT TEXT']),
+T('REQUIREMENT_PT','Exigences',['REQ_ID INTEGER PK FK','PT_ID INTEGER PK FK','IS_PRIMARY INTEGER NN']),T('REQUIREMENT_CODE_SEQUENCE','Exigences',['PT_ID INTEGER PK FK','NEXT_VALUE INTEGER NN']),
+T('REQUIREMENT_VERIFICATION','Vérification',['ID INTEGER PK','REQ_ID INTEGER FK NN','METHOD_ID INTEGER FK NN','VERIF_LEVEL TEXT','PROCEDURE_REF TEXT','REDMINE_REF TEXT','MEANS TEXT','VERDICT TEXT','COMMENT TEXT','POSITION INTEGER NN','VERIFICATION_LEVEL_PT_ID INTEGER FK?']),
+T('REQIF_IDENTITY','Échange ReqIF',['REQ_ID INTEGER PK FK','EXTERNAL_ID TEXT UQ NN','SOURCE_DOCUMENT TEXT','LAST_SYNC_AT TEXT NN']),T('REQIF_ATTRIBUTE','Échange ReqIF',['REQ_ID INTEGER PK FK','ATTRIBUTE_ID TEXT PK','ATTRIBUTE_NAME TEXT NN','VALUE TEXT','VALUE_TYPE TEXT']),
+T('CONFIGURATION','Applicabilité',['ID INTEGER PK','CODE TEXT UQ NN','LABEL TEXT NN','DESCRIPTION TEXT','ACTIVE INTEGER NN','POSITION INTEGER NN','CREATED_AT TEXT','UPDATED_AT TEXT']),T('REQUIREMENT_APPLICABILITY','Applicabilité',['REQ_ID INTEGER PK FK','CONFIG_ID INTEGER PK FK','PT_ID INTEGER PK FK?','APPLICABLE INTEGER NN','COMMENT TEXT']),
+T('INTERFACE','Interfaces',['ID INTEGER PK','ELEMENT1 INTEGER FK NN','ELEMENT2 INTEGER FK NN','DESCRIPTION TEXT','CODE TEXT','STATUS TEXT NN','ARCHIVED INTEGER NN','CREATED_AT TEXT','UPDATED_AT TEXT']),T('IF_IMAGE','Interfaces',['ID INTEGER PK','IF_ID INTEGER FK NN','LEGEND TEXT','IMAGE BLOB NN']),T('INTERFACE_TYPE','Référentiel',['ID INTEGER PK','CODE TEXT UQ NN','LABEL TEXT NN']),T('INTERFACE_TYPE_LINK','Interfaces',['INTERFACE_ID INTEGER PK FK','TYPE_ID INTEGER PK FK']),T('INTERFACE_DOCUMENT','Interfaces',['INTERFACE_ID INTEGER PK FK','DOC_ID INTEGER PK FK','CHAPTER_NODE_ID INTEGER FK?']),T('INTERFACE_REQUIREMENT','Interfaces',['INTERFACE_ID INTEGER PK FK','REQ_ID INTEGER PK FK']),
+T('CHANGE_TYPE','Référentiel',['ID INTEGER PK','CODE TEXT UQ NN','LABEL TEXT NN','ACTIVE INTEGER NN']),T('CHANGE_STATUS','Référentiel',['ID INTEGER PK','CODE TEXT UQ NN','LABEL TEXT NN','IS_FINAL INTEGER NN','POSITION INTEGER NN']),T('CHANGE_ITEM','Changements',['ID INTEGER PK','CODE TEXT UQ NN','TYPE_ID INTEGER FK NN','STATUS_ID INTEGER FK NN','DESCRIPTION TEXT','DECISION TEXT','OPENED_AT TEXT NN','CLOSED_AT TEXT','EXTERNAL_REFERENCE TEXT','EXTERNAL_LINK TEXT','ARCHIVED INTEGER NN','UPDATED_AT TEXT']),T('CHANGE_LINK','Changements',['ID INTEGER PK','CHANGE_ID INTEGER FK NN','OBJECT_TYPE TEXT NN','OBJECT_ID INTEGER NN (polymorphe)']),
+T('EVENT_LOG','Audit',['ID INTEGER PK','EVENT_TIME TEXT NN','AUTHOR TEXT','EVENT_TYPE TEXT NN','OBJECT_TYPE TEXT NN','OBJECT_ID INTEGER (polymorphe)','BEFORE_JSON TEXT','AFTER_JSON TEXT','COMMENT TEXT','EVENT_GROUP TEXT']),T('EVENT_CONTEXT','Audit',['ID INTEGER PK','AUTHOR TEXT NN','EVENT_GROUP TEXT']),T('MIGRATION_REPORT','Technique',['ID INTEGER PK','RUN_AT TEXT NN','FROM_VERSION INTEGER NN','TO_VERSION INTEGER NN','REPORT TEXT NN']),T('PROJECT_META','Technique',['KEY TEXT PK','VALUE TEXT'])
+];
+const E=(a,ac,b,bc,poly=false)=>({a,ac,b,bc,poly}); const edges=[
+E('PT','PARENT','PT','ID'),E('PART','PT_ID','PT','ID'),E('PART','CONFIG_ID','CONFIGURATION','ID'),E('DOCUMENT','PT_ID','PT','ID'),E('DOCUMENT','TYPE','DOC_TYPE','ID'),E('DOCUMENT_REFERENCE','DOC_ID','DOCUMENT','ID'),E('DOCUMENT_NODE','DOC_ID','DOCUMENT','ID'),E('DOCUMENT_NODE','PARENT_ID','DOCUMENT_NODE','ID'),E('DOCUMENT_NODE','REQ_ID','REQUIREMENT','ID'),E('DOCUMENT_EXPORT','DOC_ID','DOCUMENT','ID'),
+E('REQUIREMENT','TYPE','REQ_TYPE','ID'),E('REQUIREMENT','STATUS','REQ_STATUS','ID'),E('REQ_IMAGE','REQ_ID','REQUIREMENT','ID'),
+E('REQUIREMENT_RELATION','SOURCE_REQ_ID','REQUIREMENT','ID'),E('REQUIREMENT_RELATION','TARGET_REQ_ID','REQUIREMENT','ID'),E('REQUIREMENT_RELATION','TYPE_ID','REQUIREMENT_RELATION_TYPE','ID'),E('REQUIREMENT_PT','REQ_ID','REQUIREMENT','ID'),E('REQUIREMENT_PT','PT_ID','PT','ID'),E('REQUIREMENT_CODE_SEQUENCE','PT_ID','PT','ID'),E('REQUIREMENT_VERIFICATION','REQ_ID','REQUIREMENT','ID'),E('REQUIREMENT_VERIFICATION','METHOD_ID','REQ_METHOD','ID'),E('REQUIREMENT_VERIFICATION','VERIFICATION_LEVEL_PT_ID','PT','ID'),E('REQIF_IDENTITY','REQ_ID','REQUIREMENT','ID'),E('REQIF_ATTRIBUTE','REQ_ID','REQUIREMENT','ID'),
+E('REQUIREMENT_APPLICABILITY','REQ_ID','REQUIREMENT','ID'),E('REQUIREMENT_APPLICABILITY','CONFIG_ID','CONFIGURATION','ID'),E('REQUIREMENT_APPLICABILITY','PT_ID','PT','ID'),E('INTERFACE','ELEMENT1','PT','ID'),E('INTERFACE','ELEMENT2','PT','ID'),E('IF_IMAGE','IF_ID','INTERFACE','ID'),E('INTERFACE_TYPE_LINK','INTERFACE_ID','INTERFACE','ID'),E('INTERFACE_TYPE_LINK','TYPE_ID','INTERFACE_TYPE','ID'),E('INTERFACE_DOCUMENT','INTERFACE_ID','INTERFACE','ID'),E('INTERFACE_DOCUMENT','DOC_ID','DOCUMENT','ID'),E('INTERFACE_DOCUMENT','CHAPTER_NODE_ID','DOCUMENT_NODE','ID'),E('INTERFACE_REQUIREMENT','INTERFACE_ID','INTERFACE','ID'),E('INTERFACE_REQUIREMENT','REQ_ID','REQUIREMENT','ID'),
+E('CHANGE_ITEM','TYPE_ID','CHANGE_TYPE','ID'),E('CHANGE_ITEM','STATUS_ID','CHANGE_STATUS','ID'),E('CHANGE_LINK','CHANGE_ID','CHANGE_ITEM','ID'),E('CHANGE_LINK','OBJECT_ID','REQUIREMENT / PT / CONFIGURATION / INTERFACE / DOCUMENT','ID',true),E('EVENT_LOG','OBJECT_ID','Objet métier selon OBJECT_TYPE','ID',true)
+];
+document.querySelector('#tableCount').textContent=tables.length;document.querySelector('#fkCount').textContent=edges.filter(e=>!e.poly).length;
+const domain=document.querySelector('#domain');[...new Set(tables.map(t=>t.domain))].sort().forEach(d=>domain.add(new Option(d,d)));
+const cards=document.querySelector('#cards');
+function renderCards(){cards.innerHTML='';tables.forEach(t=>{let rel=edges.filter(e=>e.a===t.name&&!e.poly);let c=document.createElement('article');c.className='card';c.dataset.name=(t.name+' '+t.domain+' '+t.cols.join(' ')).toLowerCase();c.dataset.domain=t.domain;c.id='table-'+t.name;c.innerHTML=`<div class="card-head"><h3>${t.name}</h3><span class="domain">${t.domain}</span></div><div class="cols">${t.cols.map(x=>{let p=x.split(' '),n=p.shift(),flags=p.join(' ');return `<div class="col"><span class="${flags.includes('PK')?'pk':flags.includes('FK')?'fk':''} ${flags.includes('?')?'nullable':''}">${n}</span><span class="ctype">${flags}</span></div>`}).join('')}</div>${rel.length?`<div class="relations">${rel.map(e=>`<div><code>${e.ac}</code> → ${e.b}.${e.bc}</div>`).join('')}</div>`:''}`;cards.appendChild(c)})}renderCards();
+function filter(){let q=document.querySelector('#search').value.toLowerCase(),d=domain.value;document.querySelectorAll('.card').forEach(c=>c.classList.toggle('hide',!(c.dataset.name.includes(q)&&(!d||c.dataset.domain===d))))}document.querySelector('#search').oninput=filter;domain.onchange=filter;
+const svg=document.querySelector('#graph'),NS='http://www.w3.org/2000/svg';let view={x:0,y:0,w:1500,h:850};
+const core=new Set(['REQUIREMENT','PT','DOCUMENT','INTERFACE','CHANGE_ITEM','CONFIGURATION']);let nodes=tables.map((t,i)=>({...t,x:120+(i%8)*180,y:80+Math.floor(i/8)*140,vx:0,vy:0}));let by=Object.fromEntries(nodes.map(n=>[n.name,n]));
+function el(tag,attrs={}){let x=document.createElementNS(NS,tag);for(let k in attrs)x.setAttribute(k,attrs[k]);return x}let edgeLayer=el('g'),nodeLayer=el('g');svg.append(edgeLayer,nodeLayer);
+function draw(){
+  edgeLayer.innerHTML='';
+  edges.filter(e=>by[e.a]&&by[e.b]).forEach(e=>{
+    let a=by[e.a],b=by[e.b],p=el('line',{x1:a.x,y1:a.y,x2:b.x,y2:b.y,class:'edge'+(e.poly?' poly':'')});
+    p.appendChild(el('title')).textContent=`${e.a}.${e.ac} → ${e.b}.${e.bc}`;
+    edgeLayer.appendChild(p);
+  });
+  nodeLayer.innerHTML='';
+  nodes.forEach(n=>{
+    let g=el('g',{class:'node '+(core.has(n.name)?'core':''),transform:`translate(${n.x-72} ${n.y-17})`});
+    let r=el('rect',{width:144,height:34});
+    let label=el('text',{x:72,y:21,'text-anchor':'middle'}); label.textContent=n.name;
+    g.append(r,label);
+    g.appendChild(el('title')).textContent=n.domain;
+    g.onpointerdown=ev=>{
+      g.setPointerCapture(ev.pointerId); let last={x:ev.clientX,y:ev.clientY};
+      g.onpointermove=e=>{let scale=view.w/svg.clientWidth;n.x+=(e.clientX-last.x)*scale;n.y+=(e.clientY-last.y)*scale;last={x:e.clientX,y:e.clientY};draw()};
+      g.onpointerup=()=>{g.onpointermove=null;document.querySelector('#table-'+n.name)?.scrollIntoView({behavior:'smooth',block:'center'})};
+    };
+    nodeLayer.appendChild(g);
+  });
+}
+function layout(){for(let k=0;k<350;k++){nodes.forEach((a,i)=>{nodes.slice(i+1).forEach(b=>{let dx=a.x-b.x,dy=a.y-b.y,d2=Math.max(2500,dx*dx+dy*dy),f=1000/d2;a.vx+=dx*f;a.vy+=dy*f;b.vx-=dx*f;b.vy-=dy*f})});edges.forEach(e=>{let a=by[e.a],b=by[e.b];if(!a||!b)return;let dx=b.x-a.x,dy=b.y-a.y,d=Math.max(1,Math.hypot(dx,dy)),f=(d-125)*.0008;a.vx+=dx*f;a.vy+=dy*f;b.vx-=dx*f;b.vy-=dy*f});nodes.forEach(n=>{n.vx*=.78;n.vy*=.78;n.x=Math.max(85,Math.min(1415,n.x+n.vx));n.y=Math.max(35,Math.min(815,n.y+n.vy))})}draw()}layout();document.querySelector('#reset').onclick=layout;
+svg.onwheel=e=>{e.preventDefault();let f=e.deltaY>0?1.12:.89,old=view.w;view.w*=f;view.h*=f;view.x+=(old-view.w)/2;view.y+=(old*850/1500-view.h)/2;svg.setAttribute('viewBox',`${view.x} ${view.y} ${view.w} ${view.h}`)},{passive:false};
+</script></body></html>

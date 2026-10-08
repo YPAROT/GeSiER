@@ -117,8 +117,8 @@ ReferenceDataResult ReferenceDataService::deleteVerificationMethod(int id) const
   QSqlDatabase db = database(m_connectionName);
   if (!db.isValid() || !db.isOpen()) return unavailable(db);
   QSqlQuery used(db);
-  used.prepare("SELECT (SELECT COUNT(*) FROM REQUIREMENT WHERE VERIF_METHOD=?) + (SELECT COUNT(*) FROM REQUIREMENT_VERIFICATION WHERE METHOD_ID=?)");
-  used.addBindValue(id); used.addBindValue(id);
+  used.prepare("SELECT COUNT(*) FROM REQUIREMENT_VERIFICATION WHERE METHOD_ID=?");
+  used.addBindValue(id);
   if (!used.exec() || !used.next()) return ReferenceDataResult::failure(used.lastError().text());
   if (used.value(0).toInt() > 0) return ReferenceDataResult::failure("Cette méthode est utilisée par au moins une exigence et ne peut pas être supprimée.");
   QSqlQuery query(db); query.prepare("DELETE FROM REQ_METHOD WHERE ID=?"); query.addBindValue(id);

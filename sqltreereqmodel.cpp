@@ -34,24 +34,22 @@ bool SqlTreeReqModel::select(QVariant reqID)
     // On exécute un select sur le Requirement en question pour obtenir les descendants/ascendants
 
     QSqlQuery queryChild("WITH RECURSIVE Child AS ("
-                    "SELECT ID,CODE,TITLE,PARENT_ID,0 AS LEVEL"
-                    " FROM REQUIREMENT R"
-                    " WHERE R.ID="+reqID.toString()+
-                    " UNION SELECT R.ID,R.CODE,R.TITLE,R.PARENT_ID,Child.LEVEL+1"
-                    " FROM REQUIREMENT R,Child"
-                    " WHERE R.PARENT_ID=Child.ID"
+                    "SELECT ID,CODE,TITLE,NULL AS PARENT_ID,0 AS LEVEL"
+                    " FROM REQUIREMENT R WHERE R.ID="+reqID.toString()+
+                    " UNION SELECT R.ID,R.CODE,R.TITLE,L.SOURCE_REQ_ID AS PARENT_ID,Child.LEVEL+1"
+                    " FROM REQUIREMENT R JOIN REQUIREMENT_RELATION L ON L.TARGET_REQ_ID=R.ID"
+                    " JOIN REQUIREMENT_RELATION_TYPE T ON T.ID=L.TYPE_ID AND T.CODE='DECOMPOSE'"
+                    " JOIN Child ON L.SOURCE_REQ_ID=Child.ID"
                     " ORDER BY 5 DESC)"
                     " SELECT * FROM Child",m_db);
 //    if(!queryChild.first())
 //        return false;
 
     QSqlQuery queryParents("WITH RECURSIVE parents AS ("
-                           "SELECT ID,CODE,TITLE,PARENT_ID,0 AS LEVEL "
-                           "FROM REQUIREMENT R "
-                           "WHERE R.ID="+reqID.toString()+" UNION ALL "
-                           "SELECT R.ID,R.CODE,R.TITLE,R.PARENT_ID, parents.LEVEL-1 "
-                           "FROM REQUIREMENT R,parents "
-                           "WHERE R.ID=parents.PARENT_ID) "
+                           "SELECT R.ID,R.CODE,R.TITLE,(SELECT L.SOURCE_REQ_ID FROM REQUIREMENT_RELATION L JOIN REQUIREMENT_RELATION_TYPE T ON T.ID=L.TYPE_ID WHERE L.TARGET_REQ_ID=R.ID AND T.CODE='DECOMPOSE' ORDER BY L.ID LIMIT 1) AS PARENT_ID,0 AS LEVEL "
+                           "FROM REQUIREMENT R WHERE R.ID="+reqID.toString()+" UNION ALL "
+                           "SELECT R.ID,R.CODE,R.TITLE,(SELECT L2.SOURCE_REQ_ID FROM REQUIREMENT_RELATION L2 JOIN REQUIREMENT_RELATION_TYPE T2 ON T2.ID=L2.TYPE_ID WHERE L2.TARGET_REQ_ID=R.ID AND T2.CODE='DECOMPOSE' ORDER BY L2.ID LIMIT 1),parents.LEVEL-1 "
+                           "FROM REQUIREMENT R JOIN parents ON R.ID=parents.PARENT_ID) "
                            "SELECT * FROM parents "
                            "ORDER BY 5 ASC",m_db);
 

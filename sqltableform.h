@@ -11,7 +11,6 @@
 #include <QStringList>
 #include <QPair>
 #include <QAbstractItemView>
-#include "editrequirement.h"
 #include <QDebug>
 
 

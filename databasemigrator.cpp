@@ -68,7 +68,7 @@ bool DatabaseMigrator::migrate(QSqlDatabase db, QString *errorMessage) {
                    "name='REQUIREMENT'");
     if (schema.exec() && schema.next()) {
       const QString tableSql = schema.value(0).toString();
-      rebuildRequirement =
+      rebuildRequirement = db.record("REQUIREMENT").indexOf("PT_ID") >= 0 &&
           QRegularExpression("\\bTITLE\\b[^,)]*\\bUNIQUE\\b",
                              QRegularExpression::CaseInsensitiveOption)
               .match(tableSql)
@@ -121,6 +121,7 @@ bool DatabaseMigrator::migrate(QSqlDatabase db, QString *errorMessage) {
     QSqlQuery q("PRAGMA foreign_keys", db);
     return q.next() && q.value(0).toBool();
   }();
+  const bool rebuildV18 = version < 18;
   struct ForeignKeyRestore {
     QSqlDatabase db;
     bool restore;
@@ -130,8 +131,8 @@ bool DatabaseMigrator::migrate(QSqlDatabase db, QString *errorMessage) {
         q.exec("PRAGMA foreign_keys=ON");
       }
     }
-  } restore{db, (rebuildInterface || rebuildRequirement) && foreignKeys};
-  if ((rebuildInterface || rebuildRequirement) && foreignKeys) {
+  } restore{db, (rebuildInterface || rebuildRequirement || rebuildV18) && foreignKeys};
+  if ((rebuildInterface || rebuildRequirement || rebuildV18) && foreignKeys) {
     QSqlQuery q(db);
     q.exec("PRAGMA foreign_keys=OFF");
   }
@@ -264,8 +265,6 @@ bool DatabaseMigrator::migrate(QSqlDatabase db, QString *errorMessage) {
          "REDMINE_REF TEXT, MEANS TEXT, VERDICT TEXT CHECK(VERDICT IS NULL OR "
          "VERDICT IN ('C','PC','NC')), COMMENT TEXT, POSITION INTEGER NOT NULL "
          "DEFAULT 0, UNIQUE(REQ_ID,METHOD_ID))"
-      << "INSERT OR IGNORE INTO REQUIREMENT_PT(REQ_ID,PT_ID) SELECT ID,PT_ID "
-         "FROM REQUIREMENT WHERE PT_ID IS NOT NULL"
       << "CREATE TABLE IF NOT EXISTS CONFIGURATION (ID INTEGER PRIMARY KEY "
          "AUTOINCREMENT, CODE TEXT UNIQUE NOT NULL, LABEL TEXT NOT NULL, "
          "DESCRIPTION TEXT, ACTIVE INTEGER NOT NULL DEFAULT 1 CHECK(ACTIVE IN "
@@ -482,6 +481,14 @@ bool DatabaseMigrator::migrate(QSqlDatabase db, QString *errorMessage) {
        "INTEGER NOT NULL DEFAULT 0 CHECK(ARCHIVED IN (0,1))"},
       {"CHANGE_ITEM", "UPDATED_AT", "TEXT"}};
   for (const Column &column : columns) {
+    const QString table = QString::fromLatin1(column.table);
+    const QString name = QString::fromLatin1(column.name);
+    if (version >= 18 &&
+        ((table == "REQUIREMENT" &&
+          (name == "VERIF_PROCEDURE" || name == "REDMINE_REF" ||
+           name == "VERIF_STATUS" || name == "VERIF_MEANS")) ||
+         (table == "DOCUMENT" && name == "REFERENCE")))
+      continue;
     if (!addColumnIfMissing(db, column.table, column.name, column.definition,
                             errorMessage)) {
       db.rollback();
@@ -547,9 +554,10 @@ bool DatabaseMigrator::migrate(QSqlDatabase db, QString *errorMessage) {
   }
 
   // Le schéma historique stockait type et statut comme textes contraints.
-  // Les colonnes restent présentes pour la compatibilité, tandis que les
-  // catalogues deviennent la source de vérité du registre des changements.
-  if (!execute(db,
+  const QSqlRecord changeColumns = db.record("CHANGE_ITEM");
+  const bool hasLegacyChangeText =
+      changeColumns.indexOf("TYPE") >= 0 && changeColumns.indexOf("STATUS") >= 0;
+  if (version < 18 && hasLegacyChangeText && (!execute(db,
                "UPDATE CHANGE_ITEM SET TYPE_ID=(SELECT ID FROM CHANGE_TYPE "
                "WHERE CODE=CHANGE_ITEM.TYPE) WHERE TYPE_ID IS NULL",
                errorMessage) ||
@@ -565,8 +573,26 @@ bool DatabaseMigrator::migrate(QSqlDatabase db, QString *errorMessage) {
       !execute(db,
                "UPDATE CHANGE_ITEM SET STATUS_ID=(SELECT ID FROM "
                "CHANGE_STATUS WHERE CODE='OPEN') WHERE STATUS_ID IS NULL",
-               errorMessage) ||
-      !execute(db,
+               errorMessage))) {
+    db.rollback();
+    return false;
+  }
+  if (version < 18 && db.record("REQUIREMENT").indexOf("PT_ID") >= 0 &&
+      (!execute(db,
+                "INSERT OR IGNORE INTO REQUIREMENT_PT(REQ_ID,PT_ID) SELECT "
+                "ID,PT_ID FROM REQUIREMENT WHERE PT_ID IS NOT NULL",
+                errorMessage) ||
+       !execute(db,
+                "UPDATE REQUIREMENT_PT SET IS_PRIMARY=1 WHERE PT_ID=(SELECT "
+                "R.PT_ID FROM REQUIREMENT R WHERE R.ID=REQUIREMENT_PT.REQ_ID) "
+                "AND NOT EXISTS(SELECT 1 FROM REQUIREMENT_PT P WHERE "
+                "P.REQ_ID=REQUIREMENT_PT.REQ_ID AND P.IS_PRIMARY=1)",
+                errorMessage))) {
+    db.rollback();
+    return false;
+  }
+
+  if (!execute(db,
                "UPDATE CHANGE_ITEM SET "
                "UPDATED_AT=COALESCE(UPDATED_AT,OPENED_AT,CURRENT_TIMESTAMP)",
                errorMessage) ||
@@ -584,7 +610,7 @@ bool DatabaseMigrator::migrate(QSqlDatabase db, QString *errorMessage) {
 
   // Conserve les liens ICD des anciens fichiers dont le document était porté
   // directement par INTERFACE.
-  if (!execute(db,
+  if (version < 18 && db.record("INTERFACE").indexOf("DOC_ID") >= 0 && !execute(db,
                "INSERT OR IGNORE INTO "
                "INTERFACE_DOCUMENT(INTERFACE_ID,DOC_ID,CHAPTER_NODE_ID) SELECT "
                "ID,DOC_ID,NULL FROM INTERFACE WHERE DOC_ID IS NOT NULL",
@@ -636,12 +662,6 @@ bool DatabaseMigrator::migrate(QSqlDatabase db, QString *errorMessage) {
           "PRIMARY KEY REFERENCES PT(ID) ON DELETE CASCADE,NEXT_VALUE INTEGER "
           "NOT NULL DEFAULT 1 CHECK(NEXT_VALUE>0))",
           errorMessage) ||
-      !execute(db,
-               "UPDATE REQUIREMENT_PT SET IS_PRIMARY=1 WHERE PT_ID=(SELECT "
-               "R.PT_ID FROM REQUIREMENT R WHERE R.ID=REQUIREMENT_PT.REQ_ID) "
-               "AND NOT EXISTS(SELECT 1 FROM REQUIREMENT_PT P WHERE "
-               "P.REQ_ID=REQUIREMENT_PT.REQ_ID AND P.IS_PRIMARY=1)",
-               errorMessage) ||
       !execute(db,
                "UPDATE CONFIGURATION SET "
                "CREATED_AT=COALESCE(CREATED_AT,CURRENT_TIMESTAMP), "
@@ -853,16 +873,262 @@ bool DatabaseMigrator::migrate(QSqlDatabase db, QString *errorMessage) {
     return false;
   }
 
-  // Preserve the legacy single-parent relationship as an explicit decomposition
-  // link.
-  if (!execute(
-          db,
-          "INSERT OR IGNORE INTO "
-          "REQUIREMENT_RELATION(SOURCE_REQ_ID,TARGET_REQ_ID,TYPE_ID,COMMENT) "
-          "SELECT PARENT_ID,ID,1,'Relation migrée depuis PARENT_ID' FROM "
-          "REQUIREMENT WHERE PARENT_ID IS NOT NULL",
-          errorMessage) ||
-      !execute(db, QString("PRAGMA user_version=%1").arg(CurrentVersion),
+  if (version < 18) {
+    const bool hasLegacyModel = db.tables().contains("MODEL") &&
+                                db.tables().contains("PART") &&
+                                db.record("PART").indexOf("MODEL") >= 0;
+    const bool hasLegacyChapters = db.tables().contains("REQ_CHAPTER");
+    const QSqlRecord requirementColumns = db.record("REQUIREMENT");
+    const bool hasLegacyRequirement =
+        requirementColumns.indexOf("PARENT_ID") >= 0 &&
+        requirementColumns.indexOf("PT_ID") >= 0 &&
+        requirementColumns.indexOf("DOC_ID") >= 0;
+    const bool hasLegacyDocumentReference =
+        db.record("DOCUMENT").indexOf("REFERENCE") >= 0;
+    const bool hasLegacyChanges = db.tables().contains("CONF_CHANGE") &&
+                                  db.tables().contains("CC_STATUS");
+    const bool hasLegacyLogs = db.tables().contains("REQ_LOGS");
+    const QString documentNodeBackfill = hasLegacyChapters
+        ? "INSERT OR IGNORE INTO DOCUMENT_NODE(DOC_ID,PARENT_ID,NODE_TYPE,"
+          "POSITION,REQ_ID) SELECT R.DOC_ID,(SELECT N.ID FROM DOCUMENT_NODE N "
+          "JOIN REQ_CHAPTER C ON C.ID=R.DOC_CHAPTER WHERE N.DOC_ID=R.DOC_ID "
+          "AND N.NODE_TYPE='CHAPTER' AND N.TITLE=C.CHAPTER ORDER BY N.ID LIMIT "
+          "1),'REQUIREMENT',2000000+R.ID,R.ID FROM REQUIREMENT R WHERE R.DOC_ID "
+          "IS NOT NULL AND NOT EXISTS(SELECT 1 FROM DOCUMENT_NODE N WHERE "
+          "N.REQ_ID=R.ID AND N.NODE_TYPE='REQUIREMENT')"
+        : "INSERT OR IGNORE INTO DOCUMENT_NODE(DOC_ID,PARENT_ID,NODE_TYPE,"
+          "POSITION,REQ_ID) SELECT R.DOC_ID,NULL,'REQUIREMENT',2000000+R.ID,"
+          "R.ID FROM REQUIREMENT R WHERE R.DOC_ID IS NOT NULL AND NOT EXISTS("
+          "SELECT 1 FROM DOCUMENT_NODE N WHERE N.REQ_ID=R.ID AND "
+          "N.NODE_TYPE='REQUIREMENT')";
+    const QStringList v18 = {
+        // Record discrepancies before completing missing normalized data.
+        "INSERT INTO MIGRATION_REPORT(FROM_VERSION,TO_VERSION,REPORT) "
+        "SELECT 17,18,'Conflit PARENT_ID pour REQUIREMENT '||R.ID||"
+        "' : relation DECOMPOSE normalisée conservée' FROM REQUIREMENT R "
+        "WHERE R.PARENT_ID IS NOT NULL AND EXISTS(SELECT 1 FROM "
+        "REQUIREMENT_RELATION L WHERE L.TARGET_REQ_ID=R.ID AND L.TYPE_ID=1 "
+        "AND L.SOURCE_REQ_ID<>R.PARENT_ID)",
+        "INSERT INTO MIGRATION_REPORT(FROM_VERSION,TO_VERSION,REPORT) "
+        "SELECT 17,18,'Conflit PT_ID pour REQUIREMENT '||R.ID||"
+        "' : allocation normalisée conservée' FROM REQUIREMENT R WHERE "
+        "R.PT_ID IS NOT NULL AND EXISTS(SELECT 1 FROM REQUIREMENT_PT P WHERE "
+        "P.REQ_ID=R.ID AND P.IS_PRIMARY=1 AND P.PT_ID<>R.PT_ID)",
+        "INSERT INTO MIGRATION_REPORT(FROM_VERSION,TO_VERSION,REPORT) "
+        "SELECT 17,18,'Conflit DOCUMENT.REFERENCE pour DOCUMENT '||D.ID||"
+        "' : référence normalisée conservée' FROM DOCUMENT D WHERE "
+        "LENGTH(TRIM(COALESCE(D.REFERENCE,'')))>0 AND EXISTS(SELECT 1 FROM "
+        "DOCUMENT_REFERENCE X WHERE X.DOC_ID=D.ID AND X.IS_PRIMARY=1 AND "
+        "X.REFERENCE<>D.REFERENCE)",
+        "INSERT INTO MIGRATION_REPORT(FROM_VERSION,TO_VERSION,REPORT) SELECT "
+        "17,18,'Conflit MODEL '||M.ID||' : CONFIGURATION '||M.MODEL||"
+        "' existante conservée' FROM MODEL M JOIN CONFIGURATION C ON "
+        "UPPER(C.CODE)=UPPER(M.MODEL) WHERE C.LABEL<>M.MODEL",
+
+        // Complete normalized structures only when they are still empty.
+        "INSERT OR IGNORE INTO REQUIREMENT_RELATION(SOURCE_REQ_ID,TARGET_REQ_"
+        "ID,TYPE_ID,COMMENT) SELECT PARENT_ID,ID,1,'Relation migrée depuis "
+        "PARENT_ID' FROM REQUIREMENT R WHERE PARENT_ID IS NOT NULL AND NOT "
+        "EXISTS(SELECT 1 FROM REQUIREMENT_RELATION L WHERE L.TARGET_REQ_ID="
+        "R.ID AND L.TYPE_ID=1)",
+        "INSERT OR IGNORE INTO REQUIREMENT_PT(REQ_ID,PT_ID,IS_PRIMARY) SELECT "
+        "ID,PT_ID,1 FROM REQUIREMENT R WHERE PT_ID IS NOT NULL AND NOT "
+        "EXISTS(SELECT 1 FROM REQUIREMENT_PT P WHERE P.REQ_ID=R.ID)",
+        "INSERT OR IGNORE INTO REQUIREMENT_VERIFICATION(REQ_ID,METHOD_ID,"
+        "VERIFICATION_LEVEL_PT_ID,VERIF_LEVEL,PROCEDURE_REF,REDMINE_REF,MEANS,"
+        "VERDICT,POSITION) SELECT ID,VERIF_METHOD,NULL,VERIF_LEVEL,VERIF_"
+        "PROCEDURE,REDMINE_REF,VERIF_MEANS,CASE WHEN UPPER(TRIM(COALESCE("
+        "VERIF_STATUS,''))) IN ('C','PC','NC') THEN UPPER(TRIM(VERIF_STATUS)) "
+        "END,0 FROM REQUIREMENT R WHERE VERIF_METHOD IS NOT NULL AND NOT "
+        "EXISTS(SELECT 1 FROM REQUIREMENT_VERIFICATION V WHERE V.REQ_ID=R.ID)",
+        "CREATE TABLE IF NOT EXISTS DOC_TYPE(ID INTEGER PRIMARY KEY "
+        "AUTOINCREMENT,TYPE TEXT NOT NULL,DESCRIPTION TEXT)",
+        "INSERT INTO DOC_TYPE(TYPE,DESCRIPTION) SELECT 'SP','Specification "
+        "document' WHERE NOT EXISTS(SELECT 1 FROM DOC_TYPE)",
+        "INSERT OR IGNORE INTO DOCUMENT(ID,PT_ID,TYPE,TITLE,DESCRIPTION) "
+        "SELECT R.DOC_ID,COALESCE(R.PT_ID,(SELECT ID FROM PT ORDER BY ID "
+        "LIMIT 1)),(SELECT ID FROM DOC_TYPE ORDER BY ID LIMIT 1),'Document "
+        "migré #'||R.DOC_ID,'Document recréé depuis le rattachement d''une "
+        "exigence historique' FROM REQUIREMENT R WHERE R.DOC_ID IS NOT NULL "
+        "AND NOT EXISTS(SELECT 1 FROM DOCUMENT D WHERE D.ID=R.DOC_ID) GROUP "
+        "BY R.DOC_ID",
+        "INSERT OR IGNORE INTO DOCUMENT_REFERENCE(DOC_ID,REFERENCE,IS_PRIMARY) "
+        "SELECT ID,REFERENCE,1 FROM DOCUMENT D WHERE LENGTH(TRIM(COALESCE("
+        "REFERENCE,'')))>0 AND NOT EXISTS(SELECT 1 FROM DOCUMENT_REFERENCE X "
+        "WHERE X.DOC_ID=D.ID AND X.IS_PRIMARY=1)",
+        documentNodeBackfill,
+        "INSERT OR IGNORE INTO CONFIGURATION(CODE,LABEL,DESCRIPTION,ACTIVE,"
+        "POSITION,CREATED_AT,UPDATED_AT) SELECT MODEL,MODEL,'Configuration "
+        "migrée depuis MODEL',1,ID*10,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP "
+        "FROM MODEL",
+
+        // Convert the two historical audit/change subsystems.
+        "INSERT OR IGNORE INTO CHANGE_ITEM(CODE,TYPE,STATUS,TYPE_ID,STATUS_ID,"
+        "DESCRIPTION,OPENED_AT,CLOSED_AT,ARCHIVED,UPDATED_AT) SELECT "
+        "'LEGACY-CC-'||C.ID,'OTHER',CASE WHEN S.STATUS IN ('APPROVED','REJECTED',"
+        "'CLOSED') THEN S.STATUS ELSE 'OPEN' END,(SELECT ID FROM CHANGE_TYPE "
+        "WHERE CODE='OTHER'),(SELECT ID FROM CHANGE_STATUS WHERE CODE=CASE "
+        "WHEN S.STATUS IN ('APPROVED','REJECTED','CLOSED') THEN S.STATUS ELSE "
+        "'OPEN' END),C.DESCRIPTION,CURRENT_TIMESTAMP,CASE WHEN S.STATUS IN "
+        "('APPROVED','REJECTED','CLOSED') THEN CURRENT_TIMESTAMP END,0,"
+        "CURRENT_TIMESTAMP FROM CONF_CHANGE C JOIN CC_STATUS S ON S.ID=C.STATUS",
+        "INSERT OR IGNORE INTO CHANGE_LINK(CHANGE_ID,OBJECT_TYPE,OBJECT_ID) "
+        "SELECT N.ID,'REQUIREMENT',C.REQ_ID FROM CONF_CHANGE C JOIN CHANGE_ITEM "
+        "N ON N.CODE='LEGACY-CC-'||C.ID",
+        "INSERT INTO EVENT_LOG(EVENT_TIME,EVENT_TYPE,OBJECT_TYPE,OBJECT_ID,"
+        "BEFORE_JSON,AFTER_JSON,COMMENT) SELECT LOG_TIME,USER_ACTION,"
+        "'REQUIREMENT',REQ_ID,json_object('pt',OLD_PT_ID,'document',OLD_DOC_ID,"
+        "'chapter',OLD_DOC_CHAPTER,'title',OLD_TITLE,'description',OLD_"
+        "DESCRIPTION,'type',OLD_TYPE,'status',OLD_STATUS,'source',OLD_SOURCE,"
+        "'parent',OLD_PARENT_ID,'verificationLevel',OLD_VERIF_LEVEL,"
+        "'verificationMethod',OLD_VERIF_METHOD,'comments',OLD_COMMENTS),"
+        "json_object('pt',NEW_PT_ID,'document',NEW_DOC_ID,'chapter',NEW_DOC_"
+        "CHAPTER,'title',NEW_TITLE,'description',NEW_DESCRIPTION,'type',NEW_"
+        "TYPE,'status',NEW_STATUS,'source',NEW_SOURCE,'parent',NEW_PARENT_ID,"
+        "'verificationLevel',NEW_VERIF_LEVEL,'verificationMethod',NEW_VERIF_"
+        "METHOD,'comments',NEW_COMMENTS),'Historique converti depuis REQ_LOGS' "
+        "FROM REQ_LOGS",
+
+        // Remove triggers bound to historical columns before rebuilding.
+        "DROP TRIGGER IF EXISTS REQ_NEW", "DROP TRIGGER IF EXISTS REQ_UPDATE",
+        "DROP TRIGGER IF EXISTS REQ_DELETE",
+        "DROP TRIGGER IF EXISTS REQUIREMENT_DELETE_GUARD",
+        "DROP TRIGGER IF EXISTS AUDIT_DOCUMENT_INSERT",
+        "DROP TRIGGER IF EXISTS AUDIT_DOCUMENT_UPDATE",
+        "DROP TRIGGER IF EXISTS AUDIT_DOCUMENT_DELETE",
+
+        "INSERT INTO REQ_STATUS(SHORTCUT,STATUS) SELECT 'D','Draft' WHERE NOT "
+        "EXISTS(SELECT 1 FROM REQ_STATUS)",
+
+        "CREATE TABLE REQUIREMENT_V18(ID INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "CODE TEXT NOT NULL,TITLE TEXT NOT NULL,DESCRIPTION TEXT,TYPE INTEGER "
+        "NOT NULL REFERENCES REQ_TYPE(ID),STATUS INTEGER NOT NULL REFERENCES "
+        "REQ_STATUS(ID),SOURCE TEXT,IS_TRACE_ROOT INTEGER NOT NULL DEFAULT 0 "
+        "CHECK(IS_TRACE_ROOT IN (0,1)),COMMENTS TEXT)",
+        "INSERT INTO REQUIREMENT_V18 SELECT ID,CODE,TITLE,DESCRIPTION,"
+        "COALESCE(TYPE,(SELECT ID FROM REQ_TYPE ORDER BY ID LIMIT 1)),"
+        "COALESCE(STATUS,(SELECT ID FROM REQ_STATUS ORDER BY ID LIMIT 1)),"
+        "SOURCE,IS_TRACE_ROOT,COMMENTS FROM REQUIREMENT",
+        "DROP TABLE REQUIREMENT",
+        "ALTER TABLE REQUIREMENT_V18 RENAME TO REQUIREMENT",
+        "CREATE UNIQUE INDEX idx_code ON REQUIREMENT(CODE COLLATE NOCASE)",
+
+        "CREATE TABLE DOCUMENT_V18(ID INTEGER PRIMARY KEY AUTOINCREMENT,PT_ID "
+        "INTEGER NOT NULL REFERENCES PT(ID),TYPE INTEGER NOT NULL REFERENCES "
+        "DOC_TYPE(ID),TITLE TEXT NOT NULL UNIQUE,DESCRIPTION TEXT,TEMPLATE_PATH "
+        "TEXT,METADATA_JSON TEXT)",
+        "INSERT INTO DOCUMENT_V18 SELECT ID,PT_ID,TYPE,TITLE,DESCRIPTION,"
+        "TEMPLATE_PATH,METADATA_JSON FROM DOCUMENT",
+        "DROP TABLE DOCUMENT", "ALTER TABLE DOCUMENT_V18 RENAME TO DOCUMENT",
+
+        "CREATE TABLE INTERFACE_V18(ID INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "ELEMENT1 INTEGER NOT NULL REFERENCES PT(ID),ELEMENT2 INTEGER NOT NULL "
+        "REFERENCES PT(ID),DESCRIPTION TEXT,CODE TEXT,STATUS TEXT NOT NULL "
+        "DEFAULT 'DRAFT',ARCHIVED INTEGER NOT NULL DEFAULT 0 CHECK(ARCHIVED IN "
+        "(0,1)),CREATED_AT TEXT,UPDATED_AT TEXT)",
+        "INSERT INTO INTERFACE_V18 SELECT ID,ELEMENT1,ELEMENT2,DESCRIPTION,CODE,"
+        "STATUS,ARCHIVED,CREATED_AT,UPDATED_AT FROM INTERFACE",
+        "DROP TABLE INTERFACE", "ALTER TABLE INTERFACE_V18 RENAME TO INTERFACE",
+
+        "CREATE TABLE CHANGE_ITEM_V18(ID INTEGER PRIMARY KEY AUTOINCREMENT,CODE "
+        "TEXT UNIQUE NOT NULL,TYPE_ID INTEGER NOT NULL REFERENCES CHANGE_TYPE("
+        "ID),STATUS_ID INTEGER NOT NULL REFERENCES CHANGE_STATUS(ID),DESCRIPTION "
+        "TEXT,DECISION TEXT,OPENED_AT TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+        "CLOSED_AT TEXT,EXTERNAL_REFERENCE TEXT,EXTERNAL_LINK TEXT,ARCHIVED "
+        "INTEGER NOT NULL DEFAULT 0 CHECK(ARCHIVED IN (0,1)),UPDATED_AT TEXT)",
+        "INSERT INTO CHANGE_ITEM_V18 SELECT ID,CODE,TYPE_ID,STATUS_ID,DESCRIPTION,"
+        "DECISION,OPENED_AT,CLOSED_AT,EXTERNAL_REFERENCE,EXTERNAL_LINK,ARCHIVED,"
+        "UPDATED_AT FROM CHANGE_ITEM",
+        "DROP TABLE CHANGE_ITEM", "ALTER TABLE CHANGE_ITEM_V18 RENAME TO CHANGE_ITEM",
+
+        "CREATE TABLE PART_V18(ID INTEGER PRIMARY KEY AUTOINCREMENT,PT_ID "
+        "INTEGER NOT NULL REFERENCES PT(ID),NAME TEXT NOT NULL UNIQUE,SERIAL "
+        "INTEGER NOT NULL UNIQUE,CONFIG_ID INTEGER NOT NULL REFERENCES "
+        "CONFIGURATION(ID),DESCRIPTION TEXT)",
+        "INSERT INTO PART_V18 SELECT P.ID,P.PT_ID,P.NAME,P.SERIAL,C.ID,P."
+        "DESCRIPTION FROM PART P JOIN MODEL M ON M.ID=P.MODEL JOIN "
+        "CONFIGURATION C ON UPPER(C.CODE)=UPPER(M.MODEL)",
+        "DROP TABLE PART", "ALTER TABLE PART_V18 RENAME TO PART",
+        "DROP TABLE MODEL",
+
+        "DROP TABLE IF EXISTS REDMINE_ISSUES", "DROP TABLE IF EXISTS REQ_LOGS",
+        "DROP TABLE IF EXISTS CONF_CHANGE", "DROP TABLE IF EXISTS CC_STATUS",
+        "DROP TABLE IF EXISTS REQ_CHAPTER", "DROP TABLE IF EXISTS IF_CHAPTER",
+        "CREATE UNIQUE INDEX IDX_CHANGE_STATUS ON CHANGE_ITEM(ARCHIVED,STATUS_ID,TYPE_ID)",
+        "CREATE INDEX IDX_INTERFACE_ENDPOINTS ON INTERFACE(ELEMENT1,ELEMENT2)",
+        "CREATE TRIGGER CHANGE_DOCUMENT_DELETE_GUARD BEFORE DELETE ON DOCUMENT "
+        "WHEN EXISTS(SELECT 1 FROM CHANGE_LINK WHERE OBJECT_TYPE='DOCUMENT' "
+        "AND OBJECT_ID=OLD.ID) BEGIN SELECT RAISE(ABORT,'Objet lié à un "
+        "changement : archivez-le ou retirez d''abord l''association.'); END",
+        "CREATE TRIGGER CHANGE_INTERFACE_DELETE_GUARD BEFORE DELETE ON "
+        "INTERFACE WHEN EXISTS(SELECT 1 FROM CHANGE_LINK WHERE OBJECT_TYPE="
+        "'INTERFACE' AND OBJECT_ID=OLD.ID) BEGIN SELECT RAISE(ABORT,'Objet lié "
+        "à un changement : archivez-le ou retirez d''abord l''association.'); END",
+        "CREATE TRIGGER REQUIREMENT_DELETE_GUARD BEFORE DELETE ON REQUIREMENT "
+        "BEGIN SELECT RAISE(ABORT,'Une exigence tracée doit être rendue "
+        "obsolète, pas supprimée.'); END",
+        "CREATE TRIGGER AUDIT_DOCUMENT_INSERT AFTER INSERT ON DOCUMENT BEGIN "
+        "INSERT INTO EVENT_LOG(AUTHOR,EVENT_GROUP,EVENT_TYPE,OBJECT_TYPE,"
+        "OBJECT_ID,AFTER_JSON) SELECT AUTHOR,EVENT_GROUP,'CREATE','DOCUMENT',"
+        "NEW.ID,json_object('title',NEW.TITLE,'description',NEW.DESCRIPTION) "
+        "FROM EVENT_CONTEXT WHERE ID=1; END",
+        "CREATE TRIGGER AUDIT_DOCUMENT_UPDATE AFTER UPDATE ON DOCUMENT BEGIN "
+        "INSERT INTO EVENT_LOG(AUTHOR,EVENT_GROUP,EVENT_TYPE,OBJECT_TYPE,"
+        "OBJECT_ID,BEFORE_JSON,AFTER_JSON) SELECT AUTHOR,EVENT_GROUP,'UPDATE',"
+        "'DOCUMENT',NEW.ID,json_object('title',OLD.TITLE,'description',OLD."
+        "DESCRIPTION),json_object('title',NEW.TITLE,'description',NEW."
+        "DESCRIPTION) FROM EVENT_CONTEXT WHERE ID=1; END",
+        "CREATE TRIGGER AUDIT_DOCUMENT_DELETE AFTER DELETE ON DOCUMENT BEGIN "
+        "INSERT INTO EVENT_LOG(AUTHOR,EVENT_GROUP,EVENT_TYPE,OBJECT_TYPE,"
+        "OBJECT_ID,BEFORE_JSON) SELECT AUTHOR,EVENT_GROUP,'DELETE','DOCUMENT',"
+        "OLD.ID,json_object('title',OLD.TITLE,'description',OLD.DESCRIPTION) "
+        "FROM EVENT_CONTEXT WHERE ID=1; END",
+        "INSERT INTO MIGRATION_REPORT(FROM_VERSION,TO_VERSION,REPORT) VALUES("
+        "17,18,'Nettoyage v18 terminé : modèle normalisé activé et structures "
+        "historiques supprimées, MODEL fusionné dans CONFIGURATION.')"};
+    for (const QString &statement : v18) {
+      if (!hasLegacyRequirement &&
+          (statement.contains("R.PARENT_ID") || statement.contains("R.PT_ID") ||
+           statement.contains("SELECT PARENT_ID,ID") ||
+           statement.contains("SELECT ID,PT_ID,1 FROM REQUIREMENT") ||
+           statement.contains("SELECT ID,VERIF_METHOD") ||
+           statement.contains("Document recréé depuis") ||
+           statement == documentNodeBackfill))
+        continue;
+      if (!hasLegacyDocumentReference &&
+          (statement.contains("D.REFERENCE") ||
+           statement.contains("SELECT ID,REFERENCE,1 FROM DOCUMENT")))
+        continue;
+      if (!hasLegacyChanges && statement.contains("CONF_CHANGE"))
+        continue;
+      if (!hasLegacyLogs && statement.contains("FROM REQ_LOGS"))
+        continue;
+      if (!hasLegacyModel &&
+          (statement.contains("MODEL") || statement.contains("PART_V18") ||
+           statement == "DROP TABLE PART" ||
+           statement == "DROP TABLE MODEL"))
+        continue;
+      if (!execute(db, statement, errorMessage)) {
+        db.rollback();
+        return false;
+      }
+    }
+    QSqlQuery check("PRAGMA foreign_key_check", db);
+    if (!check.exec() || check.next()) {
+      if (errorMessage) {
+        *errorMessage = check.lastError().text().isEmpty()
+            ? QString("La migration v18 produit une clé étrangère invalide "
+                      "dans %1 (ligne %2, table cible %3).").arg(
+                  check.value(0).toString(), check.value(1).toString(),
+                  check.value(2).toString())
+            : check.lastError().text();
+      }
+      db.rollback();
+      return false;
+    }
+  }
+
+  if (!execute(db, QString("PRAGMA user_version=%1").arg(CurrentVersion),
                errorMessage) ||
       !db.commit()) {
     if (errorMessage && errorMessage->isEmpty())

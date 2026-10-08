@@ -57,12 +57,10 @@ SOURCES += \
     sqltableform.cpp \
     tableviewmanager.cpp \
     req_sqlmanager.cpp \
-    editrequirement.cpp \
     sqltreemodel.cpp \
     sqltreeitem.cpp \
     sqltreereqmodel.cpp \
     reqtrackform.cpp \
-    importrequirementdialog.cpp \
     importbasicdialog.cpp \
     importlogdialog.cpp
 
@@ -98,13 +96,11 @@ HEADERS += \
     tableviewmanager.h \
     sqlproxyrelationaldelegate.h \
     req_sqlmanager.h \
-    editrequirement.h \
     sqltreemodel.h \
     sqltreeitem.h \
     sqltreereqmodel.h \
     reqtrackform.h \
     exportcsvdialog.h \
-    importrequirementdialog.h \
     importbasicdialog.h \
     importlogdialog.h
 
@@ -114,9 +110,7 @@ FORMS += \
     exportcsvdialog.ui \
     mainwindow.ui \
     sqltableform.ui \
-    editrequirement.ui \
     reqtrackform.ui \
-    importrequirementdialog.ui \
     importbasicdialog.ui \
     importlogdialog.ui
 

@@ -64,11 +64,9 @@ qt_add_executable(GeSiER WIN32
     sqltreereqmodel.cpp sqltreereqmodel.h
     sqltreeitem.cpp sqltreeitem.h
     reqtrackform.cpp reqtrackform.h reqtrackform.ui
-    editrequirement.cpp editrequirement.h editrequirement.ui
     edittabledialog.cpp edittabledialog.h edittabledialog.ui
     edittableviewform.cpp edittableviewform.h edittableviewform.ui
     exportcsvdialog.cpp exportcsvdialog.h exportcsvdialog.ui
-    importrequirementdialog.cpp importrequirementdialog.h importrequirementdialog.ui
     importbasicdialog.cpp importbasicdialog.h importbasicdialog.ui
     importlogdialog.cpp importlogdialog.h importlogdialog.ui
     sqlproxyrelationaldelegate.h

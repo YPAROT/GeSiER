@@ -63,16 +63,15 @@ void RequirementWidgetTest::marksObsoleteRequirementsInDocumentTree() {
   QVERIFY(query.next());
   const int ptId = query.value(0).toInt();
   QVERIFY(query.exec(QString(
-      "INSERT INTO DOCUMENT(ID,PT_ID,TYPE,REFERENCE,TITLE) "
-      "VALUES(1,%1,1,'SPEC-1','Spécification')")
+      "INSERT INTO DOCUMENT(ID,PT_ID,TYPE,TITLE) "
+      "VALUES(1,%1,1,'Spécification')")
                          .arg(ptId)));
+  QVERIFY(query.exec("INSERT INTO DOCUMENT_REFERENCE(DOC_ID,REFERENCE,IS_PRIMARY) VALUES(1,'SPEC-1',1)"));
   QVERIFY(query.exec(QString(
-      "INSERT INTO REQUIREMENT(ID,PT_ID,CODE,DOC_ID,TITLE,TYPE,STATUS,"
-      "VERIF_METHOD) VALUES"
-      "(1,%1,'REQ-ACT',1,'Active',1,1,1),"
-      "(2,%1,'REQ-OBS',1,'Ancienne',1,"
-      "(SELECT ID FROM REQ_STATUS WHERE UPPER(SHORTCUT)='O' LIMIT 1),1)")
-                         .arg(ptId)));
+      "INSERT INTO REQUIREMENT(ID,CODE,TITLE,TYPE,STATUS) VALUES"
+      "(1,'REQ-ACT','Active',1,1),"
+      "(2,'REQ-OBS','Ancienne',1,"
+      "(SELECT ID FROM REQ_STATUS WHERE UPPER(SHORTCUT)='O' LIMIT 1))")));
   DocumentService service(manager.currentConnection());
   QVERIFY(service.placeRequirement(1, -1, 1).success);
   QVERIFY(service.placeRequirement(1, -1, 2).success);
@@ -216,10 +215,8 @@ void RequirementWidgetTest::keepsCurrentRequirementWhenDiscardIsRefused() {
                              "VALUES(1,%1,1,'Keyboard')")
                          .arg(ptId)));
   QVERIFY(query.exec(QString(
-      "INSERT INTO REQUIREMENT(ID,PT_ID,CODE,DOC_ID,TITLE,TYPE,STATUS,"
-      "VERIF_METHOD,COMMENTS) VALUES(1,%1,'REQ-1',1,'One',1,1,1,'Avis UI'),"
-      "(2,%1,'REQ-2',1,'Two',1,1,1,'')")
-                         .arg(ptId)));
+      "INSERT INTO REQUIREMENT(ID,CODE,TITLE,TYPE,STATUS,COMMENTS) "
+      "VALUES(1,'REQ-1','One',1,1,'Avis UI'),(2,'REQ-2','Two',1,1,'')")));
   QVERIFY(query.exec(QString(
       "INSERT INTO REQUIREMENT_PT(REQ_ID,PT_ID,IS_PRIMARY) VALUES"
       "(1,%1,1),(2,%1,1)")
@@ -305,12 +302,10 @@ void RequirementWidgetTest::relationGraphLayersPlacementAndPreferences() {
                          .arg(ptId)));
   QStringList values;
   for (int requirementId = 1; requirementId <= 8; ++requirementId)
-    values << QString("(%1,%2,'REQ-%1',1,'Requirement %1',1,1,1)")
-                  .arg(requirementId)
-                  .arg(ptId);
+    values << QString("(%1,'REQ-%1','Requirement %1',1,1)")
+                  .arg(requirementId);
   QVERIFY(query.exec(
-      "INSERT INTO REQUIREMENT(ID,PT_ID,CODE,DOC_ID,TITLE,TYPE,STATUS,"
-      "VERIF_METHOD) VALUES" + values.join(',')));
+      "INSERT INTO REQUIREMENT(ID,CODE,TITLE,TYPE,STATUS) VALUES" + values.join(',')));
   QVERIFY(query.exec(
       "INSERT INTO REQUIREMENT_RELATION(SOURCE_REQ_ID,TARGET_REQ_ID,TYPE_ID) "
       "VALUES(2,1,1),(2,3,1),(3,4,1),(1,5,2),(5,6,2),(3,7,3),"
@@ -441,11 +436,9 @@ void RequirementWidgetTest::
                              "VALUES(1,%1,1,'Test document')")
                          .arg(rootId)));
   QVERIFY(query.exec(
-      QString("INSERT INTO "
-              "REQUIREMENT(ID,PT_ID,CODE,DOC_ID,TITLE,TYPE,STATUS,VERIF_METHOD)"
-              " VALUES(1,%1,'A-R-0001',1,'Existing requirement',1,1,1),"
-              "(2,%1,'A-R-0002',1,'Keyboard requirement',1,1,1)")
-          .arg(rootId)));
+      "INSERT INTO REQUIREMENT(ID,CODE,TITLE,TYPE,STATUS) "
+      "VALUES(1,'A-R-0001','Existing requirement',1,1),"
+      "(2,'A-R-0002','Keyboard requirement',1,1)"));
   QVERIFY(query.exec(
       QString(
           "INSERT INTO REQUIREMENT_PT(REQ_ID,PT_ID,IS_PRIMARY) VALUES"

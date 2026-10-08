@@ -770,8 +770,8 @@ RequirementResult DocxImportService::importPreview(const DocxImportPreview &prev
     if (options.documentReference.trimmed().isEmpty() || options.documentTitle.trimmed().isEmpty())
       return fail("La référence et le titre de la nouvelle spécification sont obligatoires.");
     QSqlQuery create(db);
-    create.prepare("INSERT INTO DOCUMENT(PT_ID,TYPE,REFERENCE,TITLE,DESCRIPTION) VALUES(?,COALESCE((SELECT ID FROM DOC_TYPE WHERE UPPER(TYPE)='SP' LIMIT 1),(SELECT ID FROM DOC_TYPE ORDER BY ID LIMIT 1)),?,?,?)");
-    create.addBindValue(options.primaryPtId); create.addBindValue(options.documentReference);
+    create.prepare("INSERT INTO DOCUMENT(PT_ID,TYPE,TITLE,DESCRIPTION) VALUES(?,COALESCE((SELECT ID FROM DOC_TYPE WHERE UPPER(TYPE)='SP' LIMIT 1),(SELECT ID FROM DOC_TYPE ORDER BY ID LIMIT 1)),?,?)");
+    create.addBindValue(options.primaryPtId);
     create.addBindValue(options.documentTitle); create.addBindValue(options.documentDescription);
     if (!create.exec()) return fail(create.lastError().text());
     documentId = create.lastInsertId().toInt();
