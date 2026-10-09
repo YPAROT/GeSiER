@@ -783,7 +783,25 @@ void MainWindow::setupModernNavigation()
         else if(type=="CONFIGURATION")m_projectNavigation->setCurrentRow(ApplicabilityPage);
         else if(type=="PT")m_projectNavigation->setCurrentRow(ProductTreePage);
     });
-    connect(m_coverageDashboard,&CoverageDashboard::navigateRequested,this,[this](int page,const QString&filter){if(page==RequirementsPage){RequirementFilter f;if(filter=="unallocated")f.allocated=0;else if(filter=="allocated")f.allocated=1;else if(filter=="untraced")f.traced=0;else if(filter=="traced")f.traced=1;else if(filter=="undocumented")f.documented=0;else if(filter=="documented")f.documented=1;else if(filter=="unverified")f.verified=0;else if(filter=="verified")f.verified=1;m_requirementWidget->applyFilter(f);}ui->mainTabWidget->setCurrentIndex(1);m_projectNavigation->setCurrentRow(page);});
+    connect(m_coverageDashboard, &CoverageDashboard::navigateRequested, this,
+            [this](int page, const QString &filter) {
+      if (page == RequirementsPage) {
+        RequirementFilter f;
+        if (filter == "unallocated") f.allocated = 0;
+        else if (filter == "allocated") f.allocated = 1;
+        else if (filter == "untraced") f.traced = 0;
+        else if (filter == "traced") f.traced = 1;
+        else if (filter == "undocumented") f.documented = 0;
+        else if (filter == "documented") f.documented = 1;
+        else if (filter == "unverified") f.verified = 0;
+        else if (filter == "verified") f.verified = 1;
+        m_requirementWidget->applyFilter(f);
+      } else if (page == VerificationPage) {
+        m_verificationWidget->applyCoverageFilter(filter);
+      }
+      ui->mainTabWidget->setCurrentIndex(1);
+      m_projectNavigation->setCurrentRow(page);
+    });
     m_projectNavigation->setCurrentRow(ProductTreePage);
     if (hasOpenProject())
         bindProjectViews();

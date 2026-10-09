@@ -63,6 +63,7 @@ private:
   void loadHistory(int id);
   void appendVerification(
       const RequirementVerification &verification = RequirementVerification());
+  void updateVerificationDraftRow(int row);
   RequirementRecord editorRecord() const;
   bool confirmDiscard();
   QComboBox *methodCombo(int selected = -1) const;

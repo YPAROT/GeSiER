@@ -122,6 +122,7 @@ bool DatabaseMigrator::migrate(QSqlDatabase db, QString *errorMessage) {
     return q.next() && q.value(0).toBool();
   }();
   const bool rebuildV18 = version < 18;
+  const bool rebuildVerificationV22 = version < 22;
   struct ForeignKeyRestore {
     QSqlDatabase db;
     bool restore;
@@ -131,8 +132,10 @@ bool DatabaseMigrator::migrate(QSqlDatabase db, QString *errorMessage) {
         q.exec("PRAGMA foreign_keys=ON");
       }
     }
-  } restore{db, (rebuildInterface || rebuildRequirement || rebuildV18) && foreignKeys};
-  if ((rebuildInterface || rebuildRequirement || rebuildV18) && foreignKeys) {
+  } restore{db, (rebuildInterface || rebuildRequirement || rebuildV18 ||
+                 rebuildVerificationV22) && foreignKeys};
+  if ((rebuildInterface || rebuildRequirement || rebuildV18 ||
+       rebuildVerificationV22) && foreignKeys) {
     QSqlQuery q(db);
     q.exec("PRAGMA foreign_keys=OFF");
   }
@@ -264,7 +267,7 @@ bool DatabaseMigrator::migrate(QSqlDatabase db, QString *errorMessage) {
          "REFERENCES REQ_METHOD(ID), VERIF_LEVEL TEXT, PROCEDURE_REF TEXT, "
          "REDMINE_REF TEXT, MEANS TEXT, VERDICT TEXT CHECK(VERDICT IS NULL OR "
          "VERDICT IN ('C','PC','NC')), COMMENT TEXT, POSITION INTEGER NOT NULL "
-         "DEFAULT 0, UNIQUE(REQ_ID,METHOD_ID))"
+         "DEFAULT 0)"
       << "CREATE TABLE IF NOT EXISTS CONFIGURATION (ID INTEGER PRIMARY KEY "
          "AUTOINCREMENT, CODE TEXT UNIQUE NOT NULL, LABEL TEXT NOT NULL, "
          "DESCRIPTION TEXT, ACTIVE INTEGER NOT NULL DEFAULT 1 CHECK(ACTIVE IN "
@@ -1214,6 +1217,55 @@ bool DatabaseMigrator::migrate(QSqlDatabase db, QString *errorMessage) {
                 "INSERT INTO MIGRATION_REPORT(FROM_VERSION,TO_VERSION,REPORT) "
                 "VALUES(20,21,'Suppression de PART et IF_IMAGE ; audit PT "
                 "unifié dans le service métier.')",
+                errorMessage))) {
+    db.rollback();
+    return false;
+  }
+
+  // v22: une même méthode peut planifier plusieurs niveaux PT. Les index
+  // partiels conservent un seul brouillon (niveau NULL) par méthode.
+  if (version < 22 &&
+      (!execute(db,
+                "CREATE TABLE REQUIREMENT_VERIFICATION_V22(ID INTEGER PRIMARY "
+                "KEY AUTOINCREMENT,REQ_ID INTEGER NOT NULL REFERENCES "
+                "REQUIREMENT(ID) ON DELETE CASCADE,METHOD_ID INTEGER NOT NULL "
+                "REFERENCES REQ_METHOD(ID),VERIF_LEVEL TEXT,PROCEDURE_REF TEXT,"
+                "REDMINE_REF TEXT,MEANS TEXT,VERDICT TEXT CHECK(VERDICT IS NULL "
+                "OR VERDICT IN ('C','PC','NC')),COMMENT TEXT,POSITION INTEGER "
+                "NOT NULL DEFAULT 0,VERIFICATION_LEVEL_PT_ID INTEGER REFERENCES "
+                "PT(ID))",
+                errorMessage) ||
+       !execute(db,
+                "INSERT INTO REQUIREMENT_VERIFICATION_V22(ID,REQ_ID,METHOD_ID,"
+                "VERIF_LEVEL,PROCEDURE_REF,REDMINE_REF,MEANS,VERDICT,COMMENT,"
+                "POSITION,VERIFICATION_LEVEL_PT_ID) SELECT ID,REQ_ID,METHOD_ID,"
+                "VERIF_LEVEL,PROCEDURE_REF,REDMINE_REF,MEANS,VERDICT,COMMENT,"
+                "POSITION,VERIFICATION_LEVEL_PT_ID FROM REQUIREMENT_VERIFICATION",
+                errorMessage) ||
+       !execute(db, "DROP TABLE REQUIREMENT_VERIFICATION", errorMessage) ||
+       !execute(db,
+                "ALTER TABLE REQUIREMENT_VERIFICATION_V22 RENAME TO "
+                "REQUIREMENT_VERIFICATION",
+                errorMessage) ||
+       !execute(db,
+                "CREATE INDEX IDX_REQ_VERIFICATION_REQ ON "
+                "REQUIREMENT_VERIFICATION(REQ_ID,POSITION)",
+                errorMessage) ||
+       !execute(db,
+                "CREATE UNIQUE INDEX UQ_REQ_VERIFICATION_LEVEL ON "
+                "REQUIREMENT_VERIFICATION(REQ_ID,METHOD_ID,"
+                "VERIFICATION_LEVEL_PT_ID) WHERE VERIFICATION_LEVEL_PT_ID IS "
+                "NOT NULL",
+                errorMessage) ||
+       !execute(db,
+                "CREATE UNIQUE INDEX UQ_REQ_VERIFICATION_DRAFT ON "
+                "REQUIREMENT_VERIFICATION(REQ_ID,METHOD_ID) WHERE "
+                "VERIFICATION_LEVEL_PT_ID IS NULL",
+                errorMessage) ||
+       !execute(db,
+                "INSERT INTO MIGRATION_REPORT(FROM_VERSION,TO_VERSION,REPORT) "
+                "VALUES(21,22,'Vérifications multi-niveaux et brouillons par "
+                "méthode.')",
                 errorMessage))) {
     db.rollback();
     return false;

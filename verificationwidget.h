@@ -13,6 +13,7 @@ public:
   void setConnectionName(const QString &name);
 public slots:
   void refresh();
+  void applyCoverageFilter(const QString &filter);
 signals:
   void dataChanged();
   void openRequirementRequested(int id);

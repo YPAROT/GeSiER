@@ -145,8 +145,9 @@ QList<CoverageMetric> CoverageService::metrics(const CoverageScope &scope,
       "verification", "Planification vérification",
       scalar(db, "SELECT COUNT(*) FROM REQUIREMENT R WHERE " + where +
                      " AND EXISTS(SELECT 1 FROM REQUIREMENT_VERIFICATION V "
+                     "JOIN PT P ON P.ID=V.VERIFICATION_LEVEL_PT_ID "
                      "WHERE V.REQ_ID=R.ID AND V.METHOD_ID IS NOT NULL AND "
-                     "V.VERIFICATION_LEVEL_PT_ID IS NOT NULL)", error),
+                     "COALESCE(P.ARCHIVED,0)=0)", error),
       requirements, 1, "verified", "unverified"};
   result << CoverageMetric{
       "applicability", "Applicabilité définie",
@@ -191,6 +192,25 @@ CoverageSnapshot CoverageService::snapshot(const CoverageScope &scope,
   const auto db = QSqlDatabase::database(m_connectionName, false);
   const QString where = requirementScope(scope);
   out.requirements = scalar(db, "SELECT COUNT(*) FROM REQUIREMENT R WHERE " + where, error);
+  const QString complete =
+      "EXISTS(SELECT 1 FROM REQUIREMENT_VERIFICATION V JOIN PT P ON "
+      "P.ID=V.VERIFICATION_LEVEL_PT_ID WHERE V.REQ_ID=R.ID AND "
+      "V.METHOD_ID IS NOT NULL AND COALESCE(P.ARCHIVED,0)=0)";
+  const QString draft =
+      "EXISTS(SELECT 1 FROM REQUIREMENT_VERIFICATION V WHERE V.REQ_ID=R.ID "
+      "AND V.METHOD_ID IS NOT NULL AND V.VERIFICATION_LEVEL_PT_ID IS NULL)";
+  auto stateCount = [&](const QString &condition) {
+    return scalar(db, "SELECT COUNT(*) FROM REQUIREMENT R WHERE " + where +
+                          " AND " + condition,
+                  error);
+  };
+  out.verificationPlanning.total = out.requirements;
+  out.verificationPlanning.covered = stateCount(complete + " AND NOT " + draft);
+  out.verificationPlanning.coveredDraft = stateCount(complete + " AND " + draft);
+  out.verificationPlanning.draft = stateCount("NOT " + complete + " AND " + draft);
+  out.verificationPlanning.missing = out.requirements -
+      out.verificationPlanning.covered - out.verificationPlanning.coveredDraft -
+      out.verificationPlanning.draft;
   out.requirementStatuses = slices(
       db, "SELECT S.ID,S.SHORTCUT,S.STATUS,COUNT(R.ID) FROM REQ_STATUS S "
           "LEFT JOIN REQUIREMENT R ON R.STATUS=S.ID AND " + where +

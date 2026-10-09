@@ -80,7 +80,7 @@ class DatabaseMigratorTest : public QObject {
   Q_OBJECT
   QTemporaryDir m_directory;
 private slots:
-  void createsNormalizedVersion21Schema();
+  void createsNormalizedVersion22Schema();
   void removesUnusedConfigurationsInheritedFromModel();
   void storesMarkdownImagesAtomically();
   void migratesLegacySchemaWithoutLosingLinks();
@@ -107,16 +107,16 @@ private slots:
   void roundTripsStructuredDocxCollections();
 };
 
-void DatabaseMigratorTest::createsNormalizedVersion21Schema() {
+void DatabaseMigratorTest::createsNormalizedVersion22Schema() {
   QTemporaryDir directory;
   REQ_SQLManager manager;
-  const auto creation = manager.newDB(directory.filePath("normalized-v21.db"));
+  const auto creation = manager.newDB(directory.filePath("normalized-v22.db"));
   QVERIFY2(creation.type() == QSqlError::NoError, qPrintable(creation.text()));
   QSqlDatabase db = QSqlDatabase::database(manager.currentConnection());
   QSqlQuery q(db);
   QVERIFY(q.exec("PRAGMA user_version"));
   QVERIFY(q.next());
-  QCOMPARE(q.value(0).toInt(), 21);
+  QCOMPARE(q.value(0).toInt(), 22);
   QVERIFY(db.tables().contains("EVENT_SUBJECT"));
 
   const auto columns = [&](const QString &table) {
@@ -149,6 +149,11 @@ void DatabaseMigratorTest::createsNormalizedVersion21Schema() {
                  "AND name LIKE 'AUDIT_PT_%'"));
   QVERIFY(q.next());
   QCOMPARE(q.value(0).toInt(), 0);
+  QVERIFY(q.exec("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND "
+                 "name IN('UQ_REQ_VERIFICATION_LEVEL',"
+                 "'UQ_REQ_VERIFICATION_DRAFT')"));
+  QVERIFY(q.next());
+  QCOMPARE(q.value(0).toInt(), 2);
   QVERIFY(q.exec("PRAGMA foreign_key_check"));
   QVERIFY(!q.next());
   manager.close();
@@ -898,15 +903,19 @@ void DatabaseMigratorTest::managesVerificationMatrixAndExport() {
   QVERIFY2(creation.type()==QSqlError::NoError,qPrintable(creation.text()));
   QSqlDatabase db=QSqlDatabase::database(manager.currentConnection());
   ProductTreeService tree(manager.currentConnection());
-  QVERIFY(tree.addNode(-1,"SYS").success);QSqlQuery q(db);QVERIFY(q.exec("SELECT ID FROM PT WHERE SEGMENT='SYS'"));QVERIFY(q.next());const int pt=q.value(0).toInt();
+  QVERIFY(tree.addNode(-1,"SYS").success);QSqlQuery q(db);QVERIFY(q.exec("SELECT ID FROM PT WHERE SEGMENT='SYS'"));QVERIFY(q.next());const int pt=q.value(0).toInt();QVERIFY(tree.addNode(pt,"SUB").success);QVERIFY(q.exec("SELECT ID FROM PT WHERE SEGMENT='SUB'"));QVERIFY(q.next());const int sub=q.value(0).toInt();
   QVERIFY(q.exec(QString("INSERT INTO DOCUMENT(ID,PT_ID,TYPE,TITLE) VALUES(1,%1,1,'Vérification')").arg(pt)));
-  QVERIFY(q.exec("INSERT INTO REQUIREMENT(ID,CODE,TITLE,TYPE,STATUS) VALUES(1,'SYS-001','Couverte',1,1)"));
-  QVERIFY(q.exec("INSERT INTO REQUIREMENT(ID,CODE,TITLE,TYPE,STATUS) VALUES(2,'SYS-002','Manquante',1,1)"));
-  QVERIFY(q.exec(QString("INSERT INTO REQUIREMENT_PT(REQ_ID,PT_ID,IS_PRIMARY) VALUES(1,%1,1),(2,%1,1)").arg(pt)));
+  QVERIFY(q.exec("INSERT INTO REQUIREMENT(ID,CODE,TITLE,TYPE,STATUS) VALUES(1,'SYS-001','Couverte / Draft',1,1),(2,'SYS-002','Draft',1,1),(3,'SYS-003','Manquante',1,1),(4,'SYS-004','Couverte',1,1)"));
+  QVERIFY(q.exec(QString("INSERT INTO REQUIREMENT_PT(REQ_ID,PT_ID,IS_PRIMARY) VALUES(1,%1,1),(2,%1,1),(3,%1,1),(4,%1,1)").arg(pt)));
   VerificationService service(manager.currentConnection());RequirementVerification v;v.methodId=1;v.levelPtId=pt;v.procedure="TC-001";v.redmine="https://redmine.invalid/1";v.means="Banc";v.verdict="PC";v.comment="Prévu";
-  const auto saved=service.save(1,{v});QVERIFY2(saved.success,qPrintable(saved.message));
-  auto rows=service.matrix({});QCOMPARE(rows.size(),2);QVERIFY(rows[0].covered);QVERIFY(!rows[1].covered);QCOMPARE(service.coverageRate(rows),50.0);
+  RequirementVerification second=v;second.levelPtId=sub;second.procedure="TC-002";RequirementVerification draft=v;draft.levelPtId=-1;draft.procedure="À définir";
+  const auto saved=service.save(1,{v,second,draft});QVERIFY2(saved.success,qPrintable(saved.message));
+  QVERIFY(service.save(2,{draft}).success);QVERIFY(service.save(4,{v}).success);
+  auto rows=service.matrix({});QCOMPARE(rows.size(),4);QCOMPARE(rows[0].coverageLabel(),QString("Couverte / Draft"));QCOMPARE(rows[1].coverageLabel(),QString("Draft"));QCOMPARE(rows[2].coverageLabel(),QString("Manquante"));QCOMPARE(rows[3].coverageLabel(),QString("Couverte"));QCOMPARE(service.coverageRate(rows),50.0);
+  VerificationFilter draftFilter;draftFilter.coverage=4;QCOMPARE(service.matrix(draftFilter).size(),2);
   RequirementVerification duplicate=v;QVERIFY(!service.save(1,{v,duplicate}).success);
+  QVERIFY(!service.save(1,{draft,draft}).success);
+  const auto snapshot=CoverageService(manager.currentConnection()).snapshot();QCOMPARE(snapshot.verificationPlanning.covered,1);QCOMPARE(snapshot.verificationPlanning.coveredDraft,1);QCOMPARE(snapshot.verificationPlanning.draft,1);QCOMPARE(snapshot.verificationPlanning.missing,1);QCOMPARE(snapshot.verificationPlanning.planned(),3);
   QVERIFY(tree.setArchived(pt,true).success);rows=service.matrix({});QVERIFY(!rows[0].covered);QVERIFY(rows[0].levels.contains("archivé"));
   const QString path=directory.filePath("verification.xlsx");QVERIFY(service.exportXlsx(path,{}).success);QString error;const auto sheets=XlsxReader::read(path,&error);QVERIFY2(error.isEmpty(),qPrintable(error));QCOMPARE(sheets.size(),3);QCOMPARE(sheets[0].name,QString("Synthèse"));QCOMPARE(sheets[1].name,QString("Détails"));QCOMPARE(sheets[2].name,QString("Anomalies"));
 }

@@ -57,6 +57,16 @@ struct CoverageMetric {
   int percent() const;
 };
 
+struct VerificationPlanningCoverage {
+  int covered = 0;
+  int coveredDraft = 0;
+  int draft = 0;
+  int missing = 0;
+  int total = 0;
+  int planned() const { return covered + coveredDraft + draft; }
+  int draftCount() const { return coveredDraft + draft; }
+};
+
 struct CoverageSnapshot {
   QList<CoverageMetric> metrics;
   QList<CoverageSlice> requirementStatuses;
@@ -65,6 +75,7 @@ struct CoverageSnapshot {
   QList<CoverageSlice> documentTypes;
   QList<DocumentRequirementCoverage> documentRequirements;
   QList<ConfigurationCoverage> configurations;
+  VerificationPlanningCoverage verificationPlanning;
   int requirements = 0;
   int documents = 0;
   int changes = 0;

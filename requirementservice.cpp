@@ -271,18 +271,22 @@ RequirementResult RequirementService::save(const RequirementRecord &record,
   if (record.primaryPtId < 0 || !record.ptIds.contains(record.primaryPtId))
     return RequirementResult::failure("Le Product Tree principal doit faire "
                                       "partie des allocations sélectionnées.");
-  QSet<int> methods;
+  QSet<QString> verificationKeys;
   for (const RequirementVerification &v : record.verifications) {
     if (v.methodId < 0)
       return RequirementResult::failure(
           "Chaque ligne de vérification doit avoir une méthode.");
-    if (methods.contains(v.methodId))
+    const QString key = QString::number(v.methodId) + ":" +
+                        QString::number(v.levelPtId);
+    if (verificationKeys.contains(key))
       return RequirementResult::failure(
-          "Une méthode de vérification ne peut être ajoutée qu'une fois.");
+          v.levelPtId < 0
+              ? "Une méthode ne peut avoir qu'un seul brouillon par exigence."
+              : "Cette méthode est déjà définie pour ce niveau PT.");
     if (!v.verdict.isEmpty() &&
         !QStringList{"C", "PC", "NC"}.contains(v.verdict))
       return RequirementResult::failure("Verdict de vérification invalide.");
-    methods.insert(v.methodId);
+    verificationKeys.insert(key);
   }
   const QStringList referencedImages =
       MarkdownUtility::imageTokens(record.description);

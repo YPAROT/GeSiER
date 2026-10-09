@@ -201,11 +201,12 @@ RequirementWidget::RequirementWidget(QWidget *p) : QWidget(p) {
   ptLayout->addLayout(primaryForm);
   ptLayout->addWidget(m_pt);
   m_tabs->addTab(ptPage, "Product Tree");
-  m_verifications = new QTableWidget(0, 7);
+  m_verifications = new QTableWidget(0, 8);
   m_verifications->setHorizontalHeaderLabels(
       {"Méthode", "Niveau", "Procédure / test", "Redmine", "Moyen", "Verdict",
-       "Commentaire"});
+       "Commentaire", "État"});
   m_verifications->horizontalHeader()->setStretchLastSection(true);
+  m_verifications->horizontalHeader()->setSectionResizeMode(7, QHeaderView::ResizeToContents);
   m_verifications->setSelectionBehavior(QAbstractItemView::SelectRows);
   auto addVerif = new QPushButton("Ajouter");
   auto removeVerif = new QPushButton("Supprimer");
@@ -1172,6 +1173,44 @@ void RequirementWidget::appendVerification(const RequirementVerification &v) {
     m_verifications->setItem(row, c, new QTableWidgetItem(values[c - 2]));
   m_verifications->setCellWidget(row, 5, verdictCombo(v.verdict));
   m_verifications->setItem(row, 6, new QTableWidgetItem(v.comment));
+  auto *state = new QLabel;
+  state->setAlignment(Qt::AlignCenter);
+  m_verifications->setCellWidget(row, 7, state);
+  auto *level = qobject_cast<QComboBox *>(m_verifications->cellWidget(row, 1));
+  connect(level, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+          [this, level] {
+            for (int r = 0; r < m_verifications->rowCount(); ++r)
+              if (m_verifications->cellWidget(r, 1) == level) {
+                updateVerificationDraftRow(r);
+                break;
+              }
+          });
+  updateVerificationDraftRow(row);
+}
+void RequirementWidget::updateVerificationDraftRow(int row) {
+  if (row < 0 || row >= m_verifications->rowCount()) return;
+  auto *level = qobject_cast<QComboBox *>(m_verifications->cellWidget(row, 1));
+  const bool draft = !level || level->currentData().toInt() < 0;
+  const QString tip = draft
+      ? QStringLiteral("Niveau PT à renseigner — cette ligne ne contribue pas à la couverture.")
+      : QString();
+  for (int c = 0; c < m_verifications->columnCount(); ++c) {
+    if (auto *item = m_verifications->item(row, c)) {
+      item->setBackground(draft ? QBrush(QColor("#fff4e5")) : QBrush());
+      item->setToolTip(tip);
+    }
+    if (auto *widget = m_verifications->cellWidget(row, c)) {
+      widget->setToolTip(tip);
+      if (c != 7)
+        widget->setStyleSheet(draft ? "background:#fff4e5;" : QString());
+    }
+  }
+  if (auto *state = qobject_cast<QLabel *>(m_verifications->cellWidget(row, 7))) {
+    state->setText(draft ? QStringLiteral("DRAFT") : QString());
+    state->setStyleSheet(draft
+        ? "QLabel{background:#e59a2f;color:white;font-weight:700;padding:3px 7px;border-radius:5px;}"
+        : QString());
+  }
 }
 void RequirementWidget::addVerification() {
   appendVerification();

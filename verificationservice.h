@@ -9,14 +9,16 @@ struct VerificationFilter {
   int ptRootId = -1, documentId = -1, statusId = -1, typeId = -1,
       methodId = -1;
   bool includeObsolete = false;
-  int coverage = -1; // -1 tous, 0 manque, 1 couvert
+  // -1 tous, 0 manquante, 1 couverte, 2 couverte/draft, 3 draft, 4 tout draft
+  int coverage = -1;
 };
 
 struct VerificationMatrixRow {
   int requirementId = -1;
   QString code, title, status, type, productTrees, documents, methods, levels;
   int verificationCount = 0;
-  bool covered = false;
+  bool covered = false, draft = false;
+  QString coverageLabel() const;
   QList<RequirementVerification> verifications;
 };
 
