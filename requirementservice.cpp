@@ -1,4 +1,5 @@
 #include "requirementservice.h"
+#include "auditservice.h"
 #include "producttreeservice.h"
 #include "markdownutility.h"
 
@@ -304,6 +305,11 @@ RequirementResult RequirementService::save(const RequirementRecord &record,
       return RequirementResult::failure(
           "Image introuvable dans la description : " + token);
   QSqlDatabase db = QSqlDatabase::database(m_connectionName);
+  const QJsonObject auditBefore =
+      record.id < 0 ? QJsonObject() : AuditService::requirementSnapshot(db, record.id);
+  const QList<AuditSubject> subjectsBefore =
+      record.id < 0 ? QList<AuditSubject>()
+                    : AuditService::requirementSubjects(db, record.id);
   const QString description = MarkdownUtility::normalizeLegacy(record.description);
   if (manageTransaction && !db.transaction())
     return RequirementResult::failure(db.lastError().text());
@@ -463,15 +469,14 @@ RequirementResult RequirementService::save(const RequirementRecord &record,
       return RequirementResult::failure(sequence.lastError().text());
     }
   }
-  QSqlQuery log(db);
-  log.prepare(
-      "INSERT INTO EVENT_LOG(EVENT_TYPE,OBJECT_TYPE,OBJECT_ID,AFTER_JSON) "
-      "VALUES(?,'REQUIREMENT',?,?)");
-  log.addBindValue(record.id < 0 ? "CREATE" : "UPDATE");
-  log.addBindValue(id);
-  log.addBindValue(record.code);
-  if (!log.exec()) {
-    const QString message = log.lastError().text();
+  const QJsonObject auditAfter = AuditService::requirementSnapshot(db, id);
+  QList<AuditSubject> auditSubjects = subjectsBefore;
+  auditSubjects.append(AuditService::requirementSubjects(db, id));
+  QString auditError;
+  if (!AuditService::record(db, record.id < 0 ? "CREATE" : "UPDATE",
+                            "REQUIREMENT", id, auditBefore, auditAfter,
+                            auditSubjects, {}, &auditError)) {
+    const QString message = auditError;
     if (manageTransaction) db.rollback();
     return RequirementResult::failure(message);
   }
@@ -486,16 +491,26 @@ RequirementResult RequirementService::save(const RequirementRecord &record,
 
 RequirementResult RequirementService::setObsolete(int id) {
   QSqlDatabase db = QSqlDatabase::database(m_connectionName);
+  const QJsonObject before = AuditService::requirementSnapshot(db, id);
+  const QList<AuditSubject> subjectsBefore = AuditService::requirementSubjects(db, id);
+  if (!db.transaction()) return RequirementResult::failure(db.lastError().text());
   QSqlQuery status(db);
   if (!status.exec("SELECT ID FROM REQ_STATUS WHERE UPPER(STATUS)='OBSOLETE' "
                    "OR UPPER(SHORTCUT)='O' LIMIT 1") ||
       !status.next())
-    return RequirementResult::failure("Aucun statut Obsolète n'est configuré.");
+    { db.rollback(); return RequirementResult::failure("Aucun statut Obsolète n'est configuré."); }
   QSqlQuery update(db);
   update.prepare("UPDATE REQUIREMENT SET STATUS=? WHERE ID=?");
   update.addBindValue(status.value(0));
   update.addBindValue(id);
-  if (!update.exec())
-    return RequirementResult::failure(update.lastError().text());
+  if (!update.exec()) { db.rollback(); return RequirementResult::failure(update.lastError().text()); }
+  QString auditError;
+  if (!AuditService::record(db, "UPDATE", "REQUIREMENT", id, before,
+                            AuditService::requirementSnapshot(db, id),
+                            subjectsBefore, "Exigence rendue obsolète",
+                            &auditError) || !db.commit()) {
+    db.rollback();
+    return RequirementResult::failure(auditError.isEmpty() ? db.lastError().text() : auditError);
+  }
   return RequirementResult::successResult("Exigence rendue obsolète.", id);
 }

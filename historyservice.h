@@ -7,7 +7,10 @@
 struct HistoryRecord {
   int id = -1;
   QString time, author, eventType, objectType, beforeJson, afterJson, comment,
-      groupId;
+      groupId, summary, diffHtml;
+  QStringList subjects;
+  bool partial = false;
+  int payloadVersion = 1;
   int objectId = -1;
 };
 
@@ -31,6 +34,9 @@ public:
   QStringList eventTypes() const;
   ProjectDiagnostic diagnose() const;
   bool setAuthor(const QString &author, QString *error = nullptr) const;
+  static QString formatDiff(const QString &beforeJson, const QString &afterJson,
+                            bool *partial = nullptr,
+                            QString *plainText = nullptr);
 
 private:
   QString m_connectionName;

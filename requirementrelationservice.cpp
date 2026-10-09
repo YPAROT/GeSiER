@@ -1,4 +1,5 @@
 #include "requirementrelationservice.h"
+#include "auditservice.h"
 
 #include <QSqlDatabase>
 #include <QSqlError>
@@ -61,6 +62,7 @@ RequirementRelationService::relations(int requirementId, QString *error) const {
 RequirementResult RequirementRelationService::updateComment(
     int relationId, const QString &comment) {
   QSqlDatabase db = QSqlDatabase::database(m_connectionName);
+  QSqlQuery endpoints(db);endpoints.prepare("SELECT SOURCE_REQ_ID,TARGET_REQ_ID FROM REQUIREMENT_RELATION WHERE ID=?");endpoints.addBindValue(relationId);if(!endpoints.exec()||!endpoints.next())return RequirementResult::failure("Relation introuvable.");const int source=endpoints.value(0).toInt(),target=endpoints.value(1).toInt();const auto before=AuditService::requirementSnapshot(db,source);
   if (!db.transaction())
     return RequirementResult::failure(db.lastError().text());
   QSqlQuery query(db);
@@ -74,13 +76,9 @@ RequirementResult RequirementRelationService::updateComment(
     db.rollback();
     return RequirementResult::failure(error);
   }
-  QSqlQuery log(db);
-  log.prepare("INSERT INTO EVENT_LOG(EVENT_TYPE,OBJECT_TYPE,OBJECT_ID,AFTER_JSON,COMMENT) VALUES('UPDATE','REQUIREMENT_RELATION',?,json_object('comment',?),?)");
-  log.addBindValue(relationId);
-  log.addBindValue(comment);
-  log.addBindValue(comment);
-  if (!log.exec() || !db.commit()) {
-    const QString error = log.lastError().text().isEmpty() ? db.lastError().text() : log.lastError().text();
+  QString auditError;QList<AuditSubject> subjects{{"REQUIREMENT_RELATION",relationId,"PRIMARY"},{"REQUIREMENT",source,"AFFECTED"},{"REQUIREMENT",target,"AFFECTED"}};
+  if (!AuditService::record(db,"UPDATE","REQUIREMENT_RELATION",relationId,before,AuditService::requirementSnapshot(db,source),subjects,comment,&auditError) || !db.commit()) {
+    const QString error = auditError.isEmpty() ? db.lastError().text() : auditError;
     db.rollback();
     return RequirementResult::failure(error);
   }
@@ -93,6 +91,7 @@ RequirementResult RequirementRelationService::add(int sourceId, int targetId,
   if (sourceId < 0 || targetId < 0 || sourceId == targetId)
     return RequirementResult::failure("Une exigence ne peut pas être reliée à elle-même.");
   QSqlDatabase db = QSqlDatabase::database(m_connectionName);
+  const auto before=AuditService::requirementSnapshot(db,sourceId);
   if (!db.transaction())
     return RequirementResult::failure(db.lastError().text());
   QSqlQuery insert(db);
@@ -107,7 +106,8 @@ RequirementResult RequirementRelationService::add(int sourceId, int targetId,
     return RequirementResult::failure(message);
   }
   const int id = insert.lastInsertId().toInt();
-  if (!db.commit()) {
+  QString auditError;QList<AuditSubject> subjects{{"REQUIREMENT_RELATION",id,"PRIMARY"},{"REQUIREMENT",sourceId,"AFFECTED"},{"REQUIREMENT",targetId,"AFFECTED"}};
+  if (!AuditService::record(db,"CREATE","REQUIREMENT_RELATION",id,before,AuditService::requirementSnapshot(db,sourceId),subjects,comment,&auditError) || !db.commit()) {
     const QString message = db.lastError().text();
     db.rollback();
     return RequirementResult::failure(message);
@@ -117,10 +117,11 @@ RequirementResult RequirementRelationService::add(int sourceId, int targetId,
 
 RequirementResult RequirementRelationService::remove(int relationId) {
   QSqlDatabase db = QSqlDatabase::database(m_connectionName);
+  QSqlQuery endpoints(db);endpoints.prepare("SELECT SOURCE_REQ_ID,TARGET_REQ_ID FROM REQUIREMENT_RELATION WHERE ID=?");endpoints.addBindValue(relationId);if(!endpoints.exec()||!endpoints.next())return RequirementResult::failure("Relation introuvable.");const int source=endpoints.value(0).toInt(),target=endpoints.value(1).toInt();const auto before=AuditService::requirementSnapshot(db,source);if(!db.transaction())return RequirementResult::failure(db.lastError().text());
   QSqlQuery query(db);
   query.prepare("DELETE FROM REQUIREMENT_RELATION WHERE ID=?");
   query.addBindValue(relationId);
-  if (!query.exec())
-    return RequirementResult::failure(query.lastError().text());
+  QString auditError;QList<AuditSubject> subjects{{"REQUIREMENT_RELATION",relationId,"PRIMARY"},{"REQUIREMENT",source,"AFFECTED"},{"REQUIREMENT",target,"AFFECTED"}};
+  if (!query.exec()||!AuditService::record(db,"DELETE","REQUIREMENT_RELATION",relationId,before,AuditService::requirementSnapshot(db,source),subjects,{},&auditError)||!db.commit()){db.rollback();return RequirementResult::failure(auditError.isEmpty()?query.lastError().text():auditError);}
   return RequirementResult::successResult("Relation supprimée.", relationId);
 }

@@ -1,4 +1,5 @@
 #include "interfaceservice.h"
+#include "auditservice.h"
 #include "tabularservice.h"
 
 #include <QJsonDocument>
@@ -299,23 +300,11 @@ RequirementResult InterfaceService::save(const InterfaceRecord &r) {
     db.rollback();
     return RequirementResult::failure(e);
   }
-  QSqlQuery log(db);
-  log.prepare("INSERT INTO "
-              "EVENT_LOG(EVENT_TYPE,OBJECT_TYPE,OBJECT_ID,BEFORE_JSON,AFTER_"
-              "JSON) VALUES(?,?,?,?,?)");
-  log.addBindValue(r.id < 0 ? "CREATE" : "UPDATE");
-  log.addBindValue("INTERFACE");
-  log.addBindValue(id);
-  log.addBindValue(r.id < 0 ? QVariant() : QVariant(json(before)));
   InterfaceRecord after = r;
   after.id = id;
-  log.addBindValue(json(after));
-  if (!log.exec() || !db.commit()) {
-    db.rollback();
-    return RequirementResult::failure(log.lastError().text().isEmpty()
-                                          ? db.lastError().text()
-                                          : log.lastError().text());
-  }
+  QList<AuditSubject> subjects{{"INTERFACE",id,"PRIMARY"}};QSet<int> affected;for(int req:before.requirementIds)affected<<req;for(int req:r.requirementIds)affected<<req;for(int req:affected)subjects.append({"REQUIREMENT",req,"AFFECTED"});for(int doc:before.documentIds)subjects.append({"DOCUMENT",doc,"AFFECTED"});for(int doc:r.documentIds)subjects.append({"DOCUMENT",doc,"AFFECTED"});
+  QString auditError;if(!AuditService::record(db,r.id<0?"CREATE":"UPDATE","INTERFACE",id,r.id<0?QJsonObject():QJsonDocument::fromJson(json(before).toUtf8()).object(),QJsonDocument::fromJson(json(after).toUtf8()).object(),subjects,{},&auditError)){db.rollback();return RequirementResult::failure(auditError);}
+  if(!db.commit()){db.rollback();return RequirementResult::failure(db.lastError().text());}
   return RequirementResult::successResult("Interface enregistrée.", id, r.code);
 }
 RequirementResult InterfaceService::setArchived(int id, bool archived) {

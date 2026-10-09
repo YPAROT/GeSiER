@@ -298,9 +298,10 @@ RequirementWidget::RequirementWidget(QWidget *p) : QWidget(p) {
   changesLayout->addWidget(m_changes);
   m_tabs->addTab(changesPage, "Changements");
 
-  m_history = new QTableWidget(0, 6);
+  m_history = new QTableWidget(0, 5);
+  m_history->setObjectName("requirementHistoryTable");
   m_history->setHorizontalHeaderLabels(
-      {"Date", "Auteur", "Événement", "Avant", "Après", "Commentaire"});
+      {"Date", "Auteur", "Événement", "Modifications", "Commentaire"});
   m_history->setSelectionBehavior(QAbstractItemView::SelectRows);
   m_history->setEditTriggers(QAbstractItemView::NoEditTriggers);
   m_history->horizontalHeader()->setStretchLastSection(true);
@@ -1678,13 +1679,22 @@ void RequirementWidget::loadHistory(int id) {
   for (const HistoryRecord &record : rows) {
     const int row = m_history->rowCount();
     m_history->insertRow(row);
-    const QStringList values = {record.time, record.author, record.eventType,
-                                record.beforeJson, record.afterJson,
-                                record.comment};
+    const QStringList values = {record.time, record.author, record.eventType};
     for (int column = 0; column < values.size(); ++column)
       m_history->setItem(row, column, new QTableWidgetItem(values[column]));
+    auto *diff = new QLabel(record.diffHtml);
+    diff->setTextFormat(Qt::RichText);
+    diff->setWordWrap(true);
+    diff->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    diff->setToolTip("Sujets : " + record.subjects.join(", ") +
+                     "\n\nDonnées brutes\nAvant : " + record.beforeJson +
+                     "\nAprès : " + record.afterJson);
+    m_history->setCellWidget(row, 3, diff);
+    m_history->setItem(row, 4, new QTableWidgetItem(record.comment));
+    m_history->setRowHeight(row, qMax(38, diff->sizeHint().height() + 8));
   }
   m_history->resizeColumnsToContents();
+  m_history->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Stretch);
 }
 void RequirementWidget::obsolete() {
   if (m_current < 0)

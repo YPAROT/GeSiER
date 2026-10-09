@@ -80,7 +80,7 @@ class DatabaseMigratorTest : public QObject {
   Q_OBJECT
   QTemporaryDir m_directory;
 private slots:
-  void createsNormalizedVersion18Schema();
+  void createsNormalizedVersion19Schema();
   void storesMarkdownImagesAtomically();
   void migratesLegacySchemaWithoutLosingLinks();
   void migratesRequirementUniquenessToCode();
@@ -100,21 +100,23 @@ private slots:
   void calculatesDashboardCoverageFromOneService();
   void controlsHighLevelTraceability();
   void auditsDiagnosesBacksUpAndRestoresProject();
+  void auditsConsolidatedRequirementDiffsWithoutImageBlobs();
   void previewsTaggedWordRoundTrip();
   void parsesSemanticWordTablesAndMetadata();
   void roundTripsStructuredDocxCollections();
 };
 
-void DatabaseMigratorTest::createsNormalizedVersion18Schema() {
+void DatabaseMigratorTest::createsNormalizedVersion19Schema() {
   QTemporaryDir directory;
   REQ_SQLManager manager;
-  const auto creation = manager.newDB(directory.filePath("normalized-v18.db"));
+  const auto creation = manager.newDB(directory.filePath("normalized-v19.db"));
   QVERIFY2(creation.type() == QSqlError::NoError, qPrintable(creation.text()));
   QSqlDatabase db = QSqlDatabase::database(manager.currentConnection());
   QSqlQuery q(db);
   QVERIFY(q.exec("PRAGMA user_version"));
   QVERIFY(q.next());
-  QCOMPARE(q.value(0).toInt(), 18);
+  QCOMPARE(q.value(0).toInt(), 19);
+  QVERIFY(db.tables().contains("EVENT_SUBJECT"));
 
   const auto columns = [&](const QString &table) {
     QSet<QString> names;
@@ -123,6 +125,7 @@ void DatabaseMigratorTest::createsNormalizedVersion18Schema() {
     while (info.next()) names.insert(info.value(1).toString().toUpper());
     return names;
   };
+  QVERIFY(columns("EVENT_LOG").contains("PAYLOAD_VERSION"));
   const QSet<QString> requirement = columns("REQUIREMENT");
   for (const QString &removed : {"PARENT_ID", "PT_ID", "DOC_ID",
                                  "DOC_CHAPTER", "VERIF_METHOD",
@@ -460,6 +463,27 @@ void DatabaseMigratorTest::auditsDiagnosesBacksUpAndRestoresProject() {
     QCOMPARE(q.value(0).toString(),QString("Système"));
     QVERIFY(q.exec("PRAGMA foreign_key_check")); QVERIFY(!q.next());
   }
+  manager.close();
+}
+
+void DatabaseMigratorTest::auditsConsolidatedRequirementDiffsWithoutImageBlobs() {
+  QTemporaryDir directory;
+  REQ_SQLManager manager;
+  QVERIFY(manager.newDB(directory.filePath("audit-v19.db")).type()==QSqlError::NoError);
+  ProductTreeService tree(manager.currentConnection());
+  QVERIFY(tree.addNode(-1,"SYS").success);
+  QSqlDatabase db=QSqlDatabase::database(manager.currentConnection());
+  QSqlQuery q(db);QVERIFY(q.exec("SELECT ID FROM PT WHERE SEGMENT='SYS'"));QVERIFY(q.next());const int pt=q.value(0).toInt();
+  RequirementRecord r;r.code="SYS-R-0001";r.title="Titre initial";r.description="Texte initial\n\n![Schéma](gesier-image://img-a)";r.typeId=1;r.statusId=1;r.primaryPtId=pt;r.ptIds={pt};
+  const QByteArray imageData=QByteArray::fromBase64("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=");
+  r.images.append({"img-a","image/png","Schéma initial",imageData});
+  RequirementService service(manager.currentConnection());const auto created=service.save(r);QVERIFY2(created.success,qPrintable(created.message));r.id=created.id;
+  q.prepare("SELECT COUNT(*) FROM EVENT_LOG WHERE OBJECT_TYPE='REQUIREMENT' AND OBJECT_ID=?");q.addBindValue(r.id);QVERIFY(q.exec());QVERIFY(q.next());QCOMPARE(q.value(0).toInt(),1);
+  r.title="Titre modifié";r.images[0].legend="Schéma révisé";QVERIFY(service.save(r).success);
+  q.prepare("SELECT BEFORE_JSON,AFTER_JSON,PAYLOAD_VERSION FROM EVENT_LOG WHERE OBJECT_TYPE='REQUIREMENT' AND OBJECT_ID=? AND EVENT_TYPE='UPDATE' ORDER BY ID DESC LIMIT 1");q.addBindValue(r.id);QVERIFY(q.exec());QVERIFY(q.next());const QString before=q.value(0).toString(),after=q.value(1).toString();QCOMPARE(q.value(2).toInt(),2);QVERIFY(before.contains("Titre initial"));QVERIFY(after.contains("Titre modifié"));QVERIFY(after.contains("sha256"));QVERIFY(!after.contains(QString::fromLatin1(imageData.toBase64())));
+  bool partial=true;QString plain;const QString html=HistoryService::formatDiff(before,after,&partial,&plain);QVERIFY(!partial);QVERIFY(html.contains("color:#b42318"));QVERIFY(html.contains("color:#067647"));QVERIFY(plain.contains("Titre modifié"));
+  q.prepare("SELECT COUNT(*) FROM EVENT_LOG WHERE OBJECT_TYPE='REQUIREMENT' AND OBJECT_ID=?");q.addBindValue(r.id);QVERIFY(q.exec());QVERIFY(q.next());const int count=q.value(0).toInt();QVERIFY(service.save(r).success);q.prepare("SELECT COUNT(*) FROM EVENT_LOG WHERE OBJECT_TYPE='REQUIREMENT' AND OBJECT_ID=?");q.addBindValue(r.id);QVERIFY(q.exec());QVERIFY(q.next());QCOMPARE(q.value(0).toInt(),count);
+  q.prepare("SELECT COUNT(*) FROM EVENT_SUBJECT S JOIN EVENT_LOG E ON E.ID=S.EVENT_ID WHERE E.OBJECT_TYPE='REQUIREMENT' AND E.OBJECT_ID=? AND S.OBJECT_TYPE='PT' AND S.OBJECT_ID=?");q.addBindValue(r.id);q.addBindValue(pt);QVERIFY(q.exec());QVERIFY(q.next());QVERIFY(q.value(0).toInt()>=1);
   manager.close();
 }
 

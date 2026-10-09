@@ -6,7 +6,7 @@
 
 class DatabaseMigrator {
 public:
-  static const int CurrentVersion = 18;
+  static const int CurrentVersion = 19;
 
   static bool migrate(QSqlDatabase db, QString *errorMessage = nullptr);
 

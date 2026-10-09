@@ -1128,6 +1128,41 @@ bool DatabaseMigrator::migrate(QSqlDatabase db, QString *errorMessage) {
     }
   }
 
+  // v19: événements métier structurés, associés à tous les objets affectés.
+  if (!execute(db, "DROP TRIGGER IF EXISTS APPLICABILITY_NEW", errorMessage) ||
+      !execute(db, "DROP TRIGGER IF EXISTS APPLICABILITY_UPDATE", errorMessage) ||
+      !execute(db, "DROP TRIGGER IF EXISTS APPLICABILITY_DELETE", errorMessage) ||
+      !execute(db, "DROP TRIGGER IF EXISTS REQUIREMENT_RELATION_NEW", errorMessage) ||
+      !execute(db, "DROP TRIGGER IF EXISTS REQUIREMENT_RELATION_DELETE", errorMessage) ||
+      !addColumnIfMissing(db, "EVENT_LOG", "PAYLOAD_VERSION",
+                          "INTEGER NOT NULL DEFAULT 1", errorMessage) ||
+      !execute(db,
+               "CREATE TABLE IF NOT EXISTS EVENT_SUBJECT(EVENT_ID INTEGER "
+               "NOT NULL REFERENCES EVENT_LOG(ID) ON DELETE CASCADE,"
+               "OBJECT_TYPE TEXT NOT NULL,OBJECT_ID INTEGER NOT NULL,ROLE "
+               "TEXT NOT NULL DEFAULT 'AFFECTED',PRIMARY KEY(EVENT_ID,"
+               "OBJECT_TYPE,OBJECT_ID))",
+               errorMessage) ||
+      !execute(db,
+               "CREATE INDEX IF NOT EXISTS IDX_EVENT_SUBJECT_OBJECT ON "
+               "EVENT_SUBJECT(OBJECT_TYPE,OBJECT_ID,EVENT_ID)",
+               errorMessage) ||
+      !execute(db,
+               "CREATE TRIGGER IF NOT EXISTS AUDIT_EVENT_SUBJECT AFTER "
+               "INSERT ON EVENT_LOG WHEN NEW.OBJECT_ID IS NOT NULL BEGIN "
+               "INSERT OR IGNORE INTO EVENT_SUBJECT(EVENT_ID,OBJECT_TYPE,"
+               "OBJECT_ID,ROLE) VALUES(NEW.ID,NEW.OBJECT_TYPE,NEW.OBJECT_ID,"
+               "'PRIMARY'); END",
+               errorMessage) ||
+      !execute(db,
+               "INSERT OR IGNORE INTO EVENT_SUBJECT(EVENT_ID,OBJECT_TYPE,"
+               "OBJECT_ID,ROLE) SELECT ID,OBJECT_TYPE,OBJECT_ID,'PRIMARY' "
+               "FROM EVENT_LOG WHERE OBJECT_ID IS NOT NULL",
+               errorMessage)) {
+    db.rollback();
+    return false;
+  }
+
   if (!execute(db, QString("PRAGMA user_version=%1").arg(CurrentVersion),
                errorMessage) ||
       !db.commit()) {

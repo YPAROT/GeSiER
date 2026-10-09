@@ -1,4 +1,5 @@
 #include "changeservice.h"
+#include "auditservice.h"
 #include "tabularservice.h"
 #include <QDateTime>
 #include <QJsonArray>
@@ -351,21 +352,9 @@ RequirementResult ChangeService::save(const ChangeRecord &r) {
   }
   ChangeRecord after = r;
   after.id = id;
-  QSqlQuery log(db);
-  log.prepare("INSERT INTO "
-              "EVENT_LOG(EVENT_TYPE,OBJECT_TYPE,OBJECT_ID,BEFORE_JSON,AFTER_"
-              "JSON) VALUES(?,?,?,?,?)");
-  log.addBindValue(r.id < 0 ? "CREATE" : "UPDATE");
-  log.addBindValue("CHANGE");
-  log.addBindValue(id);
-  log.addBindValue(r.id < 0 ? QVariant() : QVariant(snapshot(before)));
-  log.addBindValue(snapshot(after));
-  if (!log.exec() || !db.commit()) {
-    db.rollback();
-    return RequirementResult::failure(log.lastError().text().isEmpty()
-                                          ? db.lastError().text()
-                                          : log.lastError().text());
-  }
+  QList<AuditSubject> subjects{{"CHANGE",id,"PRIMARY"}};QSet<QString> affected;for(const auto&l:before.links)affected<<l.objectType+":"+QString::number(l.objectId);for(const auto&l:r.links)affected<<l.objectType+":"+QString::number(l.objectId);for(const QString&key:affected){const int split=key.indexOf(':');subjects.append({key.left(split),key.mid(split+1).toInt(),"AFFECTED"});}
+  QString auditError;if(!AuditService::record(db,r.id<0?"CREATE":"UPDATE","CHANGE",id,r.id<0?QJsonObject():QJsonDocument::fromJson(snapshot(before).toUtf8()).object(),QJsonDocument::fromJson(snapshot(after).toUtf8()).object(),subjects,{},&auditError)){db.rollback();return RequirementResult::failure(auditError);}
+  if(!db.commit()){db.rollback();return RequirementResult::failure(db.lastError().text());}
   return RequirementResult::successResult("Changement enregistré.", id, r.code);
 }
 RequirementResult ChangeService::setArchived(int id, bool a) {

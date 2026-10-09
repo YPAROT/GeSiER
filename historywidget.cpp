@@ -21,8 +21,8 @@ HistoryWidget::HistoryWidget(QWidget *parent) : QWidget(parent) {
   filters->addWidget(new QLabel("Objet")); filters->addWidget(m_object);
   filters->addWidget(new QLabel("Événement")); filters->addWidget(m_event);
   filters->addWidget(refreshButton); filters->addWidget(openButton);
-  m_table = new QTableWidget(0, 8);
-  m_table->setHorizontalHeaderLabels({"Date", "Auteur", "Événement", "Objet", "ID", "Avant", "Après", "Commentaire"});
+  m_table = new QTableWidget(0, 7);
+  m_table->setHorizontalHeaderLabels({"Date", "Auteur", "Événement", "Objet", "ID", "Modifications", "Commentaire"});
   m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
   m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
   m_table->horizontalHeader()->setStretchLastSection(true);
@@ -56,8 +56,12 @@ void HistoryWidget::refresh() {
   HistoryService service(m_connectionName);
   const auto rows=service.find(m_search->text(),m_object->currentData().toString(),m_event->currentData().toString());
   for(const auto&r:rows){int row=m_table->rowCount();m_table->insertRow(row);
-    const QStringList values={r.time,r.author,r.eventType,r.objectType,QString::number(r.objectId),r.beforeJson,r.afterJson,r.comment};
+    const QStringList values={r.time,r.author,r.eventType,r.objectType,QString::number(r.objectId)};
     for(int c=0;c<values.size();++c)m_table->setItem(row,c,new QTableWidgetItem(values[c]));
+    auto *diff=new QLabel(r.diffHtml);diff->setTextFormat(Qt::RichText);diff->setWordWrap(true);diff->setTextInteractionFlags(Qt::TextSelectableByMouse);diff->setToolTip("Sujets : "+r.subjects.join(", ")+"\n\nDonnées brutes\nAvant : "+r.beforeJson+"\nAprès : "+r.afterJson);m_table->setCellWidget(row,5,diff);
+    m_table->setItem(row,6,new QTableWidgetItem(r.comment));
+    m_table->setRowHeight(row,qMax(38,diff->sizeHint().height()+8));
   }
   m_table->resizeColumnsToContents();
+  m_table->horizontalHeader()->setSectionResizeMode(5,QHeaderView::Stretch);
 }

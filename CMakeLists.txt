@@ -27,6 +27,7 @@ qt_add_executable(GeSiER WIN32
     changeservice.cpp changeservice.h
     changewidget.cpp changewidget.h
     historyservice.cpp historyservice.h
+    auditservice.cpp auditservice.h
     historywidget.cpp historywidget.h
     producttreeservice.cpp producttreeservice.h
     producttreemodel.cpp producttreemodel.h
@@ -134,6 +135,7 @@ if(BUILD_TESTING)
         traceabilitycontrolservice.cpp traceabilitycontrolservice.h
         projectpages.h
         historyservice.cpp historyservice.h
+        auditservice.cpp auditservice.h
         req_sqlmanager.cpp req_sqlmanager.h
         sqltreemodel.cpp sqltreemodel.h
         sqltreeitem.cpp sqltreeitem.h
@@ -168,6 +170,7 @@ if(BUILD_TESTING)
         producttreeservice.cpp producttreeservice.h
         changeservice.cpp changeservice.h
         historyservice.cpp historyservice.h
+        auditservice.cpp auditservice.h
         databasemigrator.cpp databasemigrator.h
         req_sqlmanager.cpp req_sqlmanager.h
         qressources.qrc

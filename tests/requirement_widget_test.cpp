@@ -5,6 +5,7 @@
 #include <QGraphicsRectItem>
 #include <QGraphicsView>
 #include <QLineEdit>
+#include <QLabel>
 #include <QPushButton>
 #include <QPlainTextEdit>
 #include <QMessageBox>
@@ -49,7 +50,23 @@ private slots:
   void keepsCurrentRequirementWhenDiscardIsRefused();
   void configuresDocumentCreationScope();
   void marksObsoleteRequirementsInDocumentTree();
+  void displaysRequirementHistoryAsHumanDiff();
 };
+
+void RequirementWidgetTest::displaysRequirementHistoryAsHumanDiff() {
+  QTemporaryDir directory;
+  REQ_SQLManager manager;
+  QVERIFY(manager.newDB(directory.filePath("history-widget.db")).type()==QSqlError::NoError);
+  ProductTreeService tree(manager.currentConnection());QVERIFY(tree.addNode(-1,"SYS").success);
+  QSqlQuery q(QSqlDatabase::database(manager.currentConnection()));
+  QVERIFY(q.exec("SELECT ID FROM PT WHERE SEGMENT='SYS'"));QVERIFY(q.next());const int pt=q.value(0).toInt();
+  QVERIFY(q.exec("INSERT INTO REQUIREMENT(ID,CODE,TITLE,TYPE,STATUS) VALUES(1,'REQ-1','Nouveau titre',1,1)"));
+  QVERIFY(q.exec(QString("INSERT INTO REQUIREMENT_PT(REQ_ID,PT_ID,IS_PRIMARY) VALUES(1,%1,1)").arg(pt)));
+  QVERIFY(q.exec("INSERT INTO EVENT_LOG(EVENT_TYPE,OBJECT_TYPE,OBJECT_ID,BEFORE_JSON,AFTER_JSON,PAYLOAD_VERSION) VALUES('UPDATE','REQUIREMENT',1,'{\"fields\":{\"title\":\"Ancien titre\"}}','{\"fields\":{\"title\":\"Nouveau titre\"}}',2)"));
+  RequirementWidget widget;widget.setConnectionName(manager.currentConnection());widget.openRequirement(1);
+  auto *history=widget.findChild<QTableWidget *>("requirementHistoryTable");QVERIFY(history);QCOMPARE(history->columnCount(),5);QCOMPARE(history->horizontalHeaderItem(3)->text(),QString("Modifications"));QCOMPARE(history->rowCount(),1);
+  auto *diff=qobject_cast<QLabel *>(history->cellWidget(0,3));QVERIFY(diff);QVERIFY(diff->text().contains("color:#b42318"));QVERIFY(diff->text().contains("color:#067647"));QVERIFY(diff->text().contains("Nouveau titre"));
+}
 
 void RequirementWidgetTest::marksObsoleteRequirementsInDocumentTree() {
   QTemporaryDir directory;
