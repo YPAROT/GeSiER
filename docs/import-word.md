@@ -26,6 +26,7 @@ Les valeurs de l'exemple sont remplacées par les balises suivantes :
 | `{{REQ_TYPE}}` | Code ou libellé du type |
 | `{{REQ_STATUS}}` | Code ou libellé du statut |
 | `{{REQ_SOURCE}}` | Source |
+| `{{REQ_COMMENTS}}` | Commentaire de l'exigence |
 | `{{REQ_PRODUCT_TREES}}` | Codes PT, un par ligne |
 | `{{REQ_APPLICABILITY}}` | Codes de configuration, un par ligne |
 | `{{REQ_VERIFICATIONS}}` | Une vérification par ligne |
@@ -41,8 +42,16 @@ verdict | Redmine | commentaire`. Une relation agrégée accepte soit les codes
 
 Les titres Word structurés par niveaux deviennent des chapitres GeSiER. Les
 paragraphes, listes, caractères gras et italiques de la description sont
-conservés. Les tableaux sont aplatis et les images ou objets incorporés sont
-signalés mais non importés.
+conservés. Les tableaux inclus dans une description sont convertis en tableaux
+Markdown. Les images sont importées ; les autres objets incorporés non reconnus
+sont signalés.
+
+Les équations créées avec l'éditeur d'équations de Word dans la description ou
+le commentaire sont converties en LaTeX entre délimiteurs `$…$` lorsqu'elles
+utilisent une construction prise en charge (notamment fractions, indices,
+exposants, racines, sommes, produits et intégrales). Une formule non convertible
+reste signalée par un marqueur dans le champ concerné et par un diagnostic non
+bloquant dans l'aperçu d'import.
 
 ## Collections structurées
 

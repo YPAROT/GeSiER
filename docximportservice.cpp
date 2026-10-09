@@ -12,6 +12,7 @@
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QTextDocumentFragment>
+#include <QXmlStreamReader>
 #include <QUuid>
 #include "markdownutility.h"
 #include <private/qzipreader_p.h>
@@ -27,7 +28,8 @@ const QString RelEnd = "{{GESIER_RELATION_TEMPLATE_END}}";
 const QStringList ReqTags = {
     "REQ_ID", "REQ_CODE", "REQ_TITLE", "REQ_DESCRIPTION", "REQ_TYPE",
     "REQ_STATUS", "REQ_SOURCE", "REQ_PRODUCT_TREES", "REQ_APPLICABILITY",
-    "REQ_VERIFICATIONS", "REQ_RELATIONS"};
+    "REQ_COMMENTS", "REQ_VERIFICATIONS", "REQ_RELATIONS"};
+const QString UnsupportedFormulaMarker = "[[GESIER_FORMULA_NON_CONVERTIE]]";
 
 struct Paragraph { QString xml, text, style; int outline = 0; };
 struct WordCell { QString xml, text, html; };
@@ -43,8 +45,198 @@ struct BodyItem {
   WordTable table;
 };
 
+QStringList outerElements(const QString &xml, const QString &name) {
+  QStringList result;
+  const QRegularExpression tag(
+      "<(/?)" + QRegularExpression::escape(name) + "(?=\\s|/?>)[^>]*>",
+      QRegularExpression::CaseInsensitiveOption);
+  int depth = 0, start = -1;
+  auto matches = tag.globalMatch(xml);
+  while (matches.hasNext()) {
+    const auto match = matches.next();
+    const bool closing = !match.captured(1).isEmpty();
+    const bool selfClosing = match.captured().trimmed().endsWith("/>");
+    if (!closing) {
+      if (depth == 0) start = match.capturedStart();
+      if (!selfClosing) ++depth;
+      else if (depth == 0) result << match.captured();
+    } else if (depth > 0 && --depth == 0 && start >= 0) {
+      result << xml.mid(start, match.capturedEnd() - start);
+      start = -1;
+    }
+  }
+  return result;
+}
+
+QStringList outerWordBlocks(const QString &xml) {
+  struct OpenTag { QString name; qsizetype start = -1; };
+  QStringList result;
+  QList<OpenTag> stack;
+  const QRegularExpression tag("<(/?)(w:(?:p|tbl))(?=\\s|/?>)[^>]*>",
+                               QRegularExpression::CaseInsensitiveOption);
+  auto matches = tag.globalMatch(xml);
+  while (matches.hasNext()) {
+    const auto match = matches.next();
+    const bool closing = !match.captured(1).isEmpty();
+    const bool selfClosing = match.captured().trimmed().endsWith("/>");
+    if (!closing) {
+      stack << OpenTag{match.captured(2).toLower(), match.capturedStart()};
+      if (selfClosing) {
+        stack.takeLast();
+        if (stack.isEmpty()) result << match.captured();
+      }
+    } else if (!stack.isEmpty() && stack.last().name == match.captured(2).toLower()) {
+      const OpenTag opened = stack.takeLast();
+      if (stack.isEmpty())
+        result << xml.mid(opened.start, match.capturedEnd() - opened.start);
+    }
+  }
+  return result;
+}
+
 QString decode(QString value) {
   return QTextDocumentFragment::fromHtml(value).toPlainText();
+}
+
+struct OmmlNode {
+  QString name;
+  QString text;
+  QMap<QString, QString> attributes;
+  QList<OmmlNode> children;
+};
+
+OmmlNode readOmmlNode(QXmlStreamReader *reader) {
+  OmmlNode node;
+  node.name = reader->name().toString();
+  for (const auto &attribute : reader->attributes())
+    node.attributes[attribute.name().toString()] = attribute.value().toString();
+  while (!reader->atEnd()) {
+    reader->readNext();
+    if (reader->isCharacters()) node.text += reader->text().toString();
+    else if (reader->isStartElement()) node.children << readOmmlNode(reader);
+    else if (reader->isEndElement()) break;
+  }
+  return node;
+}
+
+QString ommlLatex(const OmmlNode &node, bool *supported);
+
+QString ommlChildren(const OmmlNode &node, bool *supported) {
+  QString value;
+  for (const auto &child : node.children) value += ommlLatex(child, supported);
+  return value;
+}
+
+QString ommlChild(const OmmlNode &node, const QString &name, bool *supported) {
+  for (const auto &child : node.children)
+    if (child.name == name) return ommlChildren(child, supported);
+  return {};
+}
+
+QString ommlLatex(const OmmlNode &node, bool *supported) {
+  if (node.name == "t") {
+    QString text = node.text;
+    text.replace("\\", "\\backslash ");
+    for (const QChar character : QString("{}#$%&_"))
+      text.replace(character, "\\" + QString(character));
+    return text;
+  }
+  if (node.name == "f")
+    return "\\frac{" + ommlChild(node, "num", supported) + "}{" +
+           ommlChild(node, "den", supported) + "}";
+  if (node.name == "sSup")
+    return "{" + ommlChild(node, "e", supported) + "}^{" +
+           ommlChild(node, "sup", supported) + "}";
+  if (node.name == "sSub")
+    return "{" + ommlChild(node, "e", supported) + "}_{" +
+           ommlChild(node, "sub", supported) + "}";
+  if (node.name == "sSubSup")
+    return "{" + ommlChild(node, "e", supported) + "}_{" +
+           ommlChild(node, "sub", supported) + "}^{" +
+           ommlChild(node, "sup", supported) + "}";
+  if (node.name == "sPre")
+    return "{}_{" + ommlChild(node, "sub", supported) + "}^{" +
+           ommlChild(node, "sup", supported) + "}" +
+           ommlChild(node, "e", supported);
+  if (node.name == "rad") {
+    const QString degree = ommlChild(node, "deg", supported);
+    return degree.isEmpty() ? "\\sqrt{" + ommlChild(node, "e", supported) + "}"
+                            : "\\sqrt[" + degree + "]{" + ommlChild(node, "e", supported) + "}";
+  }
+  if (node.name == "nary") {
+    QString symbol = "\\sum";
+    for (const auto &properties : node.children)
+      if (properties.name == "naryPr")
+        for (const auto &property : properties.children)
+          if (property.name == "chr") {
+            const QString character = property.attributes.value("val");
+            if (character == QString::fromUtf8("∫")) symbol = "\\int";
+            else if (character == QString::fromUtf8("∏")) symbol = "\\prod";
+            else if (character != QString::fromUtf8("∑")) *supported = false;
+          }
+    const QString sub = ommlChild(node, "sub", supported);
+    const QString sup = ommlChild(node, "sup", supported);
+    return symbol + (sub.isEmpty() ? QString() : "_{" + sub + "}") +
+           (sup.isEmpty() ? QString() : "^{" + sup + "}") +
+           " " + ommlChild(node, "e", supported);
+  }
+  if (node.name == "d") {
+    QString begin = "(", end = ")";
+    for (const auto &properties : node.children)
+      if (properties.name == "dPr")
+        for (const auto &property : properties.children) {
+          if (property.name == "begChr") begin = property.attributes.value("val", begin);
+          if (property.name == "endChr") end = property.attributes.value("val", end);
+        }
+    return "\\left" + begin + ommlChild(node, "e", supported) + "\\right" + end;
+  }
+  static const QSet<QString> transparent{
+      "oMath", "oMathPara", "r", "e", "num", "den", "sub", "sup",
+      "deg", "box", "groupChr", "limLow", "limUpp", "func", "fName",
+      "eqArr", "m"};
+  static const QSet<QString> properties{
+      "oMathParaPr", "ctrlPr", "rPr", "fPr", "radPr", "sSupPr",
+      "sSubPr", "sSubSupPr", "naryPr", "dPr", "boxPr", "groupChrPr"};
+  static const QSet<QString> annotations{
+      "commentRangeStart", "commentRangeEnd", "commentReference",
+      "annotationRef", "proofErr", "bookmarkStart", "bookmarkEnd"};
+  if (transparent.contains(node.name)) return ommlChildren(node, supported);
+  // Word may inject argument and control properties (argPr, ctrlPr, etc.)
+  // according to the document theme. They affect presentation only and must
+  // not make an otherwise supported equation fail conversion.
+  if (properties.contains(node.name) || annotations.contains(node.name) ||
+      node.name.endsWith("Pr") ||
+      node.name.endsWith("Chr"))
+    return {};
+  *supported = false;
+  return ommlChildren(node, supported);
+}
+
+QString formulaLatex(const QString &xml, bool *supported) {
+  QXmlStreamReader reader(
+      "<root xmlns:m=\"http://schemas.openxmlformats.org/officeDocument/2006/math\" "
+      "xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">" +
+      xml + "</root>");
+  if (!reader.readNextStartElement() || !reader.readNextStartElement()) {
+    *supported = false;
+    return {};
+  }
+  const OmmlNode formula = readOmmlNode(&reader);
+  QString latex = ommlLatex(formula, supported).trimmed();
+  if (reader.hasError() || latex.isEmpty()) *supported = false;
+  return latex;
+}
+
+QString mathAsWordRuns(QString xml) {
+  for (const QString &formula : outerElements(xml, "m:oMath")) {
+    bool supported = true;
+    const QString latex = formulaLatex(formula, &supported);
+    const QString replacement = supported
+                                    ? "<w:r><w:t>" + ("$" + latex + "$").toHtmlEscaped() + "</w:t></w:r>"
+                                    : "<w:r><w:t>" + UnsupportedFormulaMarker + "</w:t></w:r>";
+    xml.replace(formula, replacement);
+  }
+  return xml;
 }
 QString visible(const QString &xml) {
   QString result;
@@ -104,8 +296,9 @@ QList<Paragraph> paragraphs(const QString &xml, const QString &styles = {}) {
 QString normalized(QString value) { return value.simplified().toUpper(); }
 QString htmlFromParagraph(const Paragraph &p) {
   QString text;
+  const QString paragraphXml = mathAsWordRuns(p.xml);
   QRegularExpression runs("<w:r(?:\\s[^>]*)?>[\\s\\S]*?</w:r>");
-  auto iterator = runs.globalMatch(p.xml);
+  auto iterator = runs.globalMatch(paragraphXml);
   while (iterator.hasNext()) {
     const QString run = iterator.next().captured();
     QString value = visible(run).toHtmlEscaped();
@@ -116,7 +309,7 @@ QString htmlFromParagraph(const Paragraph &p) {
   QRegularExpression drawings(
       "<a:blip[^>]*r:embed=\"([^\"]+)\"[^>]*/?>",
       QRegularExpression::CaseInsensitiveOption);
-  auto imageIterator = drawings.globalMatch(p.xml);
+  auto imageIterator = drawings.globalMatch(paragraphXml);
   while (imageIterator.hasNext())
     text += "<img src=\"gesier-rid://" +
             imageIterator.next().captured(1).toHtmlEscaped() + "\"/>";
@@ -133,7 +326,22 @@ QString cellText(const QString &xml) {
 QString cellHtml(const QString &xml) {
   QString result;
   bool inList = false;
-  for (const Paragraph &paragraph : paragraphs(xml)) {
+  for (const QString &block : outerWordBlocks(xml)) {
+    if (block.startsWith("<w:tbl", Qt::CaseInsensitive)) {
+      if (inList) { result += "</ul>"; inList = false; }
+      result += "<table>";
+      for (const QString &row : outerElements(block, "w:tr")) {
+        result += "<tr>";
+        for (const QString &cell : outerElements(row, "w:tc"))
+          result += "<td>" + cellHtml(cell) + "</td>";
+        result += "</tr>";
+      }
+      result += "</table>";
+      continue;
+    }
+    const auto parsed = paragraphs(block);
+    if (parsed.isEmpty()) continue;
+    const Paragraph &paragraph = parsed.first();
     const bool list = paragraph.xml.contains("<w:numPr");
     if (list && !inList) { result += "<ul>"; inList = true; }
     if (!list && inList) { result += "</ul>"; inList = false; }
@@ -144,15 +352,9 @@ QString cellHtml(const QString &xml) {
 }
 WordTable parseTable(const QString &xml) {
   WordTable table; table.xml = xml;
-  QRegularExpression rowExpression("<w:tr(?:\\s[^>]*)?>[\\s\\S]*?</w:tr>", QRegularExpression::CaseInsensitiveOption);
-  auto rows = rowExpression.globalMatch(xml);
-  while (rows.hasNext()) {
-    const QString rowXml = rows.next().captured();
+  for (const QString &rowXml : outerElements(xml, "w:tr")) {
     QList<WordCell> row;
-    QRegularExpression cellExpression("<w:tc(?:\\s[^>]*)?>[\\s\\S]*?</w:tc>", QRegularExpression::CaseInsensitiveOption);
-    auto cells = cellExpression.globalMatch(rowXml);
-    while (cells.hasNext()) {
-      const QString value = cells.next().captured();
+    for (const QString &value : outerElements(rowXml, "w:tc")) {
       row << WordCell{value, cellText(value), cellHtml(value)};
     }
     table.rows << row;
@@ -161,19 +363,15 @@ WordTable parseTable(const QString &xml) {
 }
 QList<WordTable> tables(const QString &xml) {
   QList<WordTable> result;
-  QRegularExpression expression("<w:tbl(?:\\s[^>]*)?>[\\s\\S]*?</w:tbl>", QRegularExpression::CaseInsensitiveOption);
-  auto matches = expression.globalMatch(xml);
-  while (matches.hasNext()) result << parseTable(matches.next().captured());
+  for (const QString &table : outerElements(xml, "w:tbl"))
+    result << parseTable(table);
   return result;
 }
 QList<BodyItem> bodyItems(const QString &xml, const QString &styles) {
   QList<BodyItem> result;
   QRegularExpression bodyExpression("<w:body(?:\\s[^>]*)?>([\\s\\S]*?)</w:body>", QRegularExpression::CaseInsensitiveOption);
   const QString body = bodyExpression.match(xml).captured(1);
-  QRegularExpression itemExpression("<w:tbl(?:\\s[^>]*)?>[\\s\\S]*?</w:tbl>|<w:p(?:\\s[^>]*)?>[\\s\\S]*?</w:p>", QRegularExpression::CaseInsensitiveOption);
-  auto items = itemExpression.globalMatch(body);
-  while (items.hasNext()) {
-    const QString item = items.next().captured();
+  for (const QString &item : outerWordBlocks(body)) {
     if (item.startsWith("<w:tbl", Qt::CaseInsensitive)) {
       BodyItem value; value.kind = BodyItem::TableItem; value.table = parseTable(item); result << value;
     } else {
@@ -633,14 +831,28 @@ DocxImportPreview DocxImportService::preview(const QString &sourcePath,
     imported.location = QString("Exigence %1 — %2").arg(ordinal).arg(chapterStack.join(" / "));
     imported.record.code = values.value("REQ_CODE").trimmed();
     imported.record.title = values.value("REQ_TITLE").trimmed();
+    const bool unsupportedDescriptionFormula =
+        htmlValues.value("REQ_DESCRIPTION").contains(UnsupportedFormulaMarker);
+    const bool unsupportedCommentsFormula =
+        htmlValues.value("REQ_COMMENTS").contains(UnsupportedFormulaMarker);
     imported.record.description = markdownWithImages(
         htmlValues.value("REQ_DESCRIPTION"), sourcePath,
         &imported.record.images);
+    imported.record.description.replace(
+        UnsupportedFormulaMarker,
+        QString::fromUtf8("⚠ Formule Word non convertie"));
     imported.type = values.value("REQ_TYPE").trimmed();
     imported.status = values.value("REQ_STATUS").trimmed();
     imported.record.source = values.value("REQ_SOURCE").trimmed();
     imported.commentsProvided = values.contains("REQ_COMMENTS");
-    imported.record.comments = values.value("REQ_COMMENTS");
+    if (imported.commentsProvided) {
+      imported.record.comments = markdownWithImages(
+          htmlValues.value("REQ_COMMENTS"), sourcePath,
+          &imported.record.images);
+      imported.record.comments.replace(
+          UnsupportedFormulaMarker,
+          QString::fromUtf8("⚠ Formule Word non convertie"));
+    }
     imported.productTreeCodes = lines(values.value("REQ_PRODUCT_TREES"));
     imported.configurationCodes = lines(values.value("REQ_APPLICABILITY"));
     imported.recognition = recognition;
@@ -648,6 +860,22 @@ DocxImportPreview DocxImportService::preview(const QString &sourcePath,
     imported.detailedDiagnostics = details;
     for (const auto &detail : details)
       imported.diagnostics << detail.location + " : " + detail.message;
+    if (unsupportedDescriptionFormula) {
+      const DocxImportDiagnostic formulaDiagnostic{
+          imported.location, "REQ_DESCRIPTION",
+          "Une formule Word n’a pas pu être convertie en LaTeX ; un marqueur a été conservé dans la description.",
+          false};
+      imported.detailedDiagnostics << formulaDiagnostic;
+      imported.diagnostics << formulaDiagnostic.message;
+    }
+    if (unsupportedCommentsFormula) {
+      const DocxImportDiagnostic formulaDiagnostic{
+          imported.location, "REQ_COMMENTS",
+          "Une formule Word n’a pas pu être convertie en LaTeX ; un marqueur a été conservé dans le commentaire.",
+          false};
+      imported.detailedDiagnostics << formulaDiagnostic;
+      imported.diagnostics << formulaDiagnostic.message;
+    }
     if (hasStructuredVerifications) {
       for (const auto &fields : structuredVerifications) {
         RequirementVerification verification;

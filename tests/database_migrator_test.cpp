@@ -377,6 +377,107 @@ void DatabaseMigratorTest::parsesSemanticWordTablesAndMetadata() {
   QVERIFY(requirement.record.description.contains("**Le système détecte la panne.**"));
   QVERIFY(requirement.record.description.contains("Il journalise l'événement."));
 
+  QByteArray nestedTableSource = source;
+  nestedTableSource.replace(
+      "<w:p><w:r><w:rPr><w:b/></w:rPr><w:t>Le système détecte la panne.</w:t></w:r></w:p><w:p><w:pPr><w:numPr/></w:pPr><w:r><w:t>Il journalise l'événement.</w:t></w:r></w:p>",
+      "<w:p><w:r><w:t>Bits 7-5: Board Model</w:t></w:r></w:p>"
+      "<w:tbl><w:tr><w:tc><w:p><w:r><w:rPr><w:b/></w:rPr><w:t>Code</w:t></w:r></w:p></w:tc>"
+      "<w:tc><w:p><w:r><w:rPr><w:b/></w:rPr><w:t>Model</w:t></w:r></w:p></w:tc></w:tr>"
+      "<w:tr><w:tc><w:p><w:r><w:t>000</w:t></w:r></w:p></w:tc>"
+      "<w:tc><w:p><w:r><w:t>DM</w:t></w:r></w:p></w:tc></w:tr>"
+      "<w:tr><w:tc><w:p><w:r><w:t>011</w:t></w:r></w:p></w:tc>"
+      "<w:tc><w:p><w:r><w:t>STM</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"
+      "<w:p><w:r><w:t>Bits 4-0: Unique identifier</w:t></w:r></w:p>");
+  const QString nestedTablePath = writeImportFixture(
+      directory.filePath("nested-table-source.docx"), nestedTableSource,
+      sourceHeader, "Titre de repli", "REF-DE-REPLI");
+  const auto nestedTablePreview = service.preview(nestedTablePath, modelPath);
+  QVERIFY2(nestedTablePreview.valid(),
+           qPrintable(nestedTablePreview.errors.join('\n')));
+  QCOMPARE(nestedTablePreview.requirements.size(), 1);
+  const QString nestedDescription =
+      nestedTablePreview.requirements.first().record.description;
+  QVERIFY(nestedDescription.contains("Bits 7-5: Board Model"));
+  QVERIFY(nestedDescription.contains("Code"));
+  QVERIFY(nestedDescription.contains("STM"));
+  QVERIFY(nestedDescription.contains("Bits 4-0: Unique identifier"));
+  QCOMPARE(nestedTablePreview.requirements.first().type, QString("Feature"));
+  QCOMPARE(nestedTablePreview.requirements.first().status, QString("Draft"));
+
+  QByteArray formulaSource = source;
+  formulaSource.replace(
+      "<w:p><w:r><w:rPr><w:b/></w:rPr><w:t>Le système détecte la panne.</w:t></w:r></w:p><w:p><w:pPr><w:numPr/></w:pPr><w:r><w:t>Il journalise l'événement.</w:t></w:r></w:p>",
+      "<w:p><w:r><w:t>Rapport </w:t></w:r><m:oMath>"
+      "<m:f><m:num><m:r><m:t>a</m:t></m:r></m:num>"
+      "<m:den><m:r><m:t>b</m:t></m:r></m:den></m:f>"
+      "</m:oMath></w:p>");
+  const QString formulaPath = writeImportFixture(
+      directory.filePath("formula-source.docx"), formulaSource);
+  const auto formulaPreview = service.preview(formulaPath, modelPath);
+  QVERIFY2(formulaPreview.valid(), qPrintable(formulaPreview.errors.join('\n')));
+  QVERIFY(formulaPreview.requirements.first().record.description.contains("$\\frac{a}{b}$"));
+  QVERIFY(formulaPreview.requirements.first().diagnostics.isEmpty());
+
+  QByteArray scriptsSource = formulaSource;
+  scriptsSource.replace(
+      "<m:f><m:num><m:r><m:t>a</m:t></m:r></m:num><m:den><m:r><m:t>b</m:t></m:r></m:den></m:f>",
+      "<m:sSup><m:e><m:r><m:t>x</m:t></m:r></m:e>"
+      "<m:sup><m:r><m:t>2</m:t></m:r></m:sup></m:sSup>"
+      "<m:r><m:t> et </m:t></m:r>"
+      "<m:sSub><m:e><m:r><m:t>T</m:t></m:r></m:e>"
+      "<m:sub><m:r><m:t>max</m:t></m:r></m:sub></m:sSub>"
+      "<m:r><m:t> ; tolérance </m:t></m:r>"
+      "<m:sSubSup><m:sSubSupPr><m:ctrlPr><w:rPr><w:b/></w:rPr></m:ctrlPr></m:sSubSupPr>"
+      "<m:e><m:argPr><m:argSz m:val=\"1\"/></m:argPr><m:r><m:t>10</m:t></m:r></m:e>"
+      "<m:sub><m:r><m:t>-0.1</m:t></m:r></m:sub>"
+      "<m:sup><m:r><m:t>+0.2</m:t></m:r></m:sup></m:sSubSup>"
+      "<m:r><m:t>MH</m:t></m:r>"
+      "<w:commentRangeStart w:id=\"1\"/><w:commentRangeEnd w:id=\"1\"/>"
+      "<m:r><w:commentReference w:id=\"1\"/></m:r>"
+      "<m:r><m:t>z</m:t></m:r>");
+  const QString scriptsPath = writeImportFixture(
+      directory.filePath("scripts-source.docx"), scriptsSource);
+  const auto scriptsPreview = service.preview(scriptsPath, modelPath);
+  QVERIFY2(scriptsPreview.valid(), qPrintable(scriptsPreview.errors.join('\n')));
+  const QString scriptsDescription =
+      scriptsPreview.requirements.first().record.description;
+  QVERIFY(scriptsDescription.contains("{x}^{2}"));
+  QVERIFY(scriptsDescription.contains("{T}_{max}"));
+  QVERIFY(scriptsDescription.contains("{10}_{-0.1}^{+0.2}"));
+  QVERIFY(scriptsDescription.contains("MHz"));
+  QVERIFY(scriptsPreview.requirements.first().diagnostics.isEmpty());
+
+  QByteArray unsupportedFormulaSource = formulaSource;
+  unsupportedFormulaSource.replace("<m:f>", "<m:unknown>");
+  unsupportedFormulaSource.replace("</m:f>", "</m:unknown>");
+  const QString unsupportedFormulaPath = writeImportFixture(
+      directory.filePath("unsupported-formula-source.docx"),
+      unsupportedFormulaSource);
+  const auto unsupportedFormulaPreview =
+      service.preview(unsupportedFormulaPath, modelPath);
+  QVERIFY2(unsupportedFormulaPreview.valid(),
+           qPrintable(unsupportedFormulaPreview.errors.join('\n')));
+  const auto &unsupportedRequirement =
+      unsupportedFormulaPreview.requirements.first();
+  QVERIFY(unsupportedRequirement.record.description.contains(
+      QString::fromUtf8("Formule Word non convertie")));
+  QVERIFY(!unsupportedRequirement.diagnostics.isEmpty());
+
+  const QByteArray formulaCommentModel = R"(<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"><w:body><w:p><w:r><w:t>{{GESIER_REQUIREMENT_TEMPLATE_BEGIN}}</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Title:</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>{{REQ_TITLE}}</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Reference:</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>{{REQ_CODE}}</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Description:</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>{{REQ_DESCRIPTION}}</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Comment:</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>{{REQ_COMMENTS}}</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>{{GESIER_REQUIREMENT_TEMPLATE_END}}</w:t></w:r></w:p></w:body></w:document>)";
+  const QByteArray formulaCommentSource = R"(<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"><w:body><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Title:</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Commentaire avec formule</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Reference:</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>REQ-FORMULA-COMMENT</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Description:</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Description valide</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Comment:</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Rapport </w:t></w:r><m:oMath><m:f><m:num><m:r><m:t>x</m:t></m:r></m:num><m:den><m:r><m:t>y</m:t></m:r></m:den></m:f></m:oMath></w:p></w:tc></w:tr></w:tbl></w:body></w:document>)";
+  const QString formulaCommentModelPath = writeImportFixture(
+      directory.filePath("formula-comment-model.docx"), formulaCommentModel);
+  const QString formulaCommentSourcePath = writeImportFixture(
+      directory.filePath("formula-comment-source.docx"), formulaCommentSource);
+  const auto formulaCommentPreview = service.preview(
+      formulaCommentSourcePath, formulaCommentModelPath);
+  QVERIFY2(formulaCommentPreview.valid(),
+           qPrintable(formulaCommentPreview.errors.join('\n')));
+  const auto &formulaCommentRequirement =
+      formulaCommentPreview.requirements.first();
+  QVERIFY(formulaCommentRequirement.commentsProvided);
+  QVERIFY(formulaCommentRequirement.record.comments.contains("$\\frac{x}{y}$"));
+
   QByteArray fallbackModel = model;
   fallbackModel.replace("{{GESIER_DOCUMENT_TITLE}}", "Titre statique");
   const QString fallbackModelPath = writeImportFixture(directory.filePath("fallback-model.docx"), fallbackModel, {}, "Titre modèle");

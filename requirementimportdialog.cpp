@@ -365,6 +365,10 @@ void RequirementImportDialog::editWordRequirement(int row) {
   auto *chapter = new QLineEdit(item.chapterPath.join(" / "));
   auto *pts = new QTextEdit(joinLines(item.productTreeCodes)); pts->setMaximumHeight(70);
   auto *configs = new QTextEdit(joinLines(item.configurationCodes)); configs->setMaximumHeight(70);
+  const QString originalComments = item.record.comments;
+  auto *comments = new QTextEdit(originalComments);
+  comments->setObjectName("wordRequirementComments");
+  comments->setMaximumHeight(80);
   auto *description = new QTextEdit;
   description->document()->setMarkdown(
       MarkdownUtility::normalizeLegacy(item.record.description),
@@ -376,6 +380,7 @@ void RequirementImportDialog::editWordRequirement(int row) {
   form->addRow("Product Trees (un code par ligne)", pts);
   form->addRow("Configurations (un code par ligne)", configs);
   form->addRow("Description", description);
+  form->addRow("Commentaire", comments);
   tabs->addTab(general, "Exigence");
 
   auto *verificationPage = new QWidget;
@@ -445,6 +450,9 @@ void RequirementImportDialog::editWordRequirement(int row) {
   item.record.traceRoot = traceRoot->isChecked();
   item.chapterPath = editedLines(chapter->text().replace('/', '\n'));
   item.productTreeCodes = editedLines(pts->toPlainText()); item.configurationCodes = editedLines(configs->toPlainText());
+  const QString editedComments = comments->toPlainText();
+  item.commentsProvided = item.commentsProvided || editedComments != originalComments;
+  item.record.comments = editedComments;
   item.record.description = description->document()->toMarkdown(
       QTextDocument::MarkdownDialectGitHub).trimmed();
   item.record.verifications.clear(); item.verificationMethods.clear();
