@@ -366,7 +366,19 @@ bool DatabaseMigrator::migrate(QSqlDatabase db, QString *errorMessage) {
       << "CREATE INDEX IF NOT EXISTS IDX_INTERFACE_ENDPOINTS ON "
          "INTERFACE(ELEMENT1,ELEMENT2)"
       << "CREATE INDEX IF NOT EXISTS IDX_INTERFACE_REQUIREMENT_REQ ON "
-         "INTERFACE_REQUIREMENT(REQ_ID)";
+         "INTERFACE_REQUIREMENT(REQ_ID)"
+      << "CREATE INDEX IF NOT EXISTS IDX_REQUIREMENT_PT_PT ON "
+         "REQUIREMENT_PT(PT_ID,REQ_ID)"
+      << "CREATE INDEX IF NOT EXISTS IDX_DOCUMENT_NODE_REQUIREMENT ON "
+         "DOCUMENT_NODE(REQ_ID,DOC_ID)"
+      << "CREATE INDEX IF NOT EXISTS IDX_INTERFACE_DOCUMENT_DOCUMENT ON "
+         "INTERFACE_DOCUMENT(DOC_ID,INTERFACE_ID)"
+      << "CREATE INDEX IF NOT EXISTS IDX_INTERFACE_TYPE_LINK_TYPE ON "
+         "INTERFACE_TYPE_LINK(TYPE_ID,INTERFACE_ID)"
+      << "CREATE INDEX IF NOT EXISTS IDX_DOCUMENT_EXPORT_HISTORY ON "
+         "DOCUMENT_EXPORT(DOC_ID,EXPORT_KIND,EXPORTED_AT DESC)"
+      << "CREATE INDEX IF NOT EXISTS IDX_REQ_IMAGE_REQUIREMENT ON "
+         "REQ_IMAGE(REQ_ID)";
 
   statements
       << "CREATE TRIGGER IF NOT EXISTS REQUIREMENT_DELETE_GUARD BEFORE DELETE "
@@ -793,15 +805,6 @@ bool DatabaseMigrator::migrate(QSqlDatabase db, QString *errorMessage) {
 
   const QStringList auditTriggers = {
       "CREATE TRIGGER IF NOT EXISTS AUDIT_EVENT_CONTEXT AFTER INSERT ON EVENT_LOG WHEN NEW.AUTHOR IS NULL OR NEW.AUTHOR='' BEGIN UPDATE EVENT_LOG SET AUTHOR=(SELECT AUTHOR FROM EVENT_CONTEXT WHERE ID=1),EVENT_GROUP=COALESCE(NEW.EVENT_GROUP,(SELECT EVENT_GROUP FROM EVENT_CONTEXT WHERE ID=1)) WHERE ID=NEW.ID; END",
-      "CREATE TRIGGER IF NOT EXISTS AUDIT_PT_INSERT AFTER INSERT ON PT BEGIN "
-      "INSERT INTO EVENT_LOG(AUTHOR,EVENT_GROUP,EVENT_TYPE,OBJECT_TYPE,OBJECT_ID,AFTER_JSON) "
-      "SELECT AUTHOR,EVENT_GROUP,'CREATE','PT',NEW.ID,json_object('name',NEW.NAME,'parent',NEW.PARENT) FROM EVENT_CONTEXT WHERE ID=1; END",
-      "CREATE TRIGGER IF NOT EXISTS AUDIT_PT_UPDATE AFTER UPDATE ON PT BEGIN "
-      "INSERT INTO EVENT_LOG(AUTHOR,EVENT_GROUP,EVENT_TYPE,OBJECT_TYPE,OBJECT_ID,BEFORE_JSON,AFTER_JSON) "
-      "SELECT AUTHOR,EVENT_GROUP,'UPDATE','PT',NEW.ID,json_object('name',OLD.NAME,'parent',OLD.PARENT),json_object('name',NEW.NAME,'parent',NEW.PARENT) FROM EVENT_CONTEXT WHERE ID=1; END",
-      "CREATE TRIGGER IF NOT EXISTS AUDIT_PT_DELETE AFTER DELETE ON PT BEGIN "
-      "INSERT INTO EVENT_LOG(AUTHOR,EVENT_GROUP,EVENT_TYPE,OBJECT_TYPE,OBJECT_ID,BEFORE_JSON) "
-      "SELECT AUTHOR,EVENT_GROUP,'DELETE','PT',OLD.ID,json_object('name',OLD.NAME,'parent',OLD.PARENT) FROM EVENT_CONTEXT WHERE ID=1; END",
       "CREATE TRIGGER IF NOT EXISTS AUDIT_DOCUMENT_INSERT AFTER INSERT ON DOCUMENT BEGIN "
       "INSERT INTO EVENT_LOG(AUTHOR,EVENT_GROUP,EVENT_TYPE,OBJECT_TYPE,OBJECT_ID,AFTER_JSON) "
       "SELECT AUTHOR,EVENT_GROUP,'CREATE','DOCUMENT',NEW.ID,json_object('title',NEW.TITLE,'description',NEW.DESCRIPTION) FROM EVENT_CONTEXT WHERE ID=1; END",
@@ -1159,6 +1162,59 @@ bool DatabaseMigrator::migrate(QSqlDatabase db, QString *errorMessage) {
                "OBJECT_ID,ROLE) SELECT ID,OBJECT_TYPE,OBJECT_ID,'PRIMARY' "
                "FROM EVENT_LOG WHERE OBJECT_ID IS NOT NULL",
                errorMessage)) {
+    db.rollback();
+    return false;
+  }
+
+  // v20: les configurations sont définies par l'utilisateur. Les valeurs de
+  // l'ancien catalogue MODEL ne sont conservées que lorsqu'elles sont encore
+  // référencées par une pièce, une applicabilité ou un changement.
+  if (version < 20) {
+    QString unusedConfiguration =
+        "DESCRIPTION='Configuration migrée depuis MODEL'";
+    if (db.tables().contains("PART"))
+      unusedConfiguration +=
+          " AND NOT EXISTS(SELECT 1 FROM PART P WHERE P.CONFIG_ID="
+          "CONFIGURATION.ID)";
+    if (db.tables().contains("REQUIREMENT_APPLICABILITY"))
+      unusedConfiguration +=
+          " AND NOT EXISTS(SELECT 1 FROM REQUIREMENT_APPLICABILITY A WHERE "
+          "A.CONFIG_ID=CONFIGURATION.ID)";
+    if (db.tables().contains("CHANGE_LINK"))
+      unusedConfiguration +=
+          " AND NOT EXISTS(SELECT 1 FROM CHANGE_LINK L WHERE "
+          "L.OBJECT_TYPE='CONFIGURATION' AND L.OBJECT_ID=CONFIGURATION.ID)";
+    if (!execute(db,
+                 "INSERT INTO MIGRATION_REPORT(FROM_VERSION,TO_VERSION,REPORT) "
+                 "SELECT 19,20,'Configuration héritée inutilisée supprimée : '"
+                 "||CODE FROM CONFIGURATION WHERE " + unusedConfiguration,
+                 errorMessage) ||
+        !execute(db, "DELETE FROM CONFIGURATION WHERE " + unusedConfiguration,
+                 errorMessage)) {
+      db.rollback();
+      return false;
+    }
+  }
+
+  // v21: PART et IF_IMAGE n'ont plus de consommateur métier. La gestion des
+  // pièces unitaires sort du périmètre et l'audit PT est assuré uniquement
+  // par ProductTreeService afin d'éviter les événements en double.
+  if (version < 21 &&
+      (!execute(db, "DROP TRIGGER IF EXISTS AUDIT_PT_INSERT", errorMessage) ||
+       !execute(db, "DROP TRIGGER IF EXISTS AUDIT_PT_UPDATE", errorMessage) ||
+       !execute(db, "DROP TRIGGER IF EXISTS AUDIT_PT_DELETE", errorMessage) ||
+       !execute(db, "DROP TABLE IF EXISTS IF_IMAGE", errorMessage) ||
+       !execute(db, "DROP TABLE IF EXISTS PART", errorMessage) ||
+       !execute(db, "DROP INDEX IF EXISTS IDX_CHANGE_STATUS", errorMessage) ||
+       !execute(db,
+                "CREATE INDEX IDX_CHANGE_STATUS ON "
+                "CHANGE_ITEM(ARCHIVED,STATUS_ID,TYPE_ID)",
+                errorMessage) ||
+       !execute(db,
+                "INSERT INTO MIGRATION_REPORT(FROM_VERSION,TO_VERSION,REPORT) "
+                "VALUES(20,21,'Suppression de PART et IF_IMAGE ; audit PT "
+                "unifié dans le service métier.')",
+                errorMessage))) {
     db.rollback();
     return false;
   }

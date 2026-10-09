@@ -80,7 +80,8 @@ class DatabaseMigratorTest : public QObject {
   Q_OBJECT
   QTemporaryDir m_directory;
 private slots:
-  void createsNormalizedVersion19Schema();
+  void createsNormalizedVersion21Schema();
+  void removesUnusedConfigurationsInheritedFromModel();
   void storesMarkdownImagesAtomically();
   void migratesLegacySchemaWithoutLosingLinks();
   void migratesRequirementUniquenessToCode();
@@ -106,16 +107,16 @@ private slots:
   void roundTripsStructuredDocxCollections();
 };
 
-void DatabaseMigratorTest::createsNormalizedVersion19Schema() {
+void DatabaseMigratorTest::createsNormalizedVersion21Schema() {
   QTemporaryDir directory;
   REQ_SQLManager manager;
-  const auto creation = manager.newDB(directory.filePath("normalized-v19.db"));
+  const auto creation = manager.newDB(directory.filePath("normalized-v21.db"));
   QVERIFY2(creation.type() == QSqlError::NoError, qPrintable(creation.text()));
   QSqlDatabase db = QSqlDatabase::database(manager.currentConnection());
   QSqlQuery q(db);
   QVERIFY(q.exec("PRAGMA user_version"));
   QVERIFY(q.next());
-  QCOMPARE(q.value(0).toInt(), 19);
+  QCOMPARE(q.value(0).toInt(), 21);
   QVERIFY(db.tables().contains("EVENT_SUBJECT"));
 
   const auto columns = [&](const QString &table) {
@@ -142,9 +143,47 @@ void DatabaseMigratorTest::createsNormalizedVersion19Schema() {
                                  "REDMINE_ISSUES", "CONF_CHANGE", "CC_STATUS",
                                  "MODEL"})
     QVERIFY2(!db.tables().contains(removed), qPrintable(removed));
-  QVERIFY(columns("PART").contains("CONFIG_ID"));
+  QVERIFY(!db.tables().contains("PART"));
+  QVERIFY(!db.tables().contains("IF_IMAGE"));
+  QVERIFY(q.exec("SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' "
+                 "AND name LIKE 'AUDIT_PT_%'"));
+  QVERIFY(q.next());
+  QCOMPARE(q.value(0).toInt(), 0);
   QVERIFY(q.exec("PRAGMA foreign_key_check"));
   QVERIFY(!q.next());
+  manager.close();
+}
+
+void DatabaseMigratorTest::removesUnusedConfigurationsInheritedFromModel() {
+  QTemporaryDir directory;
+  REQ_SQLManager manager;
+  const auto creation = manager.newDB(directory.filePath("configuration-v19.db"));
+  QVERIFY2(creation.type() == QSqlError::NoError, qPrintable(creation.text()));
+  QSqlDatabase db = QSqlDatabase::database(manager.currentConnection());
+  QSqlQuery q(db);
+  QVERIFY(q.exec("INSERT INTO PT(ID,NAME,SEGMENT) VALUES(1,'Système','SYS')"));
+  QVERIFY(q.exec("INSERT INTO CONFIGURATION(ID,CODE,LABEL,DESCRIPTION) VALUES"
+                 "(1,'PROTO','PROTO','Configuration migrée depuis MODEL'),"
+                 "(2,'QM','QM','Configuration migrée depuis MODEL')"));
+  QVERIFY(q.exec("CREATE TABLE PART(ID INTEGER PRIMARY KEY,PT_ID INTEGER NOT "
+                 "NULL REFERENCES PT(ID),NAME TEXT NOT NULL UNIQUE,SERIAL "
+                 "INTEGER NOT NULL UNIQUE,CONFIG_ID INTEGER NOT NULL "
+                 "REFERENCES CONFIGURATION(ID),DESCRIPTION TEXT)"));
+  QVERIFY(q.exec("INSERT INTO PART(PT_ID,NAME,SERIAL,CONFIG_ID) "
+                 "VALUES(1,'EQ-1',1001,2)"));
+  QVERIFY(q.exec("PRAGMA user_version=19"));
+  QString migrationError;
+  QVERIFY2(DatabaseMigrator::migrate(db, &migrationError),
+           qPrintable(migrationError));
+  QVERIFY(q.exec("SELECT CODE FROM CONFIGURATION ORDER BY CODE"));
+  QVERIFY(q.next());
+  QCOMPARE(q.value(0).toString(), QString("QM"));
+  QVERIFY(!q.next());
+  QVERIFY(!db.tables().contains("PART"));
+  QVERIFY(q.exec("SELECT COUNT(*) FROM MIGRATION_REPORT WHERE TO_VERSION=20 "
+                 "AND REPORT LIKE '%PROTO%'"));
+  QVERIFY(q.next());
+  QCOMPARE(q.value(0).toInt(), 1);
   manager.close();
 }
 
@@ -222,7 +261,8 @@ void DatabaseMigratorTest::controlsHighLevelTraceability() {
                  "(3,NULL,'Archive','OLD',1)"));
   QVERIFY(q.exec("INSERT INTO DOCUMENT(ID,PT_ID,TYPE,TITLE) "
                  "VALUES(1,1,1,'Spécification')"));
-  QVERIFY(q.exec("UPDATE CONFIGURATION SET LABEL='Vol',ACTIVE=1,POSITION=1 WHERE CODE='FM'"));
+  QVERIFY(q.exec("INSERT INTO CONFIGURATION(CODE,LABEL,ACTIVE,POSITION) "
+                 "VALUES('FM','Vol',1,1)"));
   QVERIFY(q.exec("INSERT INTO CONFIGURATION(CODE,LABEL,ACTIVE,POSITION) VALUES('OLD','Archivée',0,2)"));
   QVERIFY(q.exec("SELECT ID FROM CONFIGURATION WHERE CODE='FM'"));
   QVERIFY(q.next());
@@ -437,16 +477,19 @@ void DatabaseMigratorTest::auditsDiagnosesBacksUpAndRestoresProject() {
   {
     QSqlDatabase db=QSqlDatabase::database(manager.currentConnection(),false);
     QSqlQuery q(db);
-    QVERIFY(q.exec("INSERT INTO PT(ID,NAME,SEGMENT) VALUES(1,'System','SYS')"));
-    QVERIFY(q.exec("UPDATE PT SET NAME='Système' WHERE ID=1"));
-    QVERIFY(q.exec("INSERT INTO PT(ID,NAME,SEGMENT) VALUES(2,'Logiciel','SW')"));
+    ProductTreeService tree(manager.currentConnection());
+    QVERIFY(tree.addNode(-1,"SYS").success);
+    QVERIFY(q.exec("SELECT ID FROM PT WHERE SEGMENT='SYS'")); QVERIFY(q.next());
+    const int rootId=q.value(0).toInt();
+    QVERIFY(tree.updateNode(rootId,"SYSTEME",{}).success);
+    QVERIFY(tree.addNode(rootId,"SW").success);
     const auto events=history.find({},"PT",{});
     QCOMPARE(events.size(),3);
-    const auto objectEvents=history.find({},"PT",{},1);
+    const auto objectEvents=history.find({},"PT",{},rootId);
     QCOMPARE(objectEvents.size(),2);
     QCOMPARE(objectEvents.first().author,QString("Ingénieur test"));
-    QVERIFY(objectEvents.first().beforeJson.contains("System"));
-    QVERIFY(objectEvents.first().afterJson.contains("Système"));
+    QVERIFY(objectEvents.first().beforeJson.contains("SYS"));
+    QVERIFY(objectEvents.first().afterJson.contains("SYSTEME"));
   }
   const ProjectDiagnostic diagnostic=history.diagnose();
   QVERIFY2(diagnostic.ok,qPrintable(diagnostic.summary()));
@@ -454,13 +497,13 @@ void DatabaseMigratorTest::auditsDiagnosesBacksUpAndRestoresProject() {
   QVERIFY(manager.manualBackup(backup));
   {
     QSqlQuery q(QSqlDatabase::database(manager.currentConnection(),false));
-    QVERIFY(q.exec("DELETE FROM PT WHERE ID=1"));
+    QVERIFY(q.exec("UPDATE PT SET NAME='ALTERE' WHERE ID=1"));
   }
   QVERIFY(manager.restoreFromBackup(backup));
   {
     QSqlQuery q(QSqlDatabase::database(manager.currentConnection(),false));
     QVERIFY(q.exec("SELECT NAME FROM PT WHERE ID=1")); QVERIFY(q.next());
-    QCOMPARE(q.value(0).toString(),QString("Système"));
+    QCOMPARE(q.value(0).toString(),QString("SYSTEME"));
     QVERIFY(q.exec("PRAGMA foreign_key_check")); QVERIFY(!q.next());
   }
   manager.close();
@@ -1360,6 +1403,8 @@ void DatabaseMigratorTest::storesMultipleVerificationMethods() {
   combined.methodIds = {2};
   combined.verified = 1;
   QCOMPARE(service.find(combined).size(), 1);
+  QVERIFY(query.exec("INSERT INTO CONFIGURATION(CODE,LABEL,POSITION) "
+                     "VALUES('FM','Flight Model',10)"));
   QVERIFY(query.exec("SELECT ID FROM CONFIGURATION WHERE CODE='FM'"));
   QVERIFY(query.next()); const int fmConfigurationId=query.value(0).toInt();
   QVERIFY(query.exec(
@@ -1410,6 +1455,9 @@ void DatabaseMigratorTest::initializesNewProjectCatalogs() {
   QVERIFY(query.next());
   QCOMPARE(query.value(0).toString(), QString("WAIVER"));
   QCOMPARE(query.value(1).toString(), QString("Waiver / Dérogation"));
+  QVERIFY(query.exec("SELECT COUNT(*) FROM CONFIGURATION"));
+  QVERIFY(query.next());
+  QCOMPARE(query.value(0).toInt(), 0);
   query = QSqlQuery();
   db = QSqlDatabase();
   manager.close();
@@ -1482,8 +1530,8 @@ void DatabaseMigratorTest::roundTripsStructuredDocxCollections() {
   QVERIFY2(creation.type() == QSqlError::NoError, qPrintable(creation.text()));
   QSqlDatabase db = QSqlDatabase::database(manager.currentConnection()); QSqlQuery q(db);
   QVERIFY(q.exec("INSERT INTO PT(ID,PARENT,NAME,SEGMENT,POSITION) VALUES(101,NULL,'Système','SYS',0),(102,101,'Puissance','PWR',0),(103,102,'Contrôle','CTRL',0)"));
-  QVERIFY(q.exec("DELETE FROM CONFIGURATION WHERE CODE<>'FM'"));
-  QVERIFY(q.exec("UPDATE CONFIGURATION SET LABEL='Flight Model' WHERE CODE='FM'"));
+  QVERIFY(q.exec("INSERT INTO CONFIGURATION(CODE,LABEL,POSITION) "
+                 "VALUES('FM','Flight Model',10)"));
   QVERIFY(q.exec("SELECT ID FROM CONFIGURATION WHERE CODE='FM'"));QVERIFY(q.next());const int fmId=q.value(0).toInt();
   QVERIFY(q.exec("INSERT INTO DOCUMENT(ID,PT_ID,TYPE,TITLE) VALUES(1,101,1,'Structurée')"));
   QVERIFY(q.exec("INSERT INTO DOCUMENT_REFERENCE(DOC_ID,REFERENCE,IS_PRIMARY) VALUES(1,'SPEC-STRUCT',1)"));

@@ -91,9 +91,8 @@ MainWindow::MainWindow(QWidget *parent)
         ui->editreqmethodSqlTableWidget, ui->editreqstatusSqlTableWidget,
         ui->editreqtypeSqlTableWidget, ui->editDocumentSqlTableWidget,
         ui->editDocTypeSqlTableWidget, ui->editReqChapterSqlTableWidget,
-        ui->editConfChangeWidget,      ui->editIFWidget,
-        ui->editIFChaptersWidget,      ui->editModelWidget,
-        ui->editPartsWidget};
+        ui->editConfChangeWidget, ui->editIFWidget,
+        ui->editIFChaptersWidget, ui->editModelWidget};
     for (SQLTableForm *table : editableTables)
         connect(table, &SQLTableForm::comitOccured, this,
                 &MainWindow::refreshTableSlot);
@@ -341,6 +340,9 @@ void MainWindow::on_actionSave_as_triggered()
 
 void MainWindow::refreshViewTables()
 {
+      // Les vues SQL historiques ne font plus partie de la navigation active.
+      return;
+
       if (!m_SQLManager)
           return;
       const QString connection = m_SQLManager->currentConnection();
@@ -366,11 +368,6 @@ void MainWindow::refreshViewTables()
 
       ui->ModelWidget->execQuery("SELECT CODE AS [Modèle Instrument],LABEL AS [Libellé] FROM CONFIGURATION WHERE ACTIVE=1 ORDER BY POSITION,CODE",m_SQLManager->currentConnection());
 
-      ui->PartsWidget->execQuery("SELECT PT.NAME AS [Element du PT], P.NAME AS [Identifiant du composant], P.SERIAL AS [Numéro de série], C.CODE AS [Configuration associée], P.DESCRIPTION AS [Description] "
-                                 "FROM PART P "
-                                 "LEFT JOIN PT ON P.PT_ID=PT.ID "
-                                 "LEFT JOIN CONFIGURATION C ON P.CONFIG_ID=C.ID",m_SQLManager->currentConnection());
-
       ui->LogsWidget->execQuery("SELECT EVENT_TIME AS [Date],EVENT_TYPE AS [Type],OBJECT_TYPE AS [Objet],OBJECT_ID AS [Identifiant],AUTHOR AS [Auteur],BEFORE_JSON AS [Avant],AFTER_JSON AS [Après],COMMENT AS [Commentaire] FROM EVENT_LOG ORDER BY ID DESC",m_SQLManager->currentConnection());
 
 
@@ -392,6 +389,10 @@ void MainWindow::on_clearButton_clicked()
 
 void MainWindow::refreshEditTables()
 {
+    // Les écritures doivent passer par les services métier afin de préserver
+    // les validations, transactions et événements d'audit.
+    return;
+
     if (!hasOpenProject())
         return;
     QSqlDatabase db = QSqlDatabase::database(m_SQLManager->currentConnection(), false);
@@ -496,16 +497,6 @@ void MainWindow::refreshEditTables()
     ui->editModelWidget->SetHorizontalHeaders(2,"Libellé");
     ui->editModelWidget->showTable("CONFIGURATION",m_SQLManager->currentConnection());
     ui->editModelWidget->setColumnHidden(0,true);
-
-    ui->editPartsWidget->SetHorizontalHeaders(1,"Code Arbre Produit");
-    ui->editPartsWidget->SetHorizontalHeaders(2,"Référence du composant");
-    ui->editPartsWidget->SetHorizontalHeaders(3,"Numéro de série");
-    ui->editPartsWidget->SetHorizontalHeaders(4,"Modèle instrument associé");
-    ui->editPartsWidget->SetHorizontalHeaders(5,"Description");
-    ui->editPartsWidget->showTable("PART",m_SQLManager->currentConnection());
-    ui->editPartsWidget->addRelationalTable(1,QSqlRelation("PT","ID","NAME"));
-    ui->editPartsWidget->addRelationalTable(4,QSqlRelation("CONFIGURATION","ID","CODE"));
-    ui->editPartsWidget->setColumnHidden(0,true);
 
 }
 
