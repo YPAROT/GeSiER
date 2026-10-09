@@ -201,12 +201,13 @@ RequirementWidget::RequirementWidget(QWidget *p) : QWidget(p) {
   ptLayout->addLayout(primaryForm);
   ptLayout->addWidget(m_pt);
   m_tabs->addTab(ptPage, "Product Tree");
-  m_verifications = new QTableWidget(0, 8);
+  m_verifications = new QTableWidget(0, 7);
   m_verifications->setHorizontalHeaderLabels(
       {"Méthode", "Niveau", "Procédure / test", "Redmine", "Moyen", "Verdict",
-       "Commentaire", "État"});
+       "Commentaire"});
   m_verifications->horizontalHeader()->setStretchLastSection(true);
-  m_verifications->horizontalHeader()->setSectionResizeMode(7, QHeaderView::ResizeToContents);
+  m_verifications->verticalHeader()->setSectionResizeMode(QHeaderView::Fixed);
+  m_verifications->verticalHeader()->setDefaultSectionSize(30);
   m_verifications->setSelectionBehavior(QAbstractItemView::SelectRows);
   auto addVerif = new QPushButton("Ajouter");
   auto removeVerif = new QPushButton("Supprimer");
@@ -1173,9 +1174,6 @@ void RequirementWidget::appendVerification(const RequirementVerification &v) {
     m_verifications->setItem(row, c, new QTableWidgetItem(values[c - 2]));
   m_verifications->setCellWidget(row, 5, verdictCombo(v.verdict));
   m_verifications->setItem(row, 6, new QTableWidgetItem(v.comment));
-  auto *state = new QLabel;
-  state->setAlignment(Qt::AlignCenter);
-  m_verifications->setCellWidget(row, 7, state);
   auto *level = qobject_cast<QComboBox *>(m_verifications->cellWidget(row, 1));
   connect(level, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
           [this, level] {
@@ -1201,16 +1199,31 @@ void RequirementWidget::updateVerificationDraftRow(int row) {
     }
     if (auto *widget = m_verifications->cellWidget(row, c)) {
       widget->setToolTip(tip);
-      if (c != 7)
-        widget->setStyleSheet(draft ? "background:#fff4e5;" : QString());
+      widget->setStyleSheet(draft ? "background:#fff4e5;" : QString());
     }
   }
-  if (auto *state = qobject_cast<QLabel *>(m_verifications->cellWidget(row, 7))) {
-    state->setText(draft ? QStringLiteral("DRAFT") : QString());
-    state->setStyleSheet(draft
-        ? "QLabel{background:#e59a2f;color:white;font-weight:700;padding:3px 7px;border-radius:5px;}"
-        : QString());
+  auto *state = new QTableWidgetItem(draft ? QStringLiteral("DRAFT")
+                                           : QString::number(row + 1));
+  state->setTextAlignment(Qt::AlignCenter);
+  state->setToolTip(tip);
+  if (draft) {
+    state->setBackground(QColor("#e59a2f"));
+    state->setForeground(Qt::white);
+    QFont font = state->font();
+    font.setBold(true);
+    font.setPointSize(8);
+    state->setFont(font);
   }
+  m_verifications->setVerticalHeaderItem(row, state);
+  bool hasDraft = false;
+  for (int r = 0; r < m_verifications->rowCount(); ++r) {
+    auto *candidate = qobject_cast<QComboBox *>(m_verifications->cellWidget(r, 1));
+    if (!candidate || candidate->currentData().toInt() < 0) {
+      hasDraft = true;
+      break;
+    }
+  }
+  m_verifications->verticalHeader()->setMinimumWidth(hasDraft ? 58 : 30);
 }
 void RequirementWidget::addVerification() {
   appendVerification();
@@ -1221,6 +1234,8 @@ void RequirementWidget::removeVerification() {
   int row = m_verifications->currentRow();
   if (row >= 0) {
     m_verifications->removeRow(row);
+    for (int r = 0; r < m_verifications->rowCount(); ++r)
+      updateVerificationDraftRow(r);
     m_dirty = true;
   }
 }
@@ -1246,6 +1261,8 @@ void RequirementWidget::moveVerificationUp() {
   int row = m_verifications->currentRow();
   if (row > 0) {
     swapVerificationRows(m_verifications, row, row - 1);
+    updateVerificationDraftRow(row);
+    updateVerificationDraftRow(row - 1);
     m_verifications->selectRow(row - 1);
     m_dirty = true;
   }
@@ -1254,6 +1271,8 @@ void RequirementWidget::moveVerificationDown() {
   int row = m_verifications->currentRow();
   if (row >= 0 && row + 1 < m_verifications->rowCount()) {
     swapVerificationRows(m_verifications, row, row + 1);
+    updateVerificationDraftRow(row);
+    updateVerificationDraftRow(row + 1);
     m_verifications->selectRow(row + 1);
     m_dirty = true;
   }
