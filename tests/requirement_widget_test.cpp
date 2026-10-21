@@ -2,6 +2,7 @@
 #include <QBuffer>
 #include <QCheckBox>
 #include <QGraphicsLineItem>
+#include <QGraphicsEllipseItem>
 #include <QGraphicsRectItem>
 #include <QGraphicsView>
 #include <QLineEdit>
@@ -345,6 +346,7 @@ void RequirementWidgetTest::relationGraphLayersPlacementAndPreferences() {
                   .arg(requirementId);
   QVERIFY(query.exec(
       "INSERT INTO REQUIREMENT(ID,CODE,TITLE,TYPE,STATUS) VALUES" + values.join(',')));
+  QVERIFY(query.exec("UPDATE REQUIREMENT SET IS_TRACE_ROOT=1 WHERE ID=2"));
   QVERIFY(query.exec(
       "INSERT INTO REQUIREMENT_RELATION(SOURCE_REQ_ID,TARGET_REQ_ID,TYPE_ID) "
       "VALUES(2,1,1),(2,3,1),(3,4,1),(1,5,2),(5,6,2),(3,7,3),"
@@ -374,6 +376,22 @@ void RequirementWidgetTest::relationGraphLayersPlacementAndPreferences() {
   };
   QVERIFY(node(1)); QVERIFY(node(2)); QVERIFY(node(3)); QVERIFY(node(4));
   QVERIFY(node(5)); QVERIFY(node(6)); QVERIFY(node(7)); QVERIFY(node(8));
+  QVERIFY(node(1)->toolTip().contains("REQ-1 — Requirement 1"));
+  QVERIFY(node(1)->toolTip().contains("Cliquer pour ouvrir"));
+  QVERIFY(!node(1)->toolTip().contains("Exigence root"));
+  QCOMPARE(node(1)->pen().widthF(), 1.0);
+  QVERIFY(node(2)->toolTip().contains("REQ-2 — Requirement 2"));
+  QVERIFY(node(2)->toolTip().contains("Exigence root"));
+  QCOMPARE(node(2)->pen().color(), QColor("#6f42c1"));
+  QCOMPARE(node(2)->pen().widthF(), 3.0);
+  int rootBadgeCount = 0;
+  for (QGraphicsItem *item : view->scene()->items())
+    if (item->data(1).toString() == "rootBadge" && item->data(0).toInt() == 2) {
+      QVERIFY(qgraphicsitem_cast<QGraphicsEllipseItem *>(item));
+      QVERIFY(item->acceptedMouseButtons() == Qt::NoButton);
+      ++rootBadgeCount;
+    }
+  QCOMPARE(rootBadgeCount, 1);
   const QPointF focus = node(1)->sceneBoundingRect().center();
   QVERIFY(node(2)->sceneBoundingRect().center().y() < focus.y());
   QCOMPARE(node(3)->sceneBoundingRect().center().y(), focus.y());

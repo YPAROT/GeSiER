@@ -1411,6 +1411,8 @@ void RequirementWidget::loadRelationGraph(int id) {
   struct GraphNode {
     int id = -1;
     QString code;
+    QString title;
+    bool traceRoot = false;
     int distance = 0;
     GraphZone zone = DecompositionZone;
     int predecessor = -1;
@@ -1424,7 +1426,9 @@ void RequirementWidget::loadRelationGraph(int id) {
   };
 
   QHash<int, GraphNode> nodes;
-  nodes.insert(id, GraphNode{id, m_code->text(), 0, DecompositionZone, -1, {}});
+  nodes.insert(id, GraphNode{id, m_code->text(), m_title->text(),
+                             m_traceRoot->isChecked(), 0,
+                             DecompositionZone, -1, {}});
   QList<int> frontier{id};
   QList<GraphEdge> edges;
   QSet<int> edgeIds;
@@ -1437,13 +1441,18 @@ void RequirementWidget::loadRelationGraph(int id) {
       query.prepare(
           "SELECT L.ID,L.SOURCE_REQ_ID,L.TARGET_REQ_ID,T.CODE,"
           "CASE WHEN L.SOURCE_REQ_ID=? THEN TR.ID ELSE SR.ID END,"
-          "CASE WHEN L.SOURCE_REQ_ID=? THEN TR.CODE ELSE SR.CODE END "
+          "CASE WHEN L.SOURCE_REQ_ID=? THEN TR.CODE ELSE SR.CODE END,"
+          "CASE WHEN L.SOURCE_REQ_ID=? THEN TR.TITLE ELSE SR.TITLE END,"
+          "CASE WHEN L.SOURCE_REQ_ID=? THEN COALESCE(TR.IS_TRACE_ROOT,0) "
+          "ELSE COALESCE(SR.IS_TRACE_ROOT,0) END "
           "FROM REQUIREMENT_RELATION L "
           "JOIN REQUIREMENT_RELATION_TYPE T ON T.ID=L.TYPE_ID "
           "JOIN REQUIREMENT SR ON SR.ID=L.SOURCE_REQ_ID "
           "JOIN REQUIREMENT TR ON TR.ID=L.TARGET_REQ_ID "
           "WHERE L.SOURCE_REQ_ID=? OR L.TARGET_REQ_ID=? "
           "ORDER BY L.TYPE_ID,6,L.ID");
+      query.addBindValue(current);
+      query.addBindValue(current);
       query.addBindValue(current);
       query.addBindValue(current);
       query.addBindValue(current);
@@ -1472,7 +1481,9 @@ void RequirementWidget::loadRelationGraph(int id) {
           zone = DerivationZone;
         else if (type == "DEPENDS_ON")
           zone = DependencyZone;
-        nodes.insert(other, GraphNode{other, query.value(5).toString(), depth,
+        nodes.insert(other, GraphNode{other, query.value(5).toString(),
+                                      query.value(6).toString(),
+                                      query.value(7).toBool(), depth,
                                       zone, current, type});
         next << other;
       }
@@ -1607,12 +1618,19 @@ void RequirementWidget::loadRelationGraph(int id) {
     const QRectF box(center.x() - nodeWidth / 2, center.y() - nodeHeight / 2,
                      nodeWidth, nodeHeight);
     const QColor fill = node.id == id ? QColor("#ffe49a") : QColor("#f6f6f6");
-    auto *rect = scene->addRect(box, QPen(Qt::darkGray), QBrush(fill));
+    const QColor rootColor("#6f42c1");
+    const QPen border(node.traceRoot ? rootColor : QColor(Qt::darkGray),
+                      node.traceRoot ? 3.0 : 1.0);
+    auto *rect = scene->addRect(box, border, QBrush(fill));
     rect->setData(0, node.id);
     rect->setData(1, "node");
     rect->setData(2, static_cast<int>(node.zone));
     rect->setData(3, node.distance);
-    rect->setToolTip("Cliquer pour ouvrir");
+    const QString toolTip = node.code +
+        (node.title.trimmed().isEmpty() ? QString() : " — " + node.title) +
+        (node.traceRoot ? "\nExigence root" : QString()) +
+        "\nCliquer pour ouvrir";
+    rect->setToolTip(toolTip);
     rect->setFlag(QGraphicsItem::ItemIsSelectable);
     auto *textItem = scene->addText(node.code);
     textItem->setTextWidth(nodeWidth - 12);
@@ -1620,6 +1638,29 @@ void RequirementWidget::loadRelationGraph(int id) {
         QTextOption(Qt::AlignCenter));
     textItem->setPos(box.left() + 6, center.y() - textItem->boundingRect().height() / 2);
     textItem->setAcceptedMouseButtons(Qt::NoButton);
+    if (node.traceRoot) {
+      constexpr qreal badgeSize = 20.0;
+      const QRectF badgeBox(box.left() - badgeSize * 0.35,
+                            box.top() - badgeSize * 0.35,
+                            badgeSize, badgeSize);
+      auto *badge = scene->addEllipse(badgeBox, QPen(Qt::white, 1.5),
+                                      QBrush(rootColor));
+      badge->setData(0, node.id);
+      badge->setData(1, "rootBadge");
+      badge->setToolTip(toolTip);
+      badge->setAcceptedMouseButtons(Qt::NoButton);
+      badge->setZValue(2);
+      auto *badgeText = scene->addText("R");
+      QFont badgeFont = badgeText->font();
+      badgeFont.setBold(true); badgeFont.setPointSize(8);
+      badgeText->setFont(badgeFont); badgeText->setDefaultTextColor(Qt::white);
+      badgeText->setData(0, node.id); badgeText->setData(1, "rootBadgeText");
+      badgeText->setToolTip(toolTip); badgeText->setAcceptedMouseButtons(Qt::NoButton);
+      badgeText->setZValue(3);
+      const QRectF textBounds = badgeText->boundingRect();
+      badgeText->setPos(badgeBox.center().x() - textBounds.width() / 2,
+                        badgeBox.center().y() - textBounds.height() / 2);
+    }
   }
 
   auto boxBoundary = [=](const QPointF &center, const QPointF &towards) {
