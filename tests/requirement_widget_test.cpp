@@ -197,6 +197,17 @@ void RequirementWidgetTest::marksObsoleteRequirementsInDocumentTree() {
   QCOMPARE(tree->topLevelItem(1)->text(0),
            QString("REQ-OBS — Ancienne [Obsolete]"));
   QCOMPARE(tree->topLevelItem(1)->foreground(0).color(), QColor("#808080"));
+  int obsoleteNodeId = -1;
+  for (const DocumentNodeRecord &node : service.nodes(1))
+    if (node.requirementId == 2)
+      obsoleteNodeId = node.id;
+  QVERIFY(obsoleteNodeId >= 0);
+  QVERIFY(service.moveNode(obsoleteNodeId, -1, 0).success);
+  widget.setConnectionName(manager.currentConnection());
+  widget.openDocument(1);
+  QCOMPARE(tree->topLevelItem(0)->text(0),
+           QString("REQ-OBS — Ancienne [Obsolete]"));
+  QCOMPARE(tree->topLevelItem(1)->text(0), QString("REQ-ACT — Active"));
   widget.releaseDatabase();
   manager.close();
 }

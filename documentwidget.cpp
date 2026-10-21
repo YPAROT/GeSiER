@@ -11,6 +11,29 @@
 #include <QSqlQuery>
 #include <functional>
 
+namespace {
+class DocumentTreeWidget final : public QTreeWidget {
+public:
+  std::function<void(QTreeWidgetItem *)> itemDropped;
+
+protected:
+  void dropEvent(QDropEvent *event) override {
+    const int nodeId = currentItem()
+                           ? currentItem()->data(0, Qt::UserRole).toInt()
+                           : -1;
+    QTreeWidget::dropEvent(event);
+    if (!event->isAccepted() || nodeId < 0 || !itemDropped)
+      return;
+    for (QTreeWidgetItemIterator iterator(this); *iterator; ++iterator) {
+      if ((*iterator)->data(0, Qt::UserRole).toInt() == nodeId) {
+        itemDropped(*iterator);
+        return;
+      }
+    }
+  }
+};
+}
+
 DocumentWidget::DocumentWidget(QWidget *parent) : QWidget(parent) {
   m_documents = new QListWidget;
   m_documents->setObjectName("documentList");
@@ -19,7 +42,8 @@ DocumentWidget::DocumentWidget(QWidget *parent) : QWidget(parent) {
   m_documents->setUniformItemSizes(false);
   m_documents->setResizeMode(QListView::Adjust);
   m_documents->setMaximumWidth(300);
-  m_tree = new QTreeWidget;
+  auto *documentTree = new DocumentTreeWidget;
+  m_tree = documentTree;
   m_tree->setObjectName("documentStructureTree");
   m_tree->setHeaderLabels({"Structure du document"});
   m_tree->setDragDropMode(QAbstractItemView::InternalMove);
@@ -392,34 +416,24 @@ DocumentWidget::DocumentWidget(QWidget *parent) : QWidget(parent) {
               m_service.renameChapter(item->data(0, Qt::UserRole).toInt(),
                                       item->text(0));
           });
-  connect(m_tree->model(), &QAbstractItemModel::rowsMoved, this,
-          [this](const QModelIndex &sourceParent, int sourceStart,
-                 int sourceEnd, const QModelIndex &destinationParent,
-                 int destinationRow) {
-    const int count = sourceEnd - sourceStart + 1;
-    int firstDestinationRow = destinationRow;
-    if (sourceParent == destinationParent && destinationRow > sourceEnd)
-      firstDestinationRow -= count;
-
-    const int parentId = destinationParent.isValid()
-                             ? destinationParent.data(Qt::UserRole).toInt()
-                             : -1;
-    for (int offset = 0; offset < count; ++offset) {
-      const QModelIndex moved = m_tree->model()->index(
-          firstDestinationRow + offset, 0, destinationParent);
-      const int nodeId = moved.data(Qt::UserRole).toInt();
-      const RequirementResult result =
-          m_service.moveNode(nodeId, parentId, firstDestinationRow + offset);
-      if (!result.success) {
-        QMessageBox::warning(
-            this, "Document",
-            "Le déplacement n'a pas pu être enregistré :\n" + result.message);
-        loadTree(m_current);
-        return;
-      }
+  documentTree->itemDropped = [this](QTreeWidgetItem *item) {
+    QTreeWidgetItem *parent = item->parent();
+    const int parentId =
+        parent ? parent->data(0, Qt::UserRole).toInt() : -1;
+    const int position = parent ? parent->indexOfChild(item)
+                                : m_tree->indexOfTopLevelItem(item);
+    const int nodeId = item->data(0, Qt::UserRole).toInt();
+    const RequirementResult result =
+        m_service.moveNode(nodeId, parentId, position);
+    if (!result.success) {
+      QMessageBox::warning(
+          this, "Document",
+          "Le déplacement n'a pas pu être enregistré :\n" + result.message);
+      loadTree(m_current);
+      return;
     }
     emit dataChanged();
-  });
+  };
 }
 
 void DocumentWidget::setConnectionName(const QString &connectionName) {
