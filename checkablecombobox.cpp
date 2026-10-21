@@ -6,6 +6,7 @@
 
 CheckableComboBox::CheckableComboBox(const QString &title, QWidget *parent)
     : QToolButton(parent), m_title(title), m_menu(new QMenu(this)) {
+  m_menu->setToolTipsVisible(true);
   setPopupMode(QToolButton::InstantPopup);
   setMenu(m_menu);
   setToolButtonStyle(Qt::ToolButtonTextBesideIcon);

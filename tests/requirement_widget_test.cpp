@@ -5,8 +5,10 @@
 #include <QGraphicsEllipseItem>
 #include <QGraphicsRectItem>
 #include <QGraphicsView>
+#include <QHeaderView>
 #include <QLineEdit>
 #include <QLabel>
+#include <QMenu>
 #include <QPushButton>
 #include <QPlainTextEdit>
 #include <QMessageBox>
@@ -493,6 +495,9 @@ void RequirementWidgetTest::
                              "VALUES(1,%1,1,'Test document')")
                          .arg(rootId)));
   QVERIFY(query.exec(
+      "INSERT INTO DOCUMENT_REFERENCE(DOC_ID,REFERENCE,IS_PRIMARY) "
+      "VALUES(1,'SPEC-001',1)"));
+  QVERIFY(query.exec(
       "INSERT INTO REQUIREMENT(ID,CODE,TITLE,TYPE,STATUS) "
       "VALUES(1,'A-R-0001','Existing requirement',1,1),"
       "(2,'A-R-0002','Keyboard requirement',1,1)"));
@@ -528,6 +533,24 @@ void RequirementWidgetTest::
   QCOMPARE(list->rowCount(), 2);
   QCOMPARE(filters->rowCount(), 1);
   QVERIFY(filters->height() < list->height());
+  for (int column = 0; column < list->columnCount(); ++column)
+    QCOMPARE(list->horizontalHeader()->sectionResizeMode(column),
+             QHeaderView::Interactive);
+  constexpr int documentColumn = 6;
+  QCOMPARE(list->columnCount(), 13);
+  QCOMPARE(filters->columnCount(), 13);
+  QCOMPARE(list->item(0, documentColumn)->text(), QString("SPEC-001"));
+  QCOMPARE(list->item(0, documentColumn)->toolTip(),
+           QString("SPEC-001 — Test document"));
+  bool documentTitleFound = false;
+  QVERIFY(documentFilter->menu()->toolTipsVisible());
+  for (QAction *action : documentFilter->menu()->actions()) {
+    if (action->isCheckable() && action->text() == "SPEC-001") {
+      QCOMPARE(action->toolTip(), QString("Test document"));
+      documentTitleFound = true;
+    }
+  }
+  QVERIFY(documentTitleFound);
   RequirementFilter byDocument;
   byDocument.documentIds = {1};
   widget.applyFilter(byDocument);

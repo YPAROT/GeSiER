@@ -20,7 +20,11 @@ ProductTreeWidget::ProductTreeWidget(QWidget *p) : QWidget(p) {
   tools->addWidget(m_search);
   m_model = new ProductTreeModel(this);
   m_tree = new QTreeView;
+  m_tree->setObjectName("productTreeView");
   m_tree->setModel(m_model);
+  m_tree->header()->setSectionResizeMode(0, QHeaderView::Interactive);
+  m_tree->header()->setSectionResizeMode(1, QHeaderView::Interactive);
+  m_tree->header()->setStretchLastSection(false);
   m_tree->setDragDropMode(QAbstractItemView::InternalMove);
   m_tree->setDefaultDropAction(Qt::MoveAction);
   m_tree->setEditTriggers(QAbstractItemView::SelectedClicked |
@@ -110,10 +114,14 @@ int ProductTreeWidget::selectedId() const {
 }
 void ProductTreeWidget::refresh() {
   int id = selectedId();
+  m_tree->setUpdatesEnabled(false);
   m_model->reload();
   m_tree->expandAll();
+  m_tree->resizeColumnToContents(0);
+  m_tree->resizeColumnToContents(1);
   if (id >= 0)
     m_tree->setCurrentIndex(m_model->indexForId(id));
+  m_tree->setUpdatesEnabled(true);
   const QSqlDatabase db = QSqlDatabase::database(m_connection, false);
   if (m_connection.isEmpty() || !db.isValid() || !db.isOpen()) {
     m_root->setEnabled(false);

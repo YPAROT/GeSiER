@@ -74,7 +74,6 @@ enum Column {
   DocumentCol,
   DescriptionCol,
   ApplicabilityCol,
-  SourceCol,
   AllocatedCol,
   TracedCol,
   DocumentedCol,
@@ -108,7 +107,7 @@ RequirementWidget::RequirementWidget(QWidget *p) : QWidget(p) {
   m_list->setObjectName("requirementList");
   m_list->setHorizontalHeaderLabels(
       {"Code", "Titre", "Statut", "Type", "Product Trees", "Méthodes",
-       "Documents", "Description", "Applicabilité", "Source", "Allocation PT",
+       "Documents", "Description", "Applicabilité", "Allocation PT",
        "Traçabilité", "Documentation", "Vérification"});
   m_list->setSelectionBehavior(QAbstractItemView::SelectRows);
   m_list->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -120,7 +119,6 @@ RequirementWidget::RequirementWidget(QWidget *p) : QWidget(p) {
   m_codeFilter = new QLineEdit;
   m_titleFilter = new QLineEdit;
   m_descriptionFilter = new QLineEdit;
-  m_sourceFilter = new QLineEdit;
   m_statusFilter = new CheckableComboBox("Statuts");
   m_statusFilter->setObjectName("statusFilter");
   m_typeFilter = new CheckableComboBox("Types");
@@ -144,7 +142,7 @@ RequirementWidget::RequirementWidget(QWidget *p) : QWidget(p) {
                               m_ptFilter,          m_methodFilter,
                               m_documentFilter,    m_descriptionFilter,
                               m_applicabilityFilter,
-                              m_sourceFilter,      m_allocatedFilter,
+                              m_allocatedFilter,
                               m_tracedFilter,      m_documentedFilter,
                               m_verifiedFilter};
   m_filterList = new QTableWidget(1, ColumnCount);
@@ -441,8 +439,7 @@ RequirementWidget::RequirementWidget(QWidget *p) : QWidget(p) {
   });
   connect(m_includeObsolete, &QCheckBox::toggled, this,
           &RequirementWidget::filtersChanged);
-  for (QLineEdit *w :
-       {m_codeFilter, m_titleFilter, m_descriptionFilter, m_sourceFilter})
+  for (QLineEdit *w : {m_codeFilter, m_titleFilter, m_descriptionFilter})
     connect(w, &QLineEdit::textChanged, this,
             &RequirementWidget::filtersChanged);
   for (CheckableComboBox *w :
@@ -574,7 +571,7 @@ RequirementWidget::RequirementWidget(QWidget *p) : QWidget(p) {
               m_dirty = true;
           });
   auto saveHeader = [this] {
-    QSettings().setValue("Requirements/header",
+    QSettings().setValue("Requirements/header-v2",
                          m_list->horizontalHeader()->saveState());
   };
   connect(m_list->horizontalHeader(), &QHeaderView::sectionResized, this,
@@ -591,7 +588,10 @@ RequirementWidget::RequirementWidget(QWidget *p) : QWidget(p) {
   connect(m_list->horizontalScrollBar(), &QScrollBar::valueChanged,
           m_filterList->horizontalScrollBar(), &QScrollBar::setValue);
   m_list->horizontalHeader()->restoreState(
-      QSettings().value("Requirements/header").toByteArray());
+      QSettings().value("Requirements/header-v2").toByteArray());
+  for (int logical = 0; logical < ColumnCount; ++logical)
+    m_list->horizontalHeader()->setSectionResizeMode(
+        logical, QHeaderView::Interactive);
   for (int logical = 0; logical < ColumnCount; ++logical)
     m_filterList->setColumnWidth(logical, m_list->columnWidth(logical));
   for (int visual = 0; visual < ColumnCount; ++visual) {
@@ -620,7 +620,8 @@ static void fillCheckable(CheckableComboBox *combo, QSqlDatabase db,
   combo->clearItems();
   QSqlQuery query(sql, db);
   while (query.next())
-    combo->addItem(query.value(1).toString(), query.value(0).toInt());
+    combo->addItem(query.value(1).toString(), query.value(0).toInt(),
+                   query.value(2).toString());
 }
 void RequirementWidget::setConnectionName(const QString &name) {
   m_connection = name;
@@ -645,8 +646,7 @@ void RequirementWidget::setConnectionName(const QString &name) {
       settings.value("Requirements/filter/title").toString());
   m_descriptionFilter->setText(
       settings.value("Requirements/filter/description").toString());
-  m_sourceFilter->setText(
-      settings.value("Requirements/filter/source").toString());
+  settings.remove("Requirements/filter/source");
   auto restoreIds = [&settings](const QString &key) {
     QList<int> ids;
     for (const QVariant &value : settings.value(key).toList())
@@ -668,7 +668,8 @@ void RequirementWidget::setConnectionName(const QString &name) {
   m_verifiedFilter->setCheckedIds(restoreIds("Requirements/filter/verified"));
   m_includeObsolete->setChecked(
       settings.value("Requirements/filter/obsolete", false).toBool());
-  m_sortColumn = settings.value("Requirements/sort/column", CodeCol).toInt();
+  m_sortColumn =
+      settings.value("Requirements/sort/column-v2", CodeCol).toInt();
   m_sortOrder = static_cast<Qt::SortOrder>(
       settings.value("Requirements/sort/order", Qt::AscendingOrder).toInt());
   m_current = -1;
@@ -692,7 +693,7 @@ void RequirementWidget::loadLookups() {
   fillCheckable(m_documentFilter, db,
                 "SELECT D.ID,COALESCE(NULLIF((SELECT R.REFERENCE FROM "
                 "DOCUMENT_REFERENCE R WHERE R.DOC_ID=D.ID AND R.IS_PRIMARY=1 "
-                "ORDER BY R.ID LIMIT 1),''),D.TITLE) FROM DOCUMENT D "
+                "ORDER BY R.ID LIMIT 1),''),D.TITLE),D.TITLE FROM DOCUMENT D "
                 "ORDER BY 2,D.TITLE");
   fillCombo(m_status, db, "SELECT ID,STATUS FROM REQ_STATUS ORDER BY ID",
             QString());
@@ -719,7 +720,7 @@ void RequirementWidget::refreshFilterLookups() {
   reload(m_documentFilter,
          "SELECT D.ID,COALESCE(NULLIF((SELECT R.REFERENCE FROM DOCUMENT_REFERENCE R "
          "WHERE R.DOC_ID=D.ID AND R.IS_PRIMARY=1 ORDER BY R.ID LIMIT 1),''),D.TITLE) "
-         "FROM DOCUMENT D ORDER BY 2,D.TITLE");
+         ",D.TITLE FROM DOCUMENT D ORDER BY 2,D.TITLE");
   const QList<int> selectedPts = m_ptFilter->checkedIds();
   m_ptFilter->clearItems();
   ProductTreeService productTrees(m_connection);
@@ -786,7 +787,7 @@ void RequirementWidget::refresh() {
   m_filter.code = m_codeFilter->text();
   m_filter.title = m_titleFilter->text();
   m_filter.description = m_descriptionFilter->text();
-  m_filter.source = m_sourceFilter->text();
+  m_filter.source.clear();
   m_filter.statusIds = m_statusFilter->checkedIds();
   m_filter.typeIds = m_typeFilter->checkedIds();
   m_filter.ptIds = m_ptFilter->checkedIds();
@@ -878,8 +879,6 @@ void RequirementWidget::sortByColumn(int column) {
       return MarkdownDescriptionEditor::plainText(r.description);
     case ApplicabilityCol:
       return r.applicability;
-    case SourceCol:
-      return r.source;
     case AllocatedCol:
       return QString::number(r.allocated);
     case TracedCol:
@@ -898,11 +897,13 @@ void RequirementWidget::sortByColumn(int column) {
               return m_sortOrder == Qt::AscendingOrder ? cmp < 0 : cmp > 0;
             });
   m_list->horizontalHeader()->setSortIndicator(column, m_sortOrder);
-  QSettings().setValue("Requirements/sort/column", m_sortColumn);
+  QSettings().setValue("Requirements/sort/column-v2", m_sortColumn);
   QSettings().setValue("Requirements/sort/order", m_sortOrder);
   populateList();
 }
 void RequirementWidget::populateList() {
+  const QSignalBlocker listBlocker(m_list);
+  m_list->setUpdatesEnabled(false);
   m_list->setRowCount(m_records.size());
   QSqlDatabase db = QSqlDatabase::database(m_connection);
   for (int row = 0; row < m_records.size(); ++row) {
@@ -921,20 +922,37 @@ void RequirementWidget::populateList() {
                          type,          r.productTrees,  r.verificationMethods,
                          r.documents,
                          MarkdownDescriptionEditor::plainText(r.description),
-                         r.applicability, r.source,
+                         r.applicability,
                          r.allocated ? "✓" : "—", r.traced ? "✓" : "—",
                          r.documented ? "✓" : "—", r.verified ? "✓" : "—"};
     for (int c = 0; c < ColumnCount; ++c) {
       auto item = new QTableWidgetItem(cells[c]);
       item->setData(Qt::UserRole, r.id);
+      if (c == DocumentCol)
+        item->setToolTip(r.documentToolTip);
       m_list->setItem(row, c, item);
     }
   }
-  if (QSettings().value("Requirements/header").toByteArray().isEmpty())
-    for (int i = 0; i < ColumnCount; ++i)
-      m_list->setColumnWidth(i, i == DescriptionCol ? 220 : 130);
+  if (QSettings().value("Requirements/header-v2").toByteArray().isEmpty())
+    m_list->setColumnWidth(DescriptionCol, 220);
+  for (int column = 0; column < ColumnCount; ++column) {
+    if (column != DescriptionCol && column != PtCol)
+      m_list->resizeColumnToContents(column);
+  }
+  int productTreeWidth =
+      m_list->horizontalHeader()->sectionSizeHint(PtCol);
+  const QFontMetrics metrics(m_list->font());
+  for (const RequirementRecord &record : m_records) {
+    for (const QString &code :
+         record.productTrees.split(" | ", Qt::SkipEmptyParts)) {
+      productTreeWidth =
+          qMax(productTreeWidth, metrics.horizontalAdvance(code.trimmed()) + 24);
+    }
+  }
+  m_list->setColumnWidth(PtCol, productTreeWidth);
   for (int i = 0; i < ColumnCount; ++i)
     m_filterList->setColumnWidth(i, m_list->columnWidth(i));
+  m_list->setUpdatesEnabled(true);
 }
 void RequirementWidget::clearEditor() {
   m_loading = true;
@@ -1847,7 +1865,6 @@ void RequirementWidget::filtersChanged() {
   settings.setValue("Requirements/filter/title", m_titleFilter->text());
   settings.setValue("Requirements/filter/description",
                     m_descriptionFilter->text());
-  settings.setValue("Requirements/filter/source", m_sourceFilter->text());
   auto variants = [](const QList<int> &ids) {
     QVariantList result;
     for (int id : ids)
@@ -1874,7 +1891,6 @@ void RequirementWidget::applyFilter(const RequirementFilter &filter) {
   m_codeFilter->setText(filter.code);
   m_titleFilter->setText(filter.title);
   m_descriptionFilter->setText(filter.description);
-  m_sourceFilter->setText(filter.source);
   m_statusFilter->setCheckedIds(filter.statusIds);
   m_typeFilter->setCheckedIds(filter.typeIds);
   m_ptFilter->setCheckedIds(filter.ptIds);

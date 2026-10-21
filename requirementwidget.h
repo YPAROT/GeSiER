@@ -94,8 +94,7 @@ private:
   QPushButton *m_save, *m_cancel, *m_duplicate, *m_obsoleteButton;
   QSplitter *m_splitter;
   QTabWidget *m_tabs;
-  QLineEdit *m_codeFilter, *m_titleFilter, *m_descriptionFilter,
-      *m_sourceFilter;
+  QLineEdit *m_codeFilter, *m_titleFilter, *m_descriptionFilter;
   CheckableComboBox *m_statusFilter, *m_typeFilter, *m_ptFilter,
       *m_methodFilter, *m_applicabilityFilter, *m_documentFilter;
   CheckableComboBox *m_allocatedFilter, *m_tracedFilter, *m_documentedFilter,

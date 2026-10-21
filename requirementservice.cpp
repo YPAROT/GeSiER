@@ -117,6 +117,11 @@ RequirementService::find(const RequirementFilter &filter,
       "COALESCE((SELECT X.REFERENCE FROM DOCUMENT_REFERENCE X WHERE X.DOC_ID=D.ID AND X.IS_PRIMARY=1),D.TITLE) AS REFERENCE FROM "
       "DOCUMENT_NODE N JOIN DOCUMENT D ON D.ID=N.DOC_ID WHERE N.REQ_ID=R.ID "
       "ORDER BY REFERENCE,D.TITLE)),''),"
+      "COALESCE((SELECT GROUP_CONCAT(LABEL,char(10)) FROM (SELECT "
+      "COALESCE(NULLIF((SELECT X.REFERENCE FROM DOCUMENT_REFERENCE X WHERE "
+      "X.DOC_ID=D.ID AND X.IS_PRIMARY=1 ORDER BY X.ID LIMIT 1),''),D.TITLE)"
+      "||' — '||D.TITLE AS LABEL FROM DOCUMENT_NODE N JOIN DOCUMENT D ON "
+      "D.ID=N.DOC_ID WHERE N.REQ_ID=R.ID ORDER BY LABEL)),''),"
       "EXISTS(SELECT 1 FROM REQUIREMENT_PT X WHERE X.REQ_ID=R.ID),"
       "EXISTS(SELECT 1 FROM REQUIREMENT_RELATION X WHERE X.TARGET_REQ_ID=R.ID "
       "AND X.TYPE_ID IN(1,2)),"
@@ -148,12 +153,13 @@ RequirementService::find(const RequirementFilter &filter,
     r.verificationMethods = query.value(9).toString();
     r.applicability = query.value(10).toString();
     r.documents = query.value(11).toString();
-    r.allocated = query.value(12).toBool();
-    r.traced = query.value(13).toBool();
-    r.documented = query.value(14).toBool();
-    r.verified = query.value(15).toBool();
-    r.traceRoot = query.value(16).toBool();
-    r.comments = query.value(17).toString();
+    r.documentToolTip = query.value(12).toString();
+    r.allocated = query.value(13).toBool();
+    r.traced = query.value(14).toBool();
+    r.documented = query.value(15).toBool();
+    r.verified = query.value(16).toBool();
+    r.traceRoot = query.value(17).toBool();
+    r.comments = query.value(18).toString();
     if (!filter.description.trimmed().isEmpty() &&
         !MarkdownUtility::toPlainText(r.description)
              .contains(filter.description.trimmed(), Qt::CaseInsensitive))
