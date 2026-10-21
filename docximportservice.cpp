@@ -581,13 +581,13 @@ bool matchTableCandidate(const WordTable &pattern, const WordTable &source,
         if (normalized(expected.text) == normalized(found)) ++matchedLabels;
         else diagnostics->append({QString("ligne %1, cellule %2").arg(bestRow + 1).arg(column + 1),
                                   {}, QString("Libellé « %1 » attendu, « %2 » trouvé")
-                                          .arg(expected.text, found), false});
+                                          .arg(expected.text, found), false, {}, bestRow, column});
         continue;
       }
       for (const QString &tag : tags) {
         if (column >= actualRow.size()) {
           diagnostics->append({QString("ligne %1, cellule %2").arg(bestRow + 1).arg(column + 1),
-                                tag, "Cellule absente", true});
+                                tag, "Cellule absente", true, {}, bestRow, column});
           continue;
         }
         bool extracted = false;
@@ -598,7 +598,7 @@ bool matchTableCandidate(const WordTable &pattern, const WordTable &source,
           (*values)[tag] = actualRow[column].text.trimmed();
           (*htmlValues)[tag] = actualRow[column].html;
           diagnostics->append({QString("ligne %1, cellule %2").arg(bestRow + 1).arg(column + 1),
-                                tag, "Le texte fixe entourant la valeur diffère du gabarit", false});
+                                tag, "Le texte fixe entourant la valeur diffère du gabarit", false, {}, bestRow, column});
         } else {
           (*values)[tag] = value;
           (*htmlValues)[tag] = expected.text.trimmed().compare("{{" + tag + "}}", Qt::CaseInsensitive) == 0
@@ -729,6 +729,106 @@ int resolveProductTree(QSqlDatabase db, const ProductTreeService &service,
 
 DocxImportService::DocxImportService(QString connectionName)
     : m_connectionName(std::move(connectionName)) {}
+
+QString DocxImportService::normalizedRelationTypeCode(const QString &value) {
+  return relationTypeCode(value);
+}
+
+bool DocxImportService::validatePreview(DocxImportPreview *preview) const {
+  if (!preview) return false;
+  QSqlDatabase db = QSqlDatabase::database(m_connectionName, false);
+  if (!db.isValid() || !db.isOpen()) return false;
+  ProductTreeService productTrees(m_connectionName);
+  QSet<QString> requirementCodes;
+  QMap<QString, int> importedCodeCounts;
+  for (const auto &item : preview->requirements)
+    if (item.selected && !item.record.code.trimmed().isEmpty()) {
+      requirementCodes.insert(normalized(item.record.code));
+      ++importedCodeCounts[normalized(item.record.code)];
+    }
+  QSqlQuery existingRequirements("SELECT CODE FROM REQUIREMENT", db);
+  while (existingRequirements.next()) requirementCodes.insert(normalized(existingRequirements.value(0).toString()));
+  bool valid = true;
+  for (auto &item : preview->requirements) {
+    QList<DocxImportDiagnostic> preserved;
+    for (const auto &detail : item.detailedDiagnostics)
+      if (!detail.blocking && (detail.field == "REQ_DESCRIPTION" || detail.field == "REQ_COMMENTS"))
+        preserved << detail;
+    item.detailedDiagnostics = preserved;
+    item.diagnostics.clear();
+    auto add = [&](const QString &field, const QString &message, const QString &tab,
+                   int row = -1, int column = -1, bool blocking = true) {
+      item.detailedDiagnostics << DocxImportDiagnostic{
+          "validation", field, message, blocking, tab, row, column};
+      item.diagnostics << message;
+      if (blocking && item.selected) valid = false;
+    };
+    if (item.recognition == DocxImportRecognition::Candidate)
+      add("structure", "La structure diffère du gabarit et doit être vérifiée.", "Exigence", -1, -1, false);
+    if (item.record.code.trimmed().isEmpty()) add("general.code", "Code absent", "Exigence");
+    else if (item.selected && importedCodeCounts.value(normalized(item.record.code)) > 1)
+      add("general.code", "Code présent plusieurs fois dans l’import : " + item.record.code, "Exigence");
+    if (item.record.title.trimmed().isEmpty()) add("general.title", "Titre absent", "Exigence");
+    if (MarkdownUtility::toPlainText(item.record.description).trimmed().isEmpty())
+      add("general.description", "Description absente", "Exigence");
+    if (!item.type.isEmpty() && lookup(db, "REQ_TYPE", {"TYPE", "CODE"}, item.type) < 0)
+      add("general.type", "Type inconnu : " + item.type, "Exigence");
+    if (!item.status.isEmpty() && lookup(db, "REQ_STATUS", {"STATUS", "SHORTCUT"}, item.status) < 0)
+      add("general.status", "Statut inconnu : " + item.status, "Exigence");
+    for (int index = 0; index < item.productTreeCodes.size(); ++index)
+      if (resolveProductTree(db, productTrees, item.productTreeCodes[index]) < 0)
+        add("general.productTrees", "Product Tree inconnu : " + item.productTreeCodes[index], "Exigence", index, 0);
+    for (int index = 0; index < item.configurationCodes.size(); ++index)
+      if (lookup(db, "CONFIGURATION", {"CODE", "LABEL"}, item.configurationCodes[index]) < 0)
+        add("general.configurations", "Configuration inconnue : " + item.configurationCodes[index], "Exigence", index, 0);
+
+    QSet<QString> verificationKeys;
+    for (int index = 0; index < item.record.verifications.size(); ++index) {
+      auto &verification = item.record.verifications[index];
+      const QString method = item.verificationMethods.value(index).trimmed();
+      verification.methodId = lookup(db, "REQ_METHOD", {"METHOD"}, method);
+      if (method.isEmpty()) add("verification.method", "Méthode de vérification absente", "Vérifications", index, 0);
+      else if (verification.methodId < 0) add("verification.method", "Méthode inconnue : " + method, "Vérifications", index, 0);
+      if (verification.levelPtId >= 0) {
+        QSqlQuery active(db); active.prepare("SELECT 1 FROM PT WHERE ID=? AND ARCHIVED=0"); active.addBindValue(verification.levelPtId);
+        if (!active.exec() || !active.next()) add("verification.level", "Niveau PT absent ou archivé", "Vérifications", index, 1);
+      } else if (!verification.level.trimmed().isEmpty()) {
+        verification.levelPtId = resolveProductTree(db, productTrees, verification.level);
+        if (verification.levelPtId < 0)
+          add("verification.level", "Niveau PT inconnu : " + verification.level, "Vérifications", index, 1);
+        else
+          verification.level.clear();
+      }
+      if (!verification.verdict.isEmpty() && !QStringList{"C", "PC", "NC"}.contains(verification.verdict.toUpper()))
+        add("verification.verdict", "Verdict invalide : " + verification.verdict, "Vérifications", index, 5);
+      if (verification.methodId >= 0 && verification.level.trimmed().isEmpty()) {
+        const QString key = QString::number(verification.methodId) + ":" + QString::number(verification.levelPtId);
+        if (verificationKeys.contains(key))
+          add("verification.duplicate",
+              verification.levelPtId < 0 ? "Une méthode ne peut avoir qu’un seul brouillon par exigence."
+                                         : "Cette méthode est déjà définie pour ce niveau PT.",
+              "Vérifications", index, 0);
+        verificationKeys.insert(key);
+      }
+    }
+    for (int index = 0; index < item.relations.size(); ++index) {
+      auto &relation = item.relations[index];
+      const QString typeCode = relationTypeCode(relation.type);
+      if (typeCode.isEmpty()) add("relation.type", "Type de relation inconnu : " + relation.type, "Relations", index, 0);
+      else relation.type = typeCode;
+      relation.direction = relation.direction.trimmed().toUpper();
+      if (relation.direction != "IN" && relation.direction != "OUT")
+        add("relation.direction", "Direction de relation invalide : " + relation.direction, "Relations", index, 1);
+      if (!requirementCodes.contains(normalized(relation.otherCode)))
+        add("relation.requirement", "Exigence liée inconnue : " + relation.otherCode, "Relations", index, 2);
+      else if (normalized(relation.otherCode) == normalized(item.record.code))
+        add("relation.requirement", "Une exigence ne peut pas être liée à elle-même.", "Relations", index, 2);
+    }
+    for (const auto &detail : item.detailedDiagnostics)
+      if (!item.diagnostics.contains(detail.message)) item.diagnostics << detail.message;
+  }
+  return valid;
+}
 
 DocxImportValidation DocxImportService::validateTemplate(const QString &path) const {
   DocxImportValidation result;
@@ -864,7 +964,7 @@ DocxImportPreview DocxImportService::preview(const QString &sourcePath,
       const DocxImportDiagnostic formulaDiagnostic{
           imported.location, "REQ_DESCRIPTION",
           "Une formule Word n’a pas pu être convertie en LaTeX ; un marqueur a été conservé dans la description.",
-          false};
+          false, "Exigence", -1, -1};
       imported.detailedDiagnostics << formulaDiagnostic;
       imported.diagnostics << formulaDiagnostic.message;
     }
@@ -872,7 +972,7 @@ DocxImportPreview DocxImportService::preview(const QString &sourcePath,
       const DocxImportDiagnostic formulaDiagnostic{
           imported.location, "REQ_COMMENTS",
           "Une formule Word n’a pas pu être convertie en LaTeX ; un marqueur a été conservé dans le commentaire.",
-          false};
+          false, "Exigence", -1, -1};
       imported.detailedDiagnostics << formulaDiagnostic;
       imported.diagnostics << formulaDiagnostic.message;
     }
@@ -938,7 +1038,7 @@ DocxImportPreview DocxImportService::preview(const QString &sourcePath,
         QMap<QString, QString> candidateValues, candidateHtml;
         if (matchTableCandidate(tablePattern, item.table, &candidateValues, &candidateHtml, &details)) {
           details.prepend({QString("Exigence candidate %1").arg(ordinal + 1), {},
-                           "La structure diffère du gabarit et doit être vérifiée", false});
+                           "La structure diffère du gabarit et doit être vérifiée", false, "Exigence", -1, -1});
           appendRequirement(candidateValues, candidateHtml, {}, {}, DocxImportRecognition::Candidate, details);
         } else if (firstTableDiagnostic.isEmpty() && item.table.rows.size() >= tablePattern.rows.size()) {
           firstTableDiagnostic = diagnostic;
@@ -975,12 +1075,23 @@ DocxImportPreview DocxImportService::preview(const QString &sourcePath,
   }
   if (sourceXml.contains("<w:drawing") || sourceXml.contains("<w:object"))
     result.warnings << "Les objets Word non reconnus hors des descriptions d’exigence ne sont pas importés.";
+  validatePreview(&result);
   return result;
 }
 
 RequirementResult DocxImportService::importPreview(const DocxImportPreview &preview,
                                                    const DocxImportOptions &options) const {
   if (!preview.valid()) return RequirementResult::failure(preview.errors.join('\n'));
+  DocxImportPreview checkedPreview = preview;
+  if (!validatePreview(&checkedPreview)) {
+    QStringList errors;
+    for (const auto &item : checkedPreview.requirements)
+      if (item.selected)
+        for (const auto &detail : item.detailedDiagnostics)
+          if (detail.blocking) errors << item.record.code + " : " + detail.message;
+    errors.removeDuplicates();
+    return RequirementResult::failure(errors.join('\n'));
+  }
   int selectedCount = 0;
   for (const auto &item : preview.requirements) {
     if (!item.selected) continue;
@@ -1053,10 +1164,13 @@ RequirementResult DocxImportService::importPreview(const DocxImportPreview &prev
     for (int verificationIndex = 0; verificationIndex < item.record.verifications.size(); ++verificationIndex) {
       auto verification = item.record.verifications[verificationIndex];
       const QString method = item.verificationMethods.value(verificationIndex);
-      verification.methodId = lookup(db, "REQ_METHOD", {"METHOD"}, method);
+      if (verification.methodId < 0)
+        verification.methodId = lookup(db, "REQ_METHOD", {"METHOD"}, method);
       if (verification.methodId < 0) return fail(context + "méthode inconnue : " + method);
-      verification.levelPtId = resolveProductTree(db, productTrees, verification.level);
-      if (verification.levelPtId >= 0) verification.level.clear();
+      if (verification.levelPtId < 0 && !verification.level.trimmed().isEmpty()) {
+        verification.levelPtId = resolveProductTree(db, productTrees, verification.level);
+        if (verification.levelPtId >= 0) verification.level.clear();
+      }
       record.verifications << verification;
     }
     RequirementResult saved = item.importAction == "keep" && exists

@@ -4,6 +4,7 @@
 #include "requirementservice.h"
 #include "importvalidationdialog.h"
 #include "documentservice.h"
+#include "checkablecombobox.h"
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
@@ -24,9 +25,13 @@
 #include <QVBoxLayout>
 #include <QRegularExpression>
 #include <QSettings>
+#include <QSignalBlocker>
 #include <QTextDocumentFragment>
+#include <QBrush>
+#include <QColor>
 #include "markdownutility.h"
 #include <algorithm>
+#include <functional>
 
 namespace {
 enum Field { Code, Title, Description, Type, Source, Applicability,
@@ -65,8 +70,6 @@ bool parseTraceRootValueImpl(const QString &raw, bool *value) {
   }
   return false;
 }
-
-QString joinLines(const QStringList &values) { return values.join('\n'); }
 
 QStringList editedLines(const QString &value) {
   QStringList result;
@@ -153,8 +156,9 @@ RequirementImportDialog::RequirementImportDialog(const QString &connectionName,
   for (int row = 0; row < FieldCount; ++row)
     m_mapping->setItem(row, 0, new QTableWidgetItem(fieldNames[row]));
   auto *buttons = new QDialogButtonBox(QDialogButtonBox::Cancel);
-  auto *importButton = buttons->addButton("Valider et importer",
-                                         QDialogButtonBox::AcceptRole);
+  m_importButton = buttons->addButton("Valider et importer",
+                                      QDialogButtonBox::AcceptRole);
+  m_importButton->setObjectName("importSpecificationButton");
   auto *layout = new QVBoxLayout(this);
   layout->addLayout(form);
   layout->addWidget(new QLabel("Aperçu"));
@@ -199,7 +203,7 @@ RequirementImportDialog::RequirementImportDialog(const QString &connectionName,
           [this] { if (!m_filePath.isEmpty()) loadSource(); });
   connect(m_encoding, &QComboBox::currentIndexChanged, this,
           [this] { if (!m_filePath.isEmpty()) loadSource(); });
-  connect(importButton, &QPushButton::clicked, this,
+  connect(m_importButton, &QPushButton::clicked, this,
           &RequirementImportDialog::runImport);
   connect(editWordButton, &QPushButton::clicked, this, [this] {
     if (m_wordMode && m_preview->currentRow() >= 0) editWordRequirement(m_preview->currentRow());
@@ -209,10 +213,17 @@ RequirementImportDialog::RequirementImportDialog(const QString &connectionName,
   });
   connect(m_preview, &QTableWidget::itemChanged, this,
           [this](QTableWidgetItem *item) {
-            if (!m_wordMode || !item || item->column() != WordTraceRoot ||
+            if (!m_wordMode || !item ||
+                (item->column() != WordTraceRoot && item->column() != WordSelected) ||
                 item->row() < 0 ||
                 item->row() >= m_wordPreview.requirements.size())
               return;
+            if (item->column() == WordSelected) {
+              m_wordPreview.requirements[item->row()].selected =
+                  item->checkState() == Qt::Checked;
+              updateWordImportAvailability();
+              return;
+            }
             m_wordPreview.requirements[item->row()].record.traceRoot =
                 item->checkState() == Qt::Checked;
             m_traceRootOverride = -1;
@@ -278,6 +289,7 @@ void RequirementImportDialog::loadWordSource() {
   for (int row = 0; row < m_wordPreview.requirements.size(); ++row) refreshWordPreviewRow(row);
   m_preview->horizontalHeader()->setSectionResizeMode(WordDiagnostic, QHeaderView::Stretch);
   m_preview->resizeColumnsToContents();
+  updateWordImportAvailability();
   QStringList diagnostics = m_wordPreview.errors;
   for (const QString &warning : m_wordPreview.warnings) diagnostics << "Avertissement : " + warning;
   if (!diagnostics.isEmpty()) QMessageBox::warning(this, "Aperçu Word", diagnostics.join('\n'));
@@ -306,20 +318,33 @@ void RequirementImportDialog::loadSource() {
         this, "Import tabulaire",
         "L'onglet sélectionné ne contient aucune cellule lisible. Vous pouvez "
         "essayer un autre onglet du classeur.");
+  updateWordImportAvailability();
   refreshPreview();
 }
 
 void RequirementImportDialog::refreshWordPreviewRow(int row) {
   if (row < 0 || row >= m_wordPreview.requirements.size()) return;
+  const QSignalBlocker blocker(m_preview);
   const auto &requirement = m_wordPreview.requirements[row];
+  int blocking = 0, warnings = 0;
+  for (const auto &detail : requirement.detailedDiagnostics)
+    detail.blocking ? ++blocking : ++warnings;
+  const QString state = blocking > 0 ? QString::fromUtf8("⛔ %1 erreur(s)").arg(blocking)
+                                    : warnings > 0 ? QString::fromUtf8("⚠ %1 avertissement(s)").arg(warnings)
+                                                   : QString::fromUtf8("✓ Conforme");
+  const QColor background = blocking > 0 ? QColor("#fde7e9")
+                                         : warnings > 0 ? QColor("#fff4ce")
+                                                        : QColor("#e8f5e9");
   const QStringList values{"", "", QString::number(requirement.ordinal), requirement.chapterPath.join(" / "),
                            requirement.record.code, requirement.record.title,
-                           requirement.recognition == DocxImportRecognition::Conformant ? "Conforme" : "À corriger",
+                           state,
                            requirement.diagnostics.join(" ; ")};
   for (int column = 0; column < WordColumnCount; ++column) {
     auto *cell = m_preview->item(row, column);
     if (!cell) { cell = new QTableWidgetItem; m_preview->setItem(row, column, cell); }
     cell->setText(values[column]);
+    cell->setBackground(QBrush(background));
+    cell->setToolTip(requirement.diagnostics.join('\n'));
     cell->setFlags(cell->flags() & ~Qt::ItemIsEditable);
     if (column == WordSelected || column == WordTraceRoot) {
       cell->setFlags(cell->flags() | Qt::ItemIsUserCheckable);
@@ -329,6 +354,28 @@ void RequirementImportDialog::refreshWordPreviewRow(int row) {
                                                               : Qt::Unchecked));
     }
   }
+}
+
+void RequirementImportDialog::revalidateWordPreview() {
+  DocxImportService(m_connection).validatePreview(&m_wordPreview);
+  for (int row = 0; row < m_wordPreview.requirements.size(); ++row)
+    refreshWordPreviewRow(row);
+  updateWordImportAvailability();
+}
+
+void RequirementImportDialog::updateWordImportAvailability() {
+  if (!m_importButton) return;
+  if (!m_wordMode) { m_importButton->setEnabled(true); return; }
+  bool selected = false, blocking = false;
+  for (const auto &item : m_wordPreview.requirements) {
+    if (!item.selected) continue;
+    selected = true;
+    for (const auto &detail : item.detailedDiagnostics)
+      if (detail.blocking) { blocking = true; break; }
+  }
+  m_importButton->setEnabled(selected && !blocking && m_wordPreview.valid());
+  m_importButton->setToolTip(blocking ? "Corrigez ou décochez les exigences en erreur avant l’import."
+                                     : QString());
 }
 
 void RequirementImportDialog::setAllTraceRoots(bool traceRoot) {
@@ -358,13 +405,81 @@ void RequirementImportDialog::editWordRequirement(int row) {
   auto *code = new QLineEdit(item.record.code);
   auto *title = new QLineEdit(item.record.title);
   auto *source = new QLineEdit(item.record.source);
-  auto *type = new QLineEdit(item.type);
-  auto *status = new QLineEdit(item.status);
+  auto catalogCombo = [&](const QString &table, const QString &displayColumn,
+                          const QString &valueColumn, const QString &current) {
+    auto *combo = new QComboBox;
+    combo->setEditable(true);
+    combo->setInsertPolicy(QComboBox::NoInsert);
+    combo->addItem(QString());
+    QSqlQuery query(QString("SELECT %1,%2 FROM %3 ORDER BY %1").arg(displayColumn, valueColumn, table),
+                    QSqlDatabase::database(m_connection));
+    while (query.next()) combo->addItem(query.value(0).toString(), query.value(1));
+    combo->setCurrentText(current);
+    return combo;
+  };
+  auto *type = catalogCombo("REQ_TYPE", "TYPE", "ID", item.type);
+  auto *status = catalogCombo("REQ_STATUS", "STATUS", "ID", item.status);
+  auto selectCatalogValue = [&](QComboBox *combo, const QString &table,
+                                const QStringList &columns, const QString &value) {
+    for (const QString &column : columns) {
+      QSqlQuery query(QSqlDatabase::database(m_connection));
+      query.prepare(QString("SELECT ID FROM %1 WHERE UPPER(TRIM(%2))=? LIMIT 1").arg(table, column));
+      query.addBindValue(normalized(value));
+      if (query.exec() && query.next()) {
+        const int index = combo->findData(query.value(0));
+        if (index >= 0) combo->setCurrentIndex(index);
+        return;
+      }
+    }
+  };
+  selectCatalogValue(type, "REQ_TYPE", {"TYPE", "CODE"}, item.type);
+  selectCatalogValue(status, "REQ_STATUS", {"STATUS", "SHORTCUT"}, item.status);
   auto *traceRoot = new QCheckBox("Exigence haut niveau / racine de traçabilité");
   traceRoot->setChecked(item.record.traceRoot);
   auto *chapter = new QLineEdit(item.chapterPath.join(" / "));
-  auto *pts = new QTextEdit(joinLines(item.productTreeCodes)); pts->setMaximumHeight(70);
-  auto *configs = new QTextEdit(joinLines(item.configurationCodes)); configs->setMaximumHeight(70);
+  ProductTreeService productTreeService(m_connection);
+  auto *pts = new CheckableComboBox("Product Trees");
+  auto *configs = new CheckableComboBox("Configurations");
+  QMap<int, QString> ptCodes, configurationCodes;
+  QMap<int, QStringList> ptAliases, configurationAliases;
+  QList<int> selectedPts, selectedConfigurations;
+  QStringList unknownPts, unknownConfigurations;
+  QSqlDatabase editorDb = QSqlDatabase::database(m_connection);
+  QSqlQuery ptQuery("SELECT ID,COALESCE(NAME,DESCRIPTION,SEGMENT),SEGMENT,COALESCE(NAME,''),COALESCE(DESCRIPTION,'') FROM PT WHERE ARCHIVED=0 ORDER BY POSITION,ID", editorDb);
+  while (ptQuery.next()) {
+    const int id = ptQuery.value(0).toInt(); const QString fullCode = productTreeService.fullCode(id);
+    ptCodes[id] = fullCode; pts->addItem(fullCode + " — " + ptQuery.value(1).toString(), id);
+    ptAliases[id] = {fullCode, ptQuery.value(2).toString(), ptQuery.value(3).toString(), ptQuery.value(4).toString()};
+  }
+  for (const QString &value : item.productTreeCodes) {
+    int found = -1;
+    for (auto it = ptAliases.cbegin(); it != ptAliases.cend(); ++it)
+      for (const QString &alias : it.value())
+        if (normalized(alias) == normalized(value)) { found = it.key(); break; }
+    if (found >= 0) selectedPts << found; else unknownPts << value;
+  }
+  pts->setCheckedIds(selectedPts);
+  QSqlQuery configQuery("SELECT ID,CODE,LABEL FROM CONFIGURATION WHERE ACTIVE=1 ORDER BY CODE", editorDb);
+  while (configQuery.next()) {
+    const int id = configQuery.value(0).toInt(); const QString value = configQuery.value(1).toString();
+    configurationCodes[id] = value; configs->addItem(value + " — " + configQuery.value(2).toString(), id);
+    configurationAliases[id] = {value, configQuery.value(2).toString()};
+  }
+  for (const QString &value : item.configurationCodes) {
+    int found = -1;
+    for (auto it = configurationAliases.cbegin(); it != configurationAliases.cend(); ++it)
+      for (const QString &alias : it.value())
+        if (normalized(alias) == normalized(value)) { found = it.key(); break; }
+    if (found >= 0) selectedConfigurations << found; else unknownConfigurations << value;
+  }
+  configs->setCheckedIds(selectedConfigurations);
+  auto *unknownValues = new QLabel;
+  unknownValues->setWordWrap(true);
+  QStringList unknownMessages;
+  if (!unknownPts.isEmpty()) unknownMessages << "PT inconnus (retirés si vous enregistrez) : " + unknownPts.join(", ");
+  if (!unknownConfigurations.isEmpty()) unknownMessages << "Configurations inconnues (retirées si vous enregistrez) : " + unknownConfigurations.join(", ");
+  unknownValues->setText(unknownMessages.join('\n'));
+  unknownValues->setStyleSheet(unknownMessages.isEmpty() ? QString() : "QLabel{color:#b42318;background:#fde7e9;padding:4px;}");
   const QString originalComments = item.record.comments;
   auto *comments = new QTextEdit(originalComments);
   comments->setObjectName("wordRequirementComments");
@@ -377,22 +492,47 @@ void RequirementImportDialog::editWordRequirement(int row) {
   form->addRow("Source", source); form->addRow("Type", type); form->addRow("Statut", status);
   form->addRow(QString(), traceRoot);
   form->addRow("Chapitre (niveaux séparés par /)", chapter);
-  form->addRow("Product Trees (un code par ligne)", pts);
-  form->addRow("Configurations (un code par ligne)", configs);
+  form->addRow("Product Trees", pts);
+  form->addRow("Configurations", configs);
+  form->addRow(QString(), unknownValues);
   form->addRow("Description", description);
   form->addRow("Commentaire", comments);
   tabs->addTab(general, "Exigence");
 
   auto *verificationPage = new QWidget;
   auto *verificationLayout = new QVBoxLayout(verificationPage);
+  std::function<void()> updateEditorDiagnostics;
   auto *verifications = new QTableWidget(0, 7);
+  verifications->setObjectName("wordVerificationTable");
   verifications->setHorizontalHeaderLabels({"Méthode", "Niveau", "Procédure", "Redmine", "Moyens", "Verdict", "Commentaire"});
   verifications->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
   auto addVerification = [&](const RequirementVerification &verification, const QString &method) {
     const int r = verifications->rowCount(); verifications->insertRow(r);
-    const QStringList values{method, verification.level, verification.procedure, verification.redmine,
-                             verification.means, verification.verdict, verification.comment};
-    for (int c = 0; c < values.size(); ++c) verifications->setItem(r, c, new QTableWidgetItem(values[c]));
+    auto *methodCombo = new QComboBox; methodCombo->setEditable(true); methodCombo->setInsertPolicy(QComboBox::NoInsert);
+    QSqlQuery methods("SELECT METHOD FROM REQ_METHOD ORDER BY METHOD", editorDb);
+    while (methods.next()) methodCombo->addItem(methods.value(0).toString());
+    methodCombo->setCurrentText(method); methodCombo->setObjectName("verificationMethod");
+    auto *levelCombo = new QComboBox; levelCombo->setEditable(true); levelCombo->setInsertPolicy(QComboBox::NoInsert);
+    levelCombo->addItem("— Brouillon —", -1);
+    for (auto it = ptCodes.cbegin(); it != ptCodes.cend(); ++it) levelCombo->addItem(it.value(), it.key());
+    if (verification.levelPtId >= 0 && levelCombo->findData(verification.levelPtId) >= 0)
+      levelCombo->setCurrentIndex(levelCombo->findData(verification.levelPtId));
+    else if (!verification.level.trimmed().isEmpty()) {
+      const int match = levelCombo->findText(verification.level, Qt::MatchFixedString);
+      if (match >= 0) levelCombo->setCurrentIndex(match);
+      else { levelCombo->insertItem(0, QString::fromUtf8("⚠ ") + verification.level, -2); levelCombo->setCurrentIndex(0); }
+    }
+    levelCombo->setObjectName("verificationLevel");
+    auto *verdictCombo = new QComboBox; verdictCombo->addItems({"", "C", "PC", "NC"});
+    if (verdictCombo->findText(verification.verdict) < 0 && !verification.verdict.isEmpty()) verdictCombo->addItem(verification.verdict);
+    verdictCombo->setCurrentText(verification.verdict); verdictCombo->setObjectName("verificationVerdict");
+    verifications->setCellWidget(r, 0, methodCombo); verifications->setCellWidget(r, 1, levelCombo);
+    verifications->setCellWidget(r, 5, verdictCombo);
+    const QStringList values{verification.procedure, verification.redmine, verification.means, verification.comment};
+    for (int c = 0; c < values.size(); ++c) verifications->setItem(r, c < 3 ? c + 2 : 6, new QTableWidgetItem(values[c]));
+    connect(methodCombo, &QComboBox::currentTextChanged, &dialog, [&](const QString &) { if (updateEditorDiagnostics) updateEditorDiagnostics(); });
+    connect(levelCombo, &QComboBox::currentTextChanged, &dialog, [&](const QString &) { if (updateEditorDiagnostics) updateEditorDiagnostics(); });
+    connect(verdictCombo, &QComboBox::currentTextChanged, &dialog, [&](const QString &) { if (updateEditorDiagnostics) updateEditorDiagnostics(); });
   };
   for (int index = 0; index < item.record.verifications.size(); ++index)
     addVerification(item.record.verifications[index], item.verificationMethods.value(index));
@@ -402,13 +542,18 @@ void RequirementImportDialog::editWordRequirement(int row) {
   verificationButtons->addWidget(addVerificationButton); verificationButtons->addWidget(removeVerificationButton);
   verificationButtons->addWidget(upVerificationButton); verificationButtons->addWidget(downVerificationButton); verificationButtons->addStretch();
   verificationLayout->addWidget(verifications); verificationLayout->addLayout(verificationButtons);
-  connect(addVerificationButton, &QPushButton::clicked, &dialog, [&] { addVerification({}, {}); });
-  connect(removeVerificationButton, &QPushButton::clicked, &dialog, [&] { if (verifications->currentRow() >= 0) verifications->removeRow(verifications->currentRow()); });
+  connect(addVerificationButton, &QPushButton::clicked, &dialog, [&] { addVerification({}, {}); if (updateEditorDiagnostics) updateEditorDiagnostics(); });
+  connect(removeVerificationButton, &QPushButton::clicked, &dialog, [&] { if (verifications->currentRow() >= 0) verifications->removeRow(verifications->currentRow()); if (updateEditorDiagnostics) updateEditorDiagnostics(); });
   auto moveTableRow = [](QTableWidget *table, int from, int to) {
     if (from < 0 || to < 0 || to >= table->rowCount()) return;
     for (int column = 0; column < table->columnCount(); ++column) {
       auto *fromItem = table->takeItem(from, column); auto *toItem = table->takeItem(to, column);
+      QWidget *fromWidget = table->cellWidget(from, column); QWidget *toWidget = table->cellWidget(to, column);
+      if (fromWidget) table->removeCellWidget(from, column);
+      if (toWidget) table->removeCellWidget(to, column);
       table->setItem(from, column, toItem); table->setItem(to, column, fromItem);
+      if (toWidget) table->setCellWidget(from, column, toWidget);
+      if (fromWidget) table->setCellWidget(to, column, fromWidget);
     }
     table->setCurrentCell(to, 0);
   };
@@ -419,12 +564,31 @@ void RequirementImportDialog::editWordRequirement(int row) {
   auto *relationPage = new QWidget;
   auto *relationLayout = new QVBoxLayout(relationPage);
   auto *relations = new QTableWidget(0, 4);
+  relations->setObjectName("wordRelationTable");
   relations->setHorizontalHeaderLabels({"Type", "Direction (IN/OUT)", "Code lié", "Commentaire"});
   relations->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
   auto addRelation = [&](const DocxImportRelation &relation) {
     const int r = relations->rowCount(); relations->insertRow(r);
-    const QStringList values{relation.type, relation.direction, relation.otherCode, relation.comment};
-    for (int c = 0; c < values.size(); ++c) relations->setItem(r, c, new QTableWidgetItem(values[c]));
+    auto *typeCombo = new QComboBox; typeCombo->setEditable(true);
+    typeCombo->addItem("DECOMPOSE"); typeCombo->addItem("DERIVES_FROM"); typeCombo->addItem("DEPENDS_ON");
+    typeCombo->setCurrentText(relation.type); typeCombo->setObjectName("relationType");
+    auto *directionCombo = new QComboBox; directionCombo->addItems({"IN", "OUT"});
+    directionCombo->setCurrentText(relation.direction); directionCombo->setObjectName("relationDirection");
+    auto *requirementCombo = new QComboBox; requirementCombo->setEditable(true); requirementCombo->setInsertPolicy(QComboBox::NoInsert);
+    QSet<QString> codes;
+    QSqlQuery requirements("SELECT CODE,TITLE FROM REQUIREMENT ORDER BY CODE", editorDb);
+    while (requirements.next()) { const QString value=requirements.value(0).toString(); codes.insert(normalized(value)); requirementCombo->addItem(value + " — " + requirements.value(1).toString(), value); }
+    for (const auto &candidate : m_wordPreview.requirements)
+      if (!candidate.record.code.isEmpty() && !codes.contains(normalized(candidate.record.code)))
+        requirementCombo->addItem(candidate.record.code + " — " + candidate.record.title, candidate.record.code);
+    int requirementIndex = requirementCombo->findData(relation.otherCode);
+    if (requirementIndex >= 0) requirementCombo->setCurrentIndex(requirementIndex); else requirementCombo->setCurrentText(relation.otherCode);
+    requirementCombo->setObjectName("relationRequirement");
+    relations->setCellWidget(r,0,typeCombo); relations->setCellWidget(r,1,directionCombo); relations->setCellWidget(r,2,requirementCombo);
+    relations->setItem(r,3,new QTableWidgetItem(relation.comment));
+    connect(typeCombo, &QComboBox::currentTextChanged, &dialog, [&](const QString &) { if (updateEditorDiagnostics) updateEditorDiagnostics(); });
+    connect(directionCombo, &QComboBox::currentTextChanged, &dialog, [&](const QString &) { if (updateEditorDiagnostics) updateEditorDiagnostics(); });
+    connect(requirementCombo, &QComboBox::currentTextChanged, &dialog, [&](const QString &) { if (updateEditorDiagnostics) updateEditorDiagnostics(); });
   };
   for (const auto &relation : item.relations) addRelation(relation);
   auto *relationButtons = new QHBoxLayout;
@@ -433,23 +597,120 @@ void RequirementImportDialog::editWordRequirement(int row) {
   relationButtons->addWidget(addRelationButton); relationButtons->addWidget(removeRelationButton);
   relationButtons->addWidget(upRelationButton); relationButtons->addWidget(downRelationButton); relationButtons->addStretch();
   relationLayout->addWidget(relations); relationLayout->addLayout(relationButtons);
-  connect(addRelationButton, &QPushButton::clicked, &dialog, [&] { addRelation({}); });
-  connect(removeRelationButton, &QPushButton::clicked, &dialog, [&] { if (relations->currentRow() >= 0) relations->removeRow(relations->currentRow()); });
+  connect(addRelationButton, &QPushButton::clicked, &dialog, [&] { addRelation({}); if (updateEditorDiagnostics) updateEditorDiagnostics(); });
+  connect(removeRelationButton, &QPushButton::clicked, &dialog, [&] { if (relations->currentRow() >= 0) relations->removeRow(relations->currentRow()); if (updateEditorDiagnostics) updateEditorDiagnostics(); });
   connect(upRelationButton, &QPushButton::clicked, &dialog, [&, moveTableRow] { moveTableRow(relations, relations->currentRow(), relations->currentRow() - 1); });
   connect(downRelationButton, &QPushButton::clicked, &dialog, [&, moveTableRow] { moveTableRow(relations, relations->currentRow(), relations->currentRow() + 1); });
   tabs->addTab(relationPage, "Relations");
 
+  auto *diagnosticSummary = new QLabel;
+  diagnosticSummary->setObjectName("wordCorrectionDiagnostics");
+  diagnosticSummary->setWordWrap(true);
+  auto comboKnown = [](QComboBox *combo) {
+    return combo->currentText().trimmed().isEmpty() || combo->findText(combo->currentText(), Qt::MatchFixedString) >= 0;
+  };
+  updateEditorDiagnostics = [&, comboKnown] {
+    QStringList generalErrors, verificationErrors, relationErrors;
+    auto mark = [](QWidget *widget, const QString &message) {
+      if (!widget) return;
+      widget->setStyleSheet(message.isEmpty() ? QString() : "background:#fde7e9;border:1px solid #b42318;");
+      widget->setToolTip(message);
+    };
+    mark(code, {}); mark(title, {}); mark(description, {}); mark(type, {}); mark(status, {});
+    if (code->text().trimmed().isEmpty()) { generalErrors << "Code absent"; mark(code, generalErrors.last()); }
+    if (title->text().trimmed().isEmpty()) { generalErrors << "Titre absent"; mark(title, generalErrors.last()); }
+    if (description->toPlainText().trimmed().isEmpty()) { generalErrors << "Description absente"; mark(description, generalErrors.last()); }
+    if (!comboKnown(type)) { generalErrors << "Type inconnu : " + type->currentText(); mark(type, generalErrors.last()); }
+    if (!comboKnown(status)) { generalErrors << "Statut inconnu : " + status->currentText(); mark(status, generalErrors.last()); }
+    for (int r = 0; r < verifications->rowCount(); ++r)
+      for (int c = 0; c < verifications->columnCount(); ++c) {
+        if (auto *widget = verifications->cellWidget(r,c)) mark(widget, {});
+        if (auto *cell = verifications->item(r,c)) { cell->setBackground(QBrush()); cell->setToolTip({}); }
+      }
+    QSet<QString> keys;
+    for (int r = 0; r < verifications->rowCount(); ++r) {
+      auto *methodCombo = qobject_cast<QComboBox *>(verifications->cellWidget(r,0));
+      auto *levelCombo = qobject_cast<QComboBox *>(verifications->cellWidget(r,1));
+      auto *verdictCombo = qobject_cast<QComboBox *>(verifications->cellWidget(r,5));
+      QString error;
+      if (!methodCombo || methodCombo->currentText().trimmed().isEmpty()) error = "Méthode absente";
+      else if (!comboKnown(methodCombo)) error = "Méthode inconnue : " + methodCombo->currentText();
+      if (!error.isEmpty()) { verificationErrors << QString("Ligne %1 : %2").arg(r+1).arg(error); mark(methodCombo,error); }
+      if (levelCombo && levelCombo->currentData().toInt() == -2) {
+        error = "Niveau PT inconnu : " + levelCombo->currentText().mid(2);
+        verificationErrors << QString("Ligne %1 : %2").arg(r+1).arg(error); mark(levelCombo,error);
+      }
+      if (methodCombo && !methodCombo->currentText().trimmed().isEmpty() && comboKnown(methodCombo) && levelCombo && levelCombo->currentData().toInt() != -2) {
+        const QString key = normalized(methodCombo->currentText()) + ":" + QString::number(levelCombo->currentData().toInt());
+        if (keys.contains(key)) {
+          error = levelCombo->currentData().toInt() < 0 ? "Un seul brouillon est autorisé pour cette méthode."
+                                                        : "Cette méthode existe déjà à ce niveau PT.";
+          verificationErrors << QString("Ligne %1 : %2").arg(r+1).arg(error); mark(methodCombo,error); mark(levelCombo,error);
+        }
+        keys.insert(key);
+      }
+      if (verdictCombo && !QStringList{"", "C", "PC", "NC"}.contains(verdictCombo->currentText())) {
+        error = "Verdict invalide"; verificationErrors << QString("Ligne %1 : %2").arg(r+1).arg(error); mark(verdictCombo,error);
+      }
+    }
+    for (int r = 0; r < relations->rowCount(); ++r) {
+      for (int c=0;c<3;++c) mark(relations->cellWidget(r,c),{});
+      auto *relationType = qobject_cast<QComboBox *>(relations->cellWidget(r,0));
+      auto *direction = qobject_cast<QComboBox *>(relations->cellWidget(r,1));
+      auto *other = qobject_cast<QComboBox *>(relations->cellWidget(r,2));
+      if (!relationType || DocxImportService::normalizedRelationTypeCode(relationType->currentText()).isEmpty()) {
+        const QString error="Type de relation inconnu"; relationErrors << QString("Ligne %1 : %2").arg(r+1).arg(error); mark(relationType,error);
+      }
+      if (!direction || !QStringList{"IN","OUT"}.contains(direction->currentText())) {
+        const QString error="Direction invalide"; relationErrors << QString("Ligne %1 : %2").arg(r+1).arg(error); mark(direction,error);
+      }
+      QString otherCode = other ? other->currentData().toString() : QString();
+      if (otherCode.isEmpty() && other) otherCode = other->currentText().section(" — ",0,0).trimmed();
+      QSet<QString> availableCodes;
+      QSqlQuery linkedRequirements("SELECT CODE FROM REQUIREMENT", editorDb);
+      while (linkedRequirements.next()) availableCodes.insert(normalized(linkedRequirements.value(0).toString()));
+      for (const auto &candidate : m_wordPreview.requirements) availableCodes.insert(normalized(candidate.record.code));
+      if (otherCode.isEmpty() || !availableCodes.contains(normalized(otherCode))) {
+        const QString error=otherCode.isEmpty() ? "Exigence liée absente" : "Exigence liée inconnue : " + otherCode;
+        relationErrors << QString("Ligne %1 : %2").arg(r+1).arg(error); mark(other,error);
+      }
+    }
+    tabs->setTabText(0, generalErrors.isEmpty() ? "Exigence" : QString("Exigence (%1)").arg(generalErrors.size()));
+    tabs->setTabText(1, verificationErrors.isEmpty() ? "Vérifications" : QString("Vérifications (%1)").arg(verificationErrors.size()));
+    tabs->setTabText(2, relationErrors.isEmpty() ? "Relations" : QString("Relations (%1)").arg(relationErrors.size()));
+    QStringList all = generalErrors + verificationErrors + relationErrors;
+    diagnosticSummary->setText(all.isEmpty() ? QString::fromUtf8("✓ Aucune anomalie détectée") : QString::fromUtf8("⚠ ") + all.join("  •  "));
+    diagnosticSummary->setStyleSheet(all.isEmpty() ? "QLabel{color:#067647;background:#e8f5e9;padding:6px;}"
+                                                   : "QLabel{color:#b42318;background:#fde7e9;padding:6px;}");
+  };
+  connect(code, &QLineEdit::textChanged, &dialog, [&](const QString &) { updateEditorDiagnostics(); });
+  connect(title, &QLineEdit::textChanged, &dialog, [&](const QString &) { updateEditorDiagnostics(); });
+  connect(type, &QComboBox::currentTextChanged, &dialog, [&](const QString &) { updateEditorDiagnostics(); });
+  connect(status, &QComboBox::currentTextChanged, &dialog, [&](const QString &) { updateEditorDiagnostics(); });
+  connect(description, &QTextEdit::textChanged, &dialog, [&] { updateEditorDiagnostics(); });
+  updateEditorDiagnostics();
+  for (const auto &detail : item.detailedDiagnostics) {
+    if (!detail.blocking) continue;
+    if (detail.tab == "Vérifications") tabs->setCurrentIndex(1);
+    else if (detail.tab == "Relations") tabs->setCurrentIndex(2);
+    else tabs->setCurrentIndex(0);
+    break;
+  }
+
   auto *buttons = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel);
-  auto *layout = new QVBoxLayout(&dialog); layout->addWidget(tabs); layout->addWidget(buttons);
+  auto *layout = new QVBoxLayout(&dialog); layout->addWidget(diagnosticSummary); layout->addWidget(tabs); layout->addWidget(buttons);
   connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
   connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
   if (dialog.exec() != QDialog::Accepted) return;
 
   item.record.code = code->text().trimmed(); item.record.title = title->text().trimmed();
-  item.record.source = source->text().trimmed(); item.type = type->text().trimmed(); item.status = status->text().trimmed();
+  item.record.source = source->text().trimmed(); item.type = type->currentText().trimmed(); item.status = status->currentText().trimmed();
   item.record.traceRoot = traceRoot->isChecked();
   item.chapterPath = editedLines(chapter->text().replace('/', '\n'));
-  item.productTreeCodes = editedLines(pts->toPlainText()); item.configurationCodes = editedLines(configs->toPlainText());
+  item.productTreeCodes.clear();
+  for (const int id : pts->checkedIds()) item.productTreeCodes << ptCodes.value(id);
+  item.configurationCodes.clear();
+  for (const int id : configs->checkedIds()) item.configurationCodes << configurationCodes.value(id);
   const QString editedComments = comments->toPlainText();
   item.commentsProvided = item.commentsProvided || editedComments != originalComments;
   item.record.comments = editedComments;
@@ -457,22 +718,30 @@ void RequirementImportDialog::editWordRequirement(int row) {
       QTextDocument::MarkdownDialectGitHub).trimmed();
   item.record.verifications.clear(); item.verificationMethods.clear();
   for (int r = 0; r < verifications->rowCount(); ++r) {
-    RequirementVerification verification; item.verificationMethods << verifications->item(r, 0)->text().trimmed();
-    verification.level = verifications->item(r, 1)->text().trimmed(); verification.procedure = verifications->item(r, 2)->text().trimmed();
+    auto *methodCombo=qobject_cast<QComboBox *>(verifications->cellWidget(r,0));
+    auto *levelCombo=qobject_cast<QComboBox *>(verifications->cellWidget(r,1));
+    auto *verdictCombo=qobject_cast<QComboBox *>(verifications->cellWidget(r,5));
+    RequirementVerification verification; item.verificationMethods << (methodCombo ? methodCombo->currentText().trimmed() : QString());
+    if (levelCombo && levelCombo->currentData().toInt() >= 0) verification.levelPtId=levelCombo->currentData().toInt();
+    else if (levelCombo && levelCombo->currentData().toInt() == -2) verification.level=levelCombo->currentText().mid(2).trimmed();
+    verification.procedure = verifications->item(r, 2)->text().trimmed();
     verification.redmine = verifications->item(r, 3)->text().trimmed(); verification.means = verifications->item(r, 4)->text().trimmed();
-    verification.verdict = verifications->item(r, 5)->text().trimmed(); verification.comment = verifications->item(r, 6)->text().trimmed();
+    verification.verdict = verdictCombo ? verdictCombo->currentText().trimmed() : QString(); verification.comment = verifications->item(r, 6)->text().trimmed();
     item.record.verifications << verification;
   }
   item.relations.clear();
-  for (int r = 0; r < relations->rowCount(); ++r)
-    item.relations << DocxImportRelation{relations->item(r, 0)->text().trimmed(), relations->item(r, 1)->text().trimmed().toUpper(),
-                                        relations->item(r, 2)->text().trimmed(), relations->item(r, 3)->text().trimmed()};
-  item.diagnostics.clear(); item.detailedDiagnostics.clear();
-  if (item.record.code.isEmpty()) item.diagnostics << "Code absent";
-  if (item.record.title.isEmpty()) item.diagnostics << "Titre absent";
-  if (item.record.description.trimmed().isEmpty()) item.diagnostics << "Description absente";
-  if (item.diagnostics.isEmpty()) item.recognition = DocxImportRecognition::Conformant;
-  refreshWordPreviewRow(row);
+  for (int r = 0; r < relations->rowCount(); ++r) {
+    auto *typeCombo=qobject_cast<QComboBox *>(relations->cellWidget(r,0));
+    auto *directionCombo=qobject_cast<QComboBox *>(relations->cellWidget(r,1));
+    auto *requirementCombo=qobject_cast<QComboBox *>(relations->cellWidget(r,2));
+    QString otherCode=requirementCombo ? requirementCombo->currentData().toString() : QString();
+    if (otherCode.isEmpty() && requirementCombo) otherCode=requirementCombo->currentText().section(" — ",0,0).trimmed();
+    item.relations << DocxImportRelation{typeCombo ? typeCombo->currentText().trimmed() : QString(),
+                                        directionCombo ? directionCombo->currentText().trimmed().toUpper() : QString(),
+                                        otherCode, relations->item(r, 3)->text().trimmed()};
+  }
+  item.recognition = DocxImportRecognition::Conformant;
+  revalidateWordPreview();
 }
 
 void RequirementImportDialog::refreshPreview() {
@@ -1091,6 +1360,25 @@ void RequirementImportDialog::runWordImport() {
     selected.requirements[row].record.traceRoot = traceRoot;
     m_wordPreview.requirements[row].record.traceRoot = traceRoot;
   }
+  DocxImportService validator(m_connection);
+  if (!validator.validatePreview(&selected)) {
+    int firstInvalid = -1;
+    for (int row = 0; row < selected.requirements.size(); ++row) {
+      m_wordPreview.requirements[row].diagnostics = selected.requirements[row].diagnostics;
+      m_wordPreview.requirements[row].detailedDiagnostics = selected.requirements[row].detailedDiagnostics;
+      refreshWordPreviewRow(row);
+      if (firstInvalid < 0 && selected.requirements[row].selected)
+        for (const auto &detail : selected.requirements[row].detailedDiagnostics)
+          if (detail.blocking) { firstInvalid = row; break; }
+    }
+    updateWordImportAvailability();
+    if (firstInvalid >= 0) {
+      m_preview->selectRow(firstInvalid);
+      QMessageBox::warning(this, "Import Word",
+                           "Des anomalies bloquantes sont signalées dans l’aperçu. Corrigez l’exigence marquée ou décochez-la avant l’import.");
+    }
+    return;
+  }
   ProductTreeService productTrees(m_connection);
   auto lookup = [&](const QString &table, const QStringList &columns, const QString &value) {
     if (value.trimmed().isEmpty()) return true;
@@ -1130,7 +1418,8 @@ void RequirementImportDialog::runWordImport() {
       else if (!lookup("REQ_METHOD", {"METHOD"}, method)) item.diagnostics << "Méthode inconnue : " + method;
     }
     for (const auto &relation : item.relations) {
-      if (relation.type != "Dépend de" && relation.type != "Dérive de" && relation.type != "Enfant de") item.diagnostics << "Type de relation inconnu : " + relation.type;
+      if (DocxImportService::normalizedRelationTypeCode(relation.type).isEmpty())
+        item.diagnostics << "Type de relation inconnu : " + relation.type;
       if (relation.direction != "IN" && relation.direction != "OUT") item.diagnostics << "Direction de relation invalide : " + relation.direction;
       if (!requirementExists(relation.otherCode)) item.diagnostics << "Exigence liée inconnue : " + relation.otherCode;
     }

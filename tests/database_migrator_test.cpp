@@ -1633,6 +1633,12 @@ void DatabaseMigratorTest::managesRequirementReferenceData() {
 }
 
 void DatabaseMigratorTest::roundTripsStructuredDocxCollections() {
+  QCOMPARE(DocxImportService::normalizedRelationTypeCode("DECOMPOSE"), QString("DECOMPOSE"));
+  QCOMPARE(DocxImportService::normalizedRelationTypeCode("DERIVES_FROM"), QString("DERIVES_FROM"));
+  QCOMPARE(DocxImportService::normalizedRelationTypeCode("DEPENDS_ON"), QString("DEPENDS_ON"));
+  QCOMPARE(DocxImportService::normalizedRelationTypeCode("Enfant de"), QString("DECOMPOSE"));
+  QCOMPARE(DocxImportService::normalizedRelationTypeCode("Derives from"), QString("DERIVES_FROM"));
+  QVERIFY(DocxImportService::normalizedRelationTypeCode("AUTRE").isEmpty());
   ApplicationLanguage::setCurrent("fr");
   QTemporaryDir directory; QVERIFY(directory.isValid());
   REQ_SQLManager manager;
@@ -1664,15 +1670,24 @@ void DatabaseMigratorTest::roundTripsStructuredDocxCollections() {
   QVERIFY(translatedXml.contains("Enfant de")); QVERIFY(translatedXml.contains("Dérive de")); QVERIFY(translatedXml.contains("Dépend de"));
   QVERIFY(!translatedXml.contains(">IN<")); QVERIFY(!translatedXml.contains(">OUT<")); QVERIFY(!translatedXml.contains("RELATION_DIRECTION"));
   QVERIFY(!translatedXml.contains("GESIER_VERIFICATION_TEMPLATE")); QVERIFY(!translatedXml.contains("GESIER_RELATION_TEMPLATE"));
-  const auto preview=DocxImportService(manager.currentConnection()).preview(translated.outputPath,model);
+  auto preview=DocxImportService(manager.currentConnection()).preview(translated.outputPath,model);
   QVERIFY2(preview.valid(),qPrintable(preview.errors.join('\n'))); QCOMPARE(preview.requirements.size(),1);
   const auto imported=preview.requirements.first(); QCOMPARE(imported.record.verifications.size(),2); QCOMPARE(imported.verificationMethods,QStringList({"Analysis","Test"}));
-  QCOMPARE(imported.record.verifications[0].level,QString("SYS-PWR-CTRL")); QCOMPARE(imported.record.verifications[1].level,QString("Niveau historique"));
+  QCOMPARE(imported.record.verifications[0].levelPtId,103); QCOMPARE(imported.record.verifications[1].level,QString("Niveau historique"));
+  QVERIFY(std::any_of(imported.detailedDiagnostics.cbegin(), imported.detailedDiagnostics.cend(), [](const auto &detail) { return detail.field=="verification.level" && detail.blocking; }));
   QCOMPARE(imported.configurationCodes,QStringList({"FM"})); QCOMPARE(imported.relations.size(),3);
   QCOMPARE(imported.relations[0].direction,QString("IN")); QCOMPARE(imported.relations[1].direction,QString("IN")); QCOMPARE(imported.relations[2].direction,QString("OUT"));
+  auto duplicateDraft=preview; duplicateDraft.requirements[0].selected=true; duplicateDraft.requirements[0].verificationMethods={"Analysis","Analysis"};
+  for(auto &verification:duplicateDraft.requirements[0].record.verifications){verification.level.clear();verification.levelPtId=-1;}
+  QVERIFY(!DocxImportService(manager.currentConnection()).validatePreview(&duplicateDraft));
+  QVERIFY(std::any_of(duplicateDraft.requirements[0].detailedDiagnostics.cbegin(), duplicateDraft.requirements[0].detailedDiagnostics.cend(), [](const auto &detail) { return detail.field=="verification.duplicate"; }));
+  auto distinctLevels=duplicateDraft; distinctLevels.requirements[0].record.verifications[0].levelPtId=102; distinctLevels.requirements[0].record.verifications[1].levelPtId=103;
+  QVERIFY(DocxImportService(manager.currentConnection()).validatePreview(&distinctLevels));
+  preview.requirements[0].record.verifications[1].level.clear(); preview.requirements[0].record.verifications[1].levelPtId=102;
+  QVERIFY(DocxImportService(manager.currentConnection()).validatePreview(&preview));
   DocxImportOptions importOptions; importOptions.documentId=1; importOptions.primaryPtId=101;
   const auto importedResult=DocxImportService(manager.currentConnection()).importPreview(preview,importOptions); QVERIFY2(importedResult.success,qPrintable(importedResult.message));
-  const auto reloaded=RequirementService(manager.currentConnection()).get(saved.id); QCOMPARE(reloaded.verifications.size(),2); QCOMPARE(reloaded.verifications[0].levelPtId,103); QCOMPARE(reloaded.verifications[1].level,QString("Niveau historique"));
+  const auto reloaded=RequirementService(manager.currentConnection()).get(saved.id); QCOMPARE(reloaded.verifications.size(),2); QCOMPARE(reloaded.verifications[0].levelPtId,103); QCOMPARE(reloaded.verifications[1].levelPtId,102);
   QVERIFY(q.exec(QString("SELECT COUNT(*) FROM REQUIREMENT_RELATION WHERE (SOURCE_REQ_ID=2 AND TARGET_REQ_ID=%1 AND TYPE_ID=1) OR (SOURCE_REQ_ID=3 AND TARGET_REQ_ID=%1 AND TYPE_ID=2) OR (SOURCE_REQ_ID=%1 AND TARGET_REQ_ID=4 AND TYPE_ID=3)").arg(saved.id))); QVERIFY(q.next()); QCOMPARE(q.value(0).toInt(),3);
   QVERIFY(q.exec(QString("SELECT COMMENT FROM REQUIREMENT_RELATION WHERE SOURCE_REQ_ID=3 AND TARGET_REQ_ID=%1 AND TYPE_ID=2").arg(saved.id))); QVERIFY(q.next()); QCOMPARE(q.value(0).toString(),QString("Origine métier"));
   DocxExportRequest technical=translated; technical.outputPath=directory.filePath("technical.docx"); technical.relationPresentation=DocxExportRequest::RelationPresentation::TechnicalCodes;

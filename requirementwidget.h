@@ -24,6 +24,7 @@ public:
   void setConnectionName(const QString &);
 public slots:
   void refresh();
+  void refreshFilterLookups();
   void applyFilter(const RequirementFilter &);
   void openRequirement(int id);
   void openRequirementApplicability(int id);

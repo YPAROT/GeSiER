@@ -35,6 +35,8 @@ private:
   void runWordImport();
   void editWordRequirement(int row);
   void refreshWordPreviewRow(int row);
+  void revalidateWordPreview();
+  void updateWordImportAvailability();
   void setAllTraceRoots(bool traceRoot);
   int mappedColumn(int field) const;
   QString mappedValue(const QStringList &row, int field) const;
@@ -65,6 +67,7 @@ private:
   QComboBox *m_primaryPt;
   QPushButton *m_allTraceRoots;
   QPushButton *m_noTraceRoots;
+  QPushButton *m_importButton;
   QLabel *m_traceRootOverrideLabel;
   int m_traceRootOverride = -1;
 };

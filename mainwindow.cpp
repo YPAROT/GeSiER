@@ -639,8 +639,10 @@ void MainWindow::refreshTableSlot()
     refreshViewTables();
     if (m_productTreeWidget)
         m_productTreeWidget->refresh();
-    if (m_requirementWidget)
+    if (m_requirementWidget) {
+        m_requirementWidget->refreshFilterLookups();
         m_requirementWidget->refresh();
+    }
     if (m_traceabilityControlWidget)
         m_traceabilityControlWidget->refresh();
     if (m_documentWidget)
@@ -853,7 +855,7 @@ void MainWindow::importReq()
         return;
     RequirementImportDialog normalizedImport(m_SQLManager->currentConnection(), this);
     if (normalizedImport.exec() == QDialog::Accepted)
-        refreshViewTables();
+        refreshTableSlot();
     return;
 
 #if 0 // Ancien import positionnel, conservé uniquement pour référence de migration.

@@ -51,7 +51,29 @@ private slots:
   void configuresDocumentCreationScope();
   void marksObsoleteRequirementsInDocumentTree();
   void displaysRequirementHistoryAsHumanDiff();
+  void refreshesRequirementFilterLookups();
 };
+
+void RequirementWidgetTest::refreshesRequirementFilterLookups() {
+  QTemporaryDir directory;
+  REQ_SQLManager manager;
+  QVERIFY(manager.newDB(directory.filePath("filter-refresh.db")).type()==QSqlError::NoError);
+  ProductTreeService tree(manager.currentConnection()); QVERIFY(tree.addNode(-1,"SYS").success);
+  QSqlQuery query(QSqlDatabase::database(manager.currentConnection()));
+  QVERIFY(query.exec("SELECT ID FROM PT WHERE SEGMENT='SYS'")); QVERIFY(query.next()); const int pt=query.value(0).toInt();
+  QVERIFY(query.exec(QString("INSERT INTO DOCUMENT(ID,PT_ID,TYPE,TITLE) VALUES(1,%1,1,'Initial')").arg(pt)));
+  QVERIFY(query.exec("INSERT INTO DOCUMENT_REFERENCE(DOC_ID,REFERENCE,IS_PRIMARY) VALUES(1,'SPEC-1',1)"));
+  RequirementWidget widget; widget.setConnectionName(manager.currentConnection());
+  auto *documents=widget.findChild<CheckableComboBox *>("documentFilter"); QVERIFY(documents);
+  QCOMPARE(documents->toolTip(),QString("Documents : indifférent"));
+  documents->setCheckedIds({1});
+  QVERIFY(query.exec(QString("INSERT INTO DOCUMENT(ID,PT_ID,TYPE,TITLE) VALUES(2,%1,1,'Importée')").arg(pt)));
+  QVERIFY(query.exec("INSERT INTO DOCUMENT_REFERENCE(DOC_ID,REFERENCE,IS_PRIMARY) VALUES(2,'SPEC-2',1)"));
+  widget.refreshFilterLookups();
+  QCOMPARE(documents->checkedIds(),QList<int>({1}));
+  QVERIFY(documents->text().contains("1/2"));
+  widget.setConnectionName({}); manager.close();
+}
 
 void RequirementWidgetTest::displaysRequirementHistoryAsHumanDiff() {
   QTemporaryDir directory;

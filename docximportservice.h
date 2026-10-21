@@ -28,6 +28,9 @@ struct DocxImportDiagnostic {
   QString field;
   QString message;
   bool blocking = true;
+  QString tab;
+  int row = -1;
+  int column = -1;
 };
 
 struct DocxImportRequirement {
@@ -71,6 +74,8 @@ struct DocxImportOptions {
 class DocxImportService {
 public:
   explicit DocxImportService(QString connectionName = {});
+  static QString normalizedRelationTypeCode(const QString &value);
+  bool validatePreview(DocxImportPreview *preview) const;
   DocxImportValidation validateTemplate(const QString &path) const;
   DocxImportPreview preview(const QString &sourcePath,
                             const QString &templatePath) const;

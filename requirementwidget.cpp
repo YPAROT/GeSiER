@@ -701,6 +701,36 @@ void RequirementWidget::loadLookups() {
       "SELECT ID,COALESCE(CODE||' — ','')||TYPE FROM REQ_TYPE ORDER BY ID",
       QString());
 }
+void RequirementWidget::refreshFilterLookups() {
+  const QSqlDatabase db = QSqlDatabase::database(m_connection, false);
+  if (!db.isValid() || !db.isOpen()) return;
+  const bool wasLoading = m_loading;
+  m_loading = true;
+  auto reload = [&](CheckableComboBox *combo, const QString &sql) {
+    const QList<int> selected = combo->checkedIds();
+    fillCheckable(combo, db, sql);
+    combo->setCheckedIds(selected);
+  };
+  reload(m_statusFilter, "SELECT ID,STATUS FROM REQ_STATUS ORDER BY ID");
+  reload(m_typeFilter, "SELECT ID,COALESCE(CODE||' — ','')||TYPE FROM REQ_TYPE ORDER BY ID");
+  reload(m_methodFilter, "SELECT ID,METHOD FROM REQ_METHOD ORDER BY ID");
+  reload(m_applicabilityFilter,
+         "SELECT ID,CODE FROM CONFIGURATION WHERE ACTIVE=1 ORDER BY POSITION,CODE");
+  reload(m_documentFilter,
+         "SELECT D.ID,COALESCE(NULLIF((SELECT R.REFERENCE FROM DOCUMENT_REFERENCE R "
+         "WHERE R.DOC_ID=D.ID AND R.IS_PRIMARY=1 ORDER BY R.ID LIMIT 1),''),D.TITLE) "
+         "FROM DOCUMENT D ORDER BY 2,D.TITLE");
+  const QList<int> selectedPts = m_ptFilter->checkedIds();
+  m_ptFilter->clearItems();
+  ProductTreeService productTrees(m_connection);
+  QSqlQuery pts("SELECT ID,DESCRIPTION FROM PT WHERE ARCHIVED=0 ORDER BY POSITION,SEGMENT", db);
+  while (pts.next()) {
+    const int id = pts.value(0).toInt();
+    m_ptFilter->addItem(productTrees.fullCode(id), id, pts.value(1).toString());
+  }
+  m_ptFilter->setCheckedIds(selectedPts);
+  m_loading = wasLoading;
+}
 void RequirementWidget::loadPt() {
   m_pt->blockSignals(true);
   m_pt->clear();
