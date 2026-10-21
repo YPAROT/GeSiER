@@ -104,8 +104,12 @@ QList<CoverageMetric> CoverageService::metrics(const CoverageScope &scope,
   const QString where = requirementScope(scope);
   const int requirements =
       scalar(db, "SELECT COUNT(*) FROM REQUIREMENT R WHERE " + where, error);
+  const QString applicableWhere =
+      where + " AND COALESCE(R.NOT_APPLICABLE,0)=0";
+  const int applicableRequirements = scalar(
+      db, "SELECT COUNT(*) FROM REQUIREMENT R WHERE " + applicableWhere, error);
   const int traceable = scalar(
-      db, "SELECT COUNT(*) FROM REQUIREMENT R WHERE " + where +
+      db, "SELECT COUNT(*) FROM REQUIREMENT R WHERE " + applicableWhere +
               " AND COALESCE(R.IS_TRACE_ROOT,0)=0",
       error);
   const int interfaces = scalar(
@@ -124,37 +128,37 @@ QList<CoverageMetric> CoverageService::metrics(const CoverageScope &scope,
                            requirements, 1, "all", "all"};
   result << CoverageMetric{
       "allocation", "Allocation Product Tree",
-      scalar(db, "SELECT COUNT(*) FROM REQUIREMENT R WHERE " + where +
+      scalar(db, "SELECT COUNT(*) FROM REQUIREMENT R WHERE " + applicableWhere +
                      " AND EXISTS(SELECT 1 FROM REQUIREMENT_PT X WHERE "
                      "X.REQ_ID=R.ID)", error),
-      requirements, 1, "allocated", "unallocated"};
+      applicableRequirements, 1, "allocated", "unallocated"};
   result << CoverageMetric{
       "traceability", "Traçabilité amont",
-      scalar(db, "SELECT COUNT(*) FROM REQUIREMENT R WHERE " + where +
+      scalar(db, "SELECT COUNT(*) FROM REQUIREMENT R WHERE " + applicableWhere +
                      " AND COALESCE(R.IS_TRACE_ROOT,0)=0 AND EXISTS(SELECT 1 "
                      "FROM REQUIREMENT_RELATION X WHERE X.TARGET_REQ_ID=R.ID "
                      "AND X.TYPE_ID IN(1,2))", error),
       traceable, 1, "traced", "untraced"};
   result << CoverageMetric{
       "documentation", "Couverture documentaire",
-      scalar(db, "SELECT COUNT(*) FROM REQUIREMENT R WHERE " + where +
+      scalar(db, "SELECT COUNT(*) FROM REQUIREMENT R WHERE " + applicableWhere +
                      " AND EXISTS(SELECT 1 FROM DOCUMENT_NODE N WHERE "
                      "N.REQ_ID=R.ID)", error),
-      requirements, 1, "documented", "undocumented"};
+      applicableRequirements, 1, "documented", "undocumented"};
   result << CoverageMetric{
       "verification", "Planification vérification",
-      scalar(db, "SELECT COUNT(*) FROM REQUIREMENT R WHERE " + where +
+      scalar(db, "SELECT COUNT(*) FROM REQUIREMENT R WHERE " + applicableWhere +
                      " AND EXISTS(SELECT 1 FROM REQUIREMENT_VERIFICATION V "
                      "JOIN PT P ON P.ID=V.VERIFICATION_LEVEL_PT_ID "
                      "WHERE V.REQ_ID=R.ID AND V.METHOD_ID IS NOT NULL AND "
                      "COALESCE(P.ARCHIVED,0)=0)", error),
-      requirements, 1, "verified", "unverified"};
+      applicableRequirements, 1, "verified", "unverified"};
   result << CoverageMetric{
       "applicability", "Applicabilité définie",
-      scalar(db, "SELECT COUNT(*) FROM REQUIREMENT R WHERE " + where +
+      scalar(db, "SELECT COUNT(*) FROM REQUIREMENT R WHERE " + applicableWhere +
                      " AND EXISTS(SELECT 1 FROM REQUIREMENT_APPLICABILITY A "
                      "WHERE A.REQ_ID=R.ID)", error),
-      requirements, 1, "applicable", "no-applicability"};
+      applicableRequirements, 1, "applicable", "no-applicability"};
   result << CoverageMetric{
       "interfaces", "Interfaces couvertes ICD",
       scalar(db, "SELECT COUNT(*) FROM INTERFACE I WHERE "
@@ -192,6 +196,10 @@ CoverageSnapshot CoverageService::snapshot(const CoverageScope &scope,
   const auto db = QSqlDatabase::database(m_connectionName, false);
   const QString where = requirementScope(scope);
   out.requirements = scalar(db, "SELECT COUNT(*) FROM REQUIREMENT R WHERE " + where, error);
+  out.applicableRequirements = scalar(
+      db, "SELECT COUNT(*) FROM REQUIREMENT R WHERE " + where +
+              " AND COALESCE(R.NOT_APPLICABLE,0)=0",
+      error);
   const QString complete =
       "EXISTS(SELECT 1 FROM REQUIREMENT_VERIFICATION V JOIN PT P ON "
       "P.ID=V.VERIFICATION_LEVEL_PT_ID WHERE V.REQ_ID=R.ID AND "
@@ -204,11 +212,15 @@ CoverageSnapshot CoverageService::snapshot(const CoverageScope &scope,
                           " AND " + condition,
                   error);
   };
-  out.verificationPlanning.total = out.requirements;
-  out.verificationPlanning.covered = stateCount(complete + " AND NOT " + draft);
-  out.verificationPlanning.coveredDraft = stateCount(complete + " AND " + draft);
-  out.verificationPlanning.draft = stateCount("NOT " + complete + " AND " + draft);
-  out.verificationPlanning.missing = out.requirements -
+  out.verificationPlanning.total = out.applicableRequirements;
+  const QString projectApplicable = "COALESCE(R.NOT_APPLICABLE,0)=0 AND ";
+  out.verificationPlanning.covered =
+      stateCount(projectApplicable + complete + " AND NOT " + draft);
+  out.verificationPlanning.coveredDraft =
+      stateCount(projectApplicable + complete + " AND " + draft);
+  out.verificationPlanning.draft =
+      stateCount(projectApplicable + "NOT " + complete + " AND " + draft);
+  out.verificationPlanning.missing = out.applicableRequirements -
       out.verificationPlanning.covered - out.verificationPlanning.coveredDraft -
       out.verificationPlanning.draft;
   out.requirementStatuses = slices(
@@ -235,7 +247,7 @@ CoverageSnapshot CoverageService::snapshot(const CoverageScope &scope,
         "SELECT D.ID,COALESCE((SELECT X.REFERENCE FROM DOCUMENT_REFERENCE X "
         "WHERE X.DOC_ID=D.ID AND X.IS_PRIMARY=1),'—'),D.TITLE,"
         "COALESCE(T.TYPE,'—'),COALESCE(P.NAME,'—'),"
-        "COUNT(DISTINCT R.ID),"
+        "COUNT(DISTINCT CASE WHEN COALESCE(R.NOT_APPLICABLE,0)=0 THEN R.ID END),"
         "COUNT(DISTINCT CASE WHEN EXISTS(SELECT 1 FROM "
         "REQUIREMENT_APPLICABILITY A WHERE A.REQ_ID=R.ID AND A.APPLICABLE=1 "
         "AND " + applicability + ") THEN R.ID END),"
@@ -288,8 +300,9 @@ CoverageSnapshot CoverageService::snapshot(const CoverageScope &scope,
     ConfigurationCoverage c;
     c.id=configs.value(0).toInt(); c.code=configs.value(1).toString();
     c.label=configs.value(2).toString(); c.active=configs.value(3).toBool();
-    c.total=out.requirements;
+    c.total=out.applicableRequirements;
     c.applicable=scalar(db, "SELECT COUNT(DISTINCT R.ID) FROM REQUIREMENT R WHERE " + where +
+        " AND COALESCE(R.NOT_APPLICABLE,0)=0" +
         QString(" AND EXISTS(SELECT 1 FROM REQUIREMENT_APPLICABILITY A WHERE A.REQ_ID=R.ID AND A.CONFIG_ID=%1 AND A.APPLICABLE=1)").arg(c.id), error);
     out.configurations << c;
   }

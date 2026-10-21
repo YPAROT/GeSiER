@@ -45,7 +45,7 @@ QJsonObject AuditService::requirementSnapshot(QSqlDatabase db, int id) {
   q.prepare("SELECT R.CODE,R.TITLE,COALESCE(R.DESCRIPTION,''),"
             "R.TYPE,COALESCE(T.TYPE,''),R.STATUS,COALESCE(S.STATUS,''),"
             "COALESCE(R.SOURCE,''),COALESCE(R.IS_TRACE_ROOT,0),"
-            "COALESCE(R.COMMENTS,'') FROM REQUIREMENT R LEFT JOIN REQ_TYPE T "
+            "COALESCE(R.COMMENTS,''),COALESCE(R.NOT_APPLICABLE,0) FROM REQUIREMENT R LEFT JOIN REQ_TYPE T "
             "ON T.ID=R.TYPE LEFT JOIN REQ_STATUS S ON S.ID=R.STATUS WHERE R.ID=?");
   q.addBindValue(id);
   if (!q.exec() || !q.next()) return {};
@@ -53,7 +53,8 @@ QJsonObject AuditService::requirementSnapshot(QSqlDatabase db, int id) {
   root["schema"] = "gesier.audit.requirement.v1";
   QJsonObject fields;
   const QStringList names{"code","title","description","typeId","type",
-                          "statusId","status","source","traceRoot","comments"};
+                          "statusId","status","source","traceRoot","comments",
+                          "notApplicable"};
   for (int i = 0; i < names.size(); ++i) fields[names[i]] = value(q.value(i));
   root["fields"] = fields;
   root["productTrees"] = rows(db,

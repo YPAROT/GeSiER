@@ -16,6 +16,7 @@ struct ApplicabilityFilter {
   int ptRootId = -1, documentId = -1, statusId = -1, typeId = -1;
   bool includeObsoleteRequirements = false;
   bool includeArchivedConfigurations = false;
+  bool includeNotApplicableRequirements = false;
 };
 
 struct ApplicabilityCell {
@@ -27,6 +28,7 @@ struct ApplicabilityCell {
 struct ApplicabilityRow {
   int requirementId = -1;
   QString code, title, status, type, productTrees, document;
+  bool notApplicable = false, obsolete = false;
   QList<ApplicabilityCell> cells;
 };
 

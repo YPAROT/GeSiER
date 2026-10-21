@@ -66,7 +66,7 @@ QList<HistoryRecord> HistoryService::find(const QString &text,
 
 namespace {
 QString human(const QString &key) {
-  static const QHash<QString,QString> labels{{"fields","Champs de l'exigence"},{"productTrees","Allocations Product Tree"},{"applicability","Applicabilité"},{"verification","Vérification"},{"relations","Relations et rattachements"},{"documents","Documents"},{"interfaces","Interfaces"},{"changes","Changements"},{"images","Images"},{"title","Titre"},{"description","Description"},{"status","Statut"},{"type","Type"},{"source","Source"},{"comments","Commentaires"},{"traceRoot","Racine de traçabilité"},{"code","Code"}};
+  static const QHash<QString,QString> labels{{"fields","Champs de l'exigence"},{"productTrees","Allocations Product Tree"},{"applicability","Applicabilité"},{"verification","Vérification"},{"relations","Relations et rattachements"},{"documents","Documents"},{"interfaces","Interfaces"},{"changes","Changements"},{"images","Images"},{"title","Titre"},{"description","Description"},{"status","Statut"},{"type","Type"},{"source","Source"},{"comments","Commentaires"},{"traceRoot","Racine de traçabilité"},{"notApplicable","Non applicable au projet"},{"code","Code"}};
   return labels.value(key,key);
 }
 QString display(const QJsonValue &v) {

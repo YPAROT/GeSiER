@@ -1271,6 +1271,21 @@ bool DatabaseMigrator::migrate(QSqlDatabase db, QString *errorMessage) {
     return false;
   }
 
+  // v23: la non-applicabilite au projet devient un etat explicite, distinct
+  // d'une applicabilite de configuration non renseignee.
+  if (version < 23 &&
+      (!addColumnIfMissing(db, "REQUIREMENT", "NOT_APPLICABLE",
+                           "INTEGER NOT NULL DEFAULT 0 CHECK(NOT_APPLICABLE IN (0,1))",
+                           errorMessage) ||
+       !execute(db,
+                "INSERT INTO MIGRATION_REPORT(FROM_VERSION,TO_VERSION,REPORT) "
+                "VALUES(22,23,'Ajout de la non-applicabilite explicite des "
+                "exigences au projet.')",
+                errorMessage))) {
+    db.rollback();
+    return false;
+  }
+
   if (!execute(db, QString("PRAGMA user_version=%1").arg(CurrentVersion),
                errorMessage) ||
       !db.commit()) {

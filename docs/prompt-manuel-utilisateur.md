@@ -243,14 +243,24 @@ Pour une affectation simple :
 
 Une case cochée signifie que l'exigence est applicable à la configuration. Une
 case non cochée signifie qu'aucune applicabilité simple n'est définie pour
-cette configuration.
+cette configuration. Pour déclarer explicitement qu'une exigence est hors du
+périmètre, cocher **Non applicable au projet**. Les configurations sont alors
+grisées et toutes les affectations, y compris les exceptions PT, sont supprimées
+à l'enregistrement.
 
 ### Utiliser la matrice d'applicabilité
 
 Ouvrir **Projet > Applicabilité > Matrice exigences × configurations**. Chaque
 ligne représente une exigence et chaque colonne de configuration indique son
-applicabilité : `✓` signifie applicable et `—` non applicable ou non renseigné.
+applicabilité : `✓` signifie applicable, `—` non renseigné et `N/A` signifie
+explicitement non applicable au projet. Ces exigences sont masquées par défaut ;
+cocher **Afficher les exigences non applicables** pour les réintégrer. La
+colonne **État** et les cellules bleu-gris portent alors le code `N/A`.
 Les filtres de branche Product Tree, document, statut et type sont combinables.
+
+Lorsque **Inclure les exigences obsolètes** est coché, celles-ci sont affichées
+sur fond gris chaud avec le code `OBS`. Une exigence également non applicable
+porte le code combiné `OBS · N/A`. Les exceptions PT restent signalées en jaune.
 
 La matrice est une vue de consultation et de contrôle. Pour modifier
 l'applicabilité, double-cliquer sur une ligne ou une cellule : GeSiER ouvre la
@@ -263,9 +273,10 @@ restent visibles dans la matrice par une mise en évidence de la cellule, mais n
 sont pas modifiables directement depuis cette vue de synthèse.
 
 Le taux affiché correspond au nombre de cellules applicables divisé par le
-nombre total de couples exigences/configurations présents après filtrage. Il
-est donc recalculé à chaque modification des filtres. Il est cliquable pour
-revenir directement au détail de la matrice.
+nombre total de couples exigences/configurations présents après filtrage. Les
+exigences explicitement non applicables au projet sont exclues de ce
+dénominateur. Le taux est recalculé à chaque modification des filtres et reste
+cliquable pour revenir directement au détail de la matrice.
 
 ### Archiver sans perdre les affectations
 
@@ -284,7 +295,7 @@ avant de pouvoir modifier ses associations.
 
 Dans la matrice, les configurations archivées sont masquées par défaut. Cocher
 **Afficher les configurations archivées** pour les inclure ; leurs colonnes
-sont alors grisées et identifiées par la mention `[archivée]`. Ce choix est
+sont alors grisées et identifiées par la mention `[ARCH]`. Ce choix est
 également appliqué à l'export XLSX.
 
 ### Exporter et contrôler
@@ -293,8 +304,8 @@ Depuis la matrice, cliquer sur **Exporter XLSX…**. Le classeur contient :
 
 - une feuille **Synthèse** avec les volumes et le taux d'applicabilité ;
 - une feuille **Détails** avec la matrice filtrée ;
-- une feuille **Anomalies** signalant notamment les exigences qui ne sont
-  applicables à aucune configuration.
+- une feuille **Anomalies** signalant les exigences applicables au projet dont
+  l'applicabilité n'est pas renseignée.
 
 Conseiller à l'utilisateur de vérifier les anomalies et les exigences sans
 configuration avant une revue ou une livraison documentaire.

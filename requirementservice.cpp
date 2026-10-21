@@ -70,7 +70,7 @@ RequirementService::find(const RequirementFilter &filter,
       values << id;
   }
   if (!filter.configurationIds.isEmpty()) {
-    where << "EXISTS(SELECT 1 FROM REQUIREMENT_APPLICABILITY A WHERE "
+    where << "COALESCE(R.NOT_APPLICABLE,0)=0 AND EXISTS(SELECT 1 FROM REQUIREMENT_APPLICABILITY A WHERE "
              "A.REQ_ID=R.ID AND A.CONFIG_ID IN (" +
                  QStringList(filter.configurationIds.size(), "?").join(',') +
                  "))";
@@ -98,6 +98,12 @@ RequirementService::find(const RequirementFilter &filter,
            "EXISTS(SELECT 1 FROM REQUIREMENT_VERIFICATION V WHERE "
            "V.REQ_ID=R.ID AND V.METHOD_ID IS NOT NULL AND "
            "V.VERIFICATION_LEVEL_PT_ID IS NOT NULL)");
+  coverage(filter.applicabilityDefined,
+           "EXISTS(SELECT 1 FROM REQUIREMENT_APPLICABILITY A WHERE "
+           "A.REQ_ID=R.ID)");
+  if (filter.projectApplicable >= 0)
+    where << (filter.projectApplicable ? "COALESCE(R.NOT_APPLICABLE,0)=0"
+                                       : "COALESCE(R.NOT_APPLICABLE,0)=1");
 
   QSqlQuery query(db);
   query.prepare(
@@ -128,7 +134,8 @@ RequirementService::find(const RequirementFilter &filter,
       "EXISTS(SELECT 1 FROM DOCUMENT_NODE N WHERE N.REQ_ID=R.ID),"
       "EXISTS(SELECT 1 FROM REQUIREMENT_VERIFICATION V WHERE V.REQ_ID=R.ID AND "
       "V.METHOD_ID IS NOT NULL AND V.VERIFICATION_LEVEL_PT_ID IS NOT NULL),"
-      "COALESCE(R.IS_TRACE_ROOT,0),COALESCE(R.COMMENTS,'') "
+      "COALESCE(R.IS_TRACE_ROOT,0),COALESCE(R.COMMENTS,''),"
+      "COALESCE(R.NOT_APPLICABLE,0) "
       "FROM REQUIREMENT R WHERE " +
       where.join(" AND ") + " ORDER BY R.CODE");
   for (const QVariant &value : values)
@@ -160,6 +167,9 @@ RequirementService::find(const RequirementFilter &filter,
     r.verified = query.value(16).toBool();
     r.traceRoot = query.value(17).toBool();
     r.comments = query.value(18).toString();
+    r.notApplicable = query.value(19).toBool();
+    if (r.notApplicable)
+      r.applicability = QStringLiteral("Non applicable au projet");
     if (!filter.description.trimmed().isEmpty() &&
         !MarkdownUtility::toPlainText(r.description)
              .contains(filter.description.trimmed(), Qt::CaseInsensitive))
@@ -340,7 +350,7 @@ RequirementResult RequirementService::save(const RequirementRecord &record,
     insert.prepare(
         "INSERT INTO "
         "REQUIREMENT(CODE,TITLE,DESCRIPTION,TYPE,STATUS,SOURCE,IS_TRACE_ROOT,"
-        "COMMENTS) VALUES(?,?,?,?,?,?,?,?)");
+        "COMMENTS,NOT_APPLICABLE) VALUES(?,?,?,?,?,?,?,?,?)");
     insert.addBindValue(record.code.trimmed());
     insert.addBindValue(record.title.trimmed());
     insert.addBindValue(description);
@@ -350,6 +360,7 @@ RequirementResult RequirementService::save(const RequirementRecord &record,
     insert.addBindValue(record.source);
     insert.addBindValue(record.traceRoot ? 1 : 0);
     insert.addBindValue(record.comments);
+    insert.addBindValue(record.notApplicable ? 1 : 0);
     if (!insert.exec()) {
       if (manageTransaction) db.rollback();
       return RequirementResult::failure(insert.lastError().text());
@@ -358,7 +369,7 @@ RequirementResult RequirementService::save(const RequirementRecord &record,
   } else {
     QSqlQuery update(db);
     update.prepare("UPDATE REQUIREMENT SET CODE=?,TITLE=?,DESCRIPTION=?,TYPE=?,"
-                   "STATUS=?,SOURCE=?,IS_TRACE_ROOT=?,COMMENTS=? WHERE ID=?");
+                   "STATUS=?,SOURCE=?,IS_TRACE_ROOT=?,COMMENTS=?,NOT_APPLICABLE=? WHERE ID=?");
     update.addBindValue(record.code.trimmed());
     update.addBindValue(record.title.trimmed());
     update.addBindValue(description);
@@ -367,6 +378,7 @@ RequirementResult RequirementService::save(const RequirementRecord &record,
     update.addBindValue(record.source);
     update.addBindValue(record.traceRoot ? 1 : 0);
     update.addBindValue(record.comments);
+    update.addBindValue(record.notApplicable ? 1 : 0);
     update.addBindValue(id);
     if (!update.exec()) {
       if (manageTransaction) db.rollback();
@@ -395,13 +407,15 @@ RequirementResult RequirementService::save(const RequirementRecord &record,
   QSqlQuery clearApplicability(db);
   // The requirement editor owns only the simple applicability. PT-specific
   // overrides are managed by the matrix and must survive ordinary edits.
-  clearApplicability.prepare("DELETE FROM REQUIREMENT_APPLICABILITY WHERE REQ_ID=? AND PT_ID IS NULL");
+  clearApplicability.prepare(record.notApplicable
+      ? "DELETE FROM REQUIREMENT_APPLICABILITY WHERE REQ_ID=?"
+      : "DELETE FROM REQUIREMENT_APPLICABILITY WHERE REQ_ID=? AND PT_ID IS NULL");
   clearApplicability.addBindValue(id);
   if (!clearApplicability.exec()) {
     if (manageTransaction) db.rollback();
     return RequirementResult::failure(clearApplicability.lastError().text());
   }
-  for (int configurationId : record.configurationIds) {
+  for (int configurationId : record.notApplicable ? QList<int>() : record.configurationIds) {
     QSqlQuery applicability(db);
     applicability.prepare("INSERT INTO REQUIREMENT_APPLICABILITY(REQ_ID,CONFIG_ID,PT_ID,APPLICABLE) VALUES(?,?,NULL,1)");
     applicability.addBindValue(id);

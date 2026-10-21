@@ -8,6 +8,7 @@
 #include <algorithm>
 
 #include "databasemigrator.h"
+#include "auditservice.h"
 #include "applicationlanguage.h"
 #include "producttreeservice.h"
 #include "req_sqlmanager.h"
@@ -80,7 +81,7 @@ class DatabaseMigratorTest : public QObject {
   Q_OBJECT
   QTemporaryDir m_directory;
 private slots:
-  void createsNormalizedVersion22Schema();
+  void createsNormalizedVersion23Schema();
   void removesUnusedConfigurationsInheritedFromModel();
   void storesMarkdownImagesAtomically();
   void migratesLegacySchemaWithoutLosingLinks();
@@ -107,16 +108,16 @@ private slots:
   void roundTripsStructuredDocxCollections();
 };
 
-void DatabaseMigratorTest::createsNormalizedVersion22Schema() {
+void DatabaseMigratorTest::createsNormalizedVersion23Schema() {
   QTemporaryDir directory;
   REQ_SQLManager manager;
-  const auto creation = manager.newDB(directory.filePath("normalized-v22.db"));
+  const auto creation = manager.newDB(directory.filePath("normalized-v23.db"));
   QVERIFY2(creation.type() == QSqlError::NoError, qPrintable(creation.text()));
   QSqlDatabase db = QSqlDatabase::database(manager.currentConnection());
   QSqlQuery q(db);
   QVERIFY(q.exec("PRAGMA user_version"));
   QVERIFY(q.next());
-  QCOMPARE(q.value(0).toInt(), 22);
+  QCOMPARE(q.value(0).toInt(), 23);
   QVERIFY(db.tables().contains("EVENT_SUBJECT"));
 
   const auto columns = [&](const QString &table) {
@@ -128,6 +129,7 @@ void DatabaseMigratorTest::createsNormalizedVersion22Schema() {
   };
   QVERIFY(columns("EVENT_LOG").contains("PAYLOAD_VERSION"));
   const QSet<QString> requirement = columns("REQUIREMENT");
+  QVERIFY(requirement.contains("NOT_APPLICABLE"));
   for (const QString &removed : {"PARENT_ID", "PT_ID", "DOC_ID",
                                  "DOC_CHAPTER", "VERIF_METHOD",
                                  "VERIF_LEVEL", "VERIF_PROCEDURE",
@@ -154,6 +156,15 @@ void DatabaseMigratorTest::createsNormalizedVersion22Schema() {
                  "'UQ_REQ_VERIFICATION_DRAFT')"));
   QVERIFY(q.next());
   QCOMPARE(q.value(0).toInt(), 2);
+  QVERIFY(q.exec("ALTER TABLE REQUIREMENT DROP COLUMN NOT_APPLICABLE"));
+  QVERIFY(q.exec("PRAGMA user_version=22"));
+  QString migrationError;
+  QVERIFY2(DatabaseMigrator::migrate(db, &migrationError),
+           qPrintable(migrationError));
+  QVERIFY(columns("REQUIREMENT").contains("NOT_APPLICABLE"));
+  QVERIFY(q.exec("SELECT COUNT(*) FROM REQUIREMENT WHERE NOT_APPLICABLE<>0"));
+  QVERIFY(q.next());
+  QCOMPARE(q.value(0).toInt(), 0);
   QVERIFY(q.exec("PRAGMA foreign_key_check"));
   QVERIFY(!q.next());
   manager.close();
@@ -646,9 +657,10 @@ void DatabaseMigratorTest::calculatesDashboardCoverageFromOneService() {
   QVERIFY(q.exec("INSERT INTO PT(ID,NAME,SEGMENT) VALUES(1,'System','SYS')"));
   QVERIFY(q.exec("INSERT INTO DOCUMENT(ID,PT_ID,TYPE,TITLE) "
                  "VALUES(1,1,1,'Spécification')"));
-  QVERIFY(q.exec("INSERT INTO REQUIREMENT(ID,CODE,TITLE,TYPE,STATUS,IS_TRACE_ROOT) VALUES"
-                 "(1,'SYS-001','Couverte',1,1,1),"
-                 "(2,'SYS-002','À compléter',2,2,0)"));
+  QVERIFY(q.exec("INSERT INTO REQUIREMENT(ID,CODE,TITLE,TYPE,STATUS,IS_TRACE_ROOT,NOT_APPLICABLE) VALUES"
+                 "(1,'SYS-001','Couverte',1,1,1,0),"
+                 "(2,'SYS-002','À compléter',2,2,0,0),"
+                 "(3,'SYS-003','Hors périmètre',1,1,0,1)"));
   QVERIFY(q.exec("INSERT INTO REQUIREMENT_PT(REQ_ID,PT_ID,IS_PRIMARY) "
                  "VALUES(1,1,1)"));
   QVERIFY(q.exec("INSERT INTO DOCUMENT_NODE(DOC_ID,PARENT_ID,NODE_TYPE,TITLE,"
@@ -674,7 +686,8 @@ void DatabaseMigratorTest::calculatesDashboardCoverageFromOneService() {
     return *std::find_if(metrics.cbegin(), metrics.cend(),
                          [&key](const CoverageMetric &m) { return m.key == key; });
   };
-  QCOMPARE(metric("requirements").total, 2);
+  QCOMPARE(metric("requirements").total, 3);
+  QCOMPARE(metric("allocation").total, 2);
   QCOMPARE(metric("allocation").covered, 1);
   QCOMPARE(metric("allocation").percent(), 50);
   QCOMPARE(metric("traceability").total, 1); // la racine est hors dénominateur
@@ -685,7 +698,8 @@ void DatabaseMigratorTest::calculatesDashboardCoverageFromOneService() {
   QCOMPARE(q.value(0).toInt(), 2);
   const auto snapshot = service.snapshot({}, &error);
   QVERIFY2(error.isEmpty(), qPrintable(error));
-  QCOMPARE(snapshot.requirements, 2);
+  QCOMPARE(snapshot.requirements, 3);
+  QCOMPARE(snapshot.applicableRequirements, 2);
   QCOMPARE(snapshot.documents, 2);
   QCOMPARE(snapshot.documentTypes.size(), 2);
   QCOMPARE(snapshot.documentTypes[0].code, QString("SP"));
@@ -1047,12 +1061,42 @@ void DatabaseMigratorTest::managesApplicabilityAndExportsMatrix() {
   QVERIFY(q.exec(QString("SELECT COUNT(*) FROM REQUIREMENT_APPLICABILITY WHERE REQ_ID=1 AND CONFIG_ID=%1 AND PT_ID=%2").arg(saved.id).arg(pt)));QVERIFY(q.next());QCOMPARE(q.value(0).toInt(),1);
   ApplicabilityFilter filter;filter.ptRootId=pt;const auto rows=service.matrix(filter);QCOMPARE(rows.size(),2);QCOMPARE(rows[0].cells.size(),1);QVERIFY(rows[0].cells[0].applicable);QCOMPARE(rows[0].cells[0].sourcePtId,pt);
   QCOMPARE(service.rate(rows),50.0);
+  QVERIFY(service.setApplicability(2,saved.id,-1,true,"à supprimer").success);
+  QVERIFY(service.setApplicability(2,saved.id,pt,false,"exception à supprimer").success);
+  RequirementRecord excluded=requirements.get(2);excluded.notApplicable=true;
+  QVERIFY(requirements.save(excluded).success);
+  QCOMPARE(service.matrix(filter).size(),1);
+  filter.includeNotApplicableRequirements=true;
+  const auto excludedRows=service.matrix(filter);
+  QVERIFY(excludedRows[1].notApplicable);
+  QCOMPARE(service.rate(excludedRows),100.0);
+  QVERIFY(!service.setApplicability(2,saved.id,-1,true).success);
+  QVERIFY(q.exec("SELECT COUNT(*) FROM REQUIREMENT_APPLICABILITY WHERE REQ_ID=2"));
+  QVERIFY(q.next());QCOMPARE(q.value(0).toInt(),0);
+  QCOMPARE(AuditService::requirementSnapshot(db,2).value("fields").toObject()
+               .value("notApplicable").toInt(),1);
+  excluded=requirements.get(2);excluded.notApplicable=false;
+  QVERIFY(requirements.save(excluded).success);
+  QVERIFY(!requirements.get(2).notApplicable);
+  QCOMPARE(service.rate(service.matrix(filter)),50.0);
+  QVERIFY(q.exec("INSERT INTO REQUIREMENT(ID,CODE,TITLE,TYPE,STATUS,NOT_APPLICABLE) VALUES"
+                 "(3,'REQ-C','Obsolète',1,8,0),(4,'REQ-D','Obsolète N/A',1,8,1)"));
+  QVERIFY(q.exec(QString("INSERT INTO REQUIREMENT_PT(REQ_ID,PT_ID,IS_PRIMARY) VALUES"
+                         "(3,%1,1),(4,%1,1)").arg(pt)));
+  QCOMPARE(service.matrix(filter).size(),2);
+  filter.includeObsoleteRequirements=true;
+  const auto allStates=service.matrix(filter);
+  QCOMPARE(allStates.size(),4);
+  QVERIFY(!allStates[0].obsolete&&!allStates[0].notApplicable);
+  QVERIFY(!allStates[1].obsolete&&!allStates[1].notApplicable);
+  QVERIFY(allStates[2].obsolete&&!allStates[2].notApplicable);
+  QVERIFY(allStates[3].obsolete&&allStates[3].notApplicable);
   QVERIFY(service.setConfigurationActive(saved.id,false).success);
   QCOMPARE(service.configurations(true).size(),1);QVERIFY(!service.configurations(true)[0].active);QCOMPARE(service.configurations(true)[0].useCount,1);
   QCOMPARE(service.matrix(filter)[0].cells.size(),0);
   filter.includeArchivedConfigurations=true;
   QCOMPARE(service.matrix(filter)[0].cells.size(),1);
-  const QString output=directory.filePath("matrix.xlsx");auto exported=service.exportXlsx(output,filter);QVERIFY2(exported.success,qPrintable(exported.message));QZipReader zip(output);QVERIFY(zip.exists());QVERIFY(!zip.fileData("xl/worksheets/sheet1.xml").isEmpty());QVERIFY(!zip.fileData("xl/worksheets/sheet2.xml").isEmpty());QVERIFY(!zip.fileData("xl/worksheets/sheet3.xml").isEmpty());
+  const QString output=directory.filePath("matrix.xlsx");auto exported=service.exportXlsx(output,filter);QVERIFY2(exported.success,qPrintable(exported.message));QZipReader zip(output);QVERIFY(zip.exists());QVERIFY(!zip.fileData("xl/worksheets/sheet1.xml").isEmpty());QVERIFY(!zip.fileData("xl/worksheets/sheet2.xml").isEmpty());QVERIFY(!zip.fileData("xl/worksheets/sheet3.xml").isEmpty());QString xlsxError;const auto sheets=XlsxReader::read(output,&xlsxError);QVERIFY2(xlsxError.isEmpty(),qPrintable(xlsxError));QCOMPARE(sheets[1].rows[0][6],QString("État"));QVERIFY(sheets[1].rows[0][7].contains("[ARCH]"));QCOMPARE(sheets[1].rows[3][6],QString("OBS"));QCOMPARE(sheets[1].rows[4][6],QString("OBS · N/A"));
   QVERIFY(q.exec("SELECT COUNT(*) FROM EVENT_LOG WHERE OBJECT_TYPE='CONFIGURATION'"));QVERIFY(q.next());QVERIFY(q.value(0).toInt()>=2);
   q=QSqlQuery();db=QSqlDatabase();manager.close();
 }

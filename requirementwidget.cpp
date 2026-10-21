@@ -275,6 +275,10 @@ RequirementWidget::RequirementWidget(QWidget *p) : QWidget(p) {
   m_tabs->addTab(documentsPage, "Documents");
 
   m_configurations = new QListWidget;
+  m_notApplicable = new QCheckBox("Non applicable au projet");
+  m_notApplicable->setToolTip(
+      "L'exigence est hors du périmètre du projet et ne contribue à aucun "
+      "taux de couverture.");
   auto *applicabilityPage = new QWidget;
   auto *applicabilityLayout = new QVBoxLayout(applicabilityPage);
   auto *applicabilityHelp = new QLabel(
@@ -282,6 +286,7 @@ RequirementWidget::RequirementWidget(QWidget *p) : QWidget(p) {
       "Les configurations se gèrent dans Projet > Applicabilité.");
   applicabilityHelp->setWordWrap(true);
   applicabilityLayout->addWidget(applicabilityHelp);
+  applicabilityLayout->addWidget(m_notApplicable);
   applicabilityLayout->addWidget(m_configurations);
   m_tabs->addTab(applicabilityPage, "Applicabilité");
   m_changes = new QTableWidget(0, 5);
@@ -525,6 +530,10 @@ RequirementWidget::RequirementWidget(QWidget *p) : QWidget(p) {
     if (m_current >= 0) loadRelationGraph(m_current);
   });
   connect(m_configurations, &QListWidget::itemChanged, this, [this] { if (!m_loading) m_dirty = true; });
+  connect(m_notApplicable, &QCheckBox::toggled, this, [this](bool checked) {
+    m_configurations->setEnabled(!checked);
+    if (!m_loading) m_dirty = true;
+  });
   connect(addToDocument, &QPushButton::clicked, this, [this] {
     if (m_current < 0) return;
     DocumentService service(m_connection); const auto documents = service.documents();
@@ -963,6 +972,8 @@ void RequirementWidget::clearEditor() {
   m_comments->clear();
   m_codeWarning->clear();
   m_traceRoot->setChecked(false);
+  m_notApplicable->setChecked(false);
+  m_configurations->setEnabled(true);
   if (m_status->count())
     m_status->setCurrentIndex(0);
   if (m_type->count())
@@ -1043,6 +1054,7 @@ void RequirementWidget::loadEditor(int id) {
   m_status->setCurrentIndex(qMax(0, m_status->findData(r.statusId)));
   m_type->setCurrentIndex(qMax(0, m_type->findData(r.typeId)));
   m_traceRoot->setChecked(r.traceRoot);
+  m_notApplicable->setChecked(r.notApplicable);
   QTreeWidgetItemIterator it(m_pt);
   while (*it) {
     (*it)->setCheckState(0,
@@ -1059,6 +1071,7 @@ void RequirementWidget::loadEditor(int id) {
   loadRelationGraph(id);
   loadDocuments(id);
   loadApplicability(r.configurationIds);
+  m_configurations->setEnabled(!r.notApplicable);
   loadChanges(id);
   loadHistory(id);
   ProductTreeService pt(m_connection);
@@ -1337,6 +1350,7 @@ RequirementRecord RequirementWidget::editorRecord() const {
   r.statusId = m_status->currentData().toInt();
   r.typeId = m_type->currentData().toInt();
   r.traceRoot = m_traceRoot->isChecked();
+  r.notApplicable = m_notApplicable->isChecked();
   r.primaryPtId = m_primary->currentData().toInt();
   QTreeWidgetItemIterator it(m_pt);
   while (*it) {
@@ -1344,7 +1358,7 @@ RequirementRecord RequirementWidget::editorRecord() const {
       r.ptIds << (*it)->data(0, Qt::UserRole).toInt();
     ++it;
   }
-  for (int row = 0; row < m_configurations->count(); ++row) {
+  for (int row = 0; !r.notApplicable && row < m_configurations->count(); ++row) {
     QListWidgetItem *item = m_configurations->item(row);
     if (item->checkState() == Qt::Checked)
       r.configurationIds << item->data(Qt::UserRole).toInt();

@@ -77,6 +77,7 @@ struct CoverageSnapshot {
   QList<ConfigurationCoverage> configurations;
   VerificationPlanningCoverage verificationPlanning;
   int requirements = 0;
+  int applicableRequirements = 0;
   int documents = 0;
   int changes = 0;
   int openChanges = 0;

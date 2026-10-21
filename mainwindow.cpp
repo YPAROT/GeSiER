@@ -791,6 +791,7 @@ void MainWindow::setupModernNavigation()
             [this](int page, const QString &filter) {
       if (page == RequirementsPage) {
         RequirementFilter f;
+        if (filter != "all") f.projectApplicable = 1;
         if (filter == "unallocated") f.allocated = 0;
         else if (filter == "allocated") f.allocated = 1;
         else if (filter == "untraced") f.traced = 0;
@@ -799,6 +800,8 @@ void MainWindow::setupModernNavigation()
         else if (filter == "documented") f.documented = 1;
         else if (filter == "unverified") f.verified = 0;
         else if (filter == "verified") f.verified = 1;
+        else if (filter == "no-applicability") f.applicabilityDefined = 0;
+        else if (filter == "applicable") f.applicabilityDefined = 1;
         m_requirementWidget->applyFilter(f);
       } else if (page == VerificationPage) {
         m_verificationWidget->applyCoverageFilter(filter);

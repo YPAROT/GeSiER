@@ -20,6 +20,8 @@ struct RequirementFilter {
   int traced = -1;
   int documented = -1;
   int verified = -1;
+  int applicabilityDefined = -1;
+  int projectApplicable = -1;
 };
 struct RequirementVerification {
   int id = -1;
@@ -45,7 +47,7 @@ struct RequirementRecord {
   QString productTrees, verificationMethods, applicability, documents;
   QString documentToolTip;
   bool allocated = false, traced = false, documented = false, verified = false;
-  bool traceRoot = false;
+  bool traceRoot = false, notApplicable = false;
   int typeId = -1, statusId = -1, primaryPtId = -1;
   QList<int> ptIds;
   QList<int> configurationIds;

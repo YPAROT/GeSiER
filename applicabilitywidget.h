@@ -15,7 +15,8 @@ private:
   QString m_connection; ApplicabilityService m_service;
   QTableWidget *m_configurations,*m_matrix,*m_history;
   QComboBox *m_pt,*m_document,*m_status,*m_type;
-  QCheckBox *m_obsolete, *m_archivedConfigurations; QLabel *m_rate; QPushButton *m_archive;
+  QCheckBox *m_obsolete, *m_archivedConfigurations, *m_notApplicableRequirements;
+  QLabel *m_rate; QPushButton *m_archive;
   QList<ConfigurationRecord> m_configurationRecords; QList<ApplicabilityRow> m_rows;
 };
 #endif
