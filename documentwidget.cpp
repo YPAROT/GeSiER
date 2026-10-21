@@ -13,6 +13,12 @@
 
 DocumentWidget::DocumentWidget(QWidget *parent) : QWidget(parent) {
   m_documents = new QListWidget;
+  m_documents->setObjectName("documentList");
+  m_documents->setWordWrap(true);
+  m_documents->setTextElideMode(Qt::ElideNone);
+  m_documents->setUniformItemSizes(false);
+  m_documents->setResizeMode(QListView::Adjust);
+  m_documents->setMaximumWidth(300);
   m_tree = new QTreeWidget;
   m_tree->setObjectName("documentStructureTree");
   m_tree->setHeaderLabels({"Structure du document"});
@@ -22,6 +28,7 @@ DocumentWidget::DocumentWidget(QWidget *parent) : QWidget(parent) {
   m_reference = new QLineEdit;
   m_title = new QLineEdit;
   m_template = new QLineEdit;
+  m_template->setObjectName("documentTemplatePath");
   m_secondary = new QLineEdit;
   m_description = new QTextEdit;
   m_metadata = new QTableWidget(0, 2);
@@ -31,6 +38,7 @@ DocumentWidget::DocumentWidget(QWidget *parent) : QWidget(parent) {
   m_pt = new QComboBox;
   auto *addDocument = new QPushButton("Nouveau document");
   auto *save = new QPushButton("Enregistrer");
+  save->setObjectName("documentSaveButton");
   auto *addChapter = new QPushButton("Ajouter un chapitre");
   addChapter->setToolTip("Ajoute un chapitre au même niveau que la sélection");
   auto *addSubchapter = new QPushButton("Ajouter un sous-chapitre");
@@ -52,11 +60,20 @@ DocumentWidget::DocumentWidget(QWidget *parent) : QWidget(parent) {
       "Les exigences obsolètes exportées apparaîtront en gris dans le document Word.");
   auto *history = new QPushButton("Historique des exports");
   auto *exportTable = new QPushButton("Exporter CSV/XLSX");
-  auto *addMetadata = new QPushButton("+ Métadonnée");
-  auto *removeMetadata = new QPushButton("− Métadonnée");
+  auto *addMetadata = new QPushButton("+ Ajouter");
+  addMetadata->setObjectName("addDocumentMetadataButton");
+  addMetadata->setToolTip("Ajouter une métadonnée au document");
+  addMetadata->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+  auto *removeMetadata = new QPushButton("− Supprimer");
+  removeMetadata->setObjectName("removeDocumentMetadataButton");
+  removeMetadata->setToolTip("Supprimer la métadonnée sélectionnée");
+  removeMetadata->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
   auto *remove = new QPushButton("Retirer");
   auto *left = new QWidget;
+  left->setObjectName("documentListPanel");
+  left->setMaximumWidth(300);
   auto *leftLayout = new QVBoxLayout(left);
+  leftLayout->setContentsMargins(0, 0, 0, 0);
   leftLayout->addWidget(addDocument);
   leftLayout->addWidget(m_documents);
   auto *properties = new QFormLayout;
@@ -66,40 +83,108 @@ DocumentWidget::DocumentWidget(QWidget *parent) : QWidget(parent) {
   properties->addRow("Type", m_type);
   properties->addRow("Product Tree", m_pt);
   properties->addRow("Description", m_description);
-  auto *templateRow=new QHBoxLayout;templateRow->addWidget(m_template);templateRow->addWidget(chooseTemplate);templateRow->addWidget(validateTemplate);
-  properties->addRow("Template DOCX",templateRow);
   auto *metadataActions = new QHBoxLayout;
-  metadataActions->addWidget(addMetadata); metadataActions->addWidget(removeMetadata);
-  auto *metadataBox = new QVBoxLayout; metadataBox->addWidget(m_metadata); metadataBox->addLayout(metadataActions);
+  metadataActions->addWidget(addMetadata);
+  metadataActions->addWidget(removeMetadata);
+  metadataActions->addStretch();
+  auto *metadataBox = new QVBoxLayout;
+  metadataBox->addLayout(metadataActions);
+  metadataBox->addWidget(m_metadata);
   properties->addRow("Métadonnées", metadataBox);
-  auto *treeActions = new QHBoxLayout;
-  treeActions->addWidget(addChapter);
-  treeActions->addWidget(addSubchapter);
-  treeActions->addWidget(promote);
-  treeActions->addWidget(demote);
-  treeActions->addWidget(addRequirement);
-  treeActions->addWidget(addText);
-  treeActions->addWidget(addImage);
-  treeActions->addWidget(remove);
-  treeActions->addStretch();
-  treeActions->addWidget(preview);
-  treeActions->addWidget(m_exportObsolete);
-  treeActions->addWidget(draft);
-  treeActions->addWidget(publish);
-  treeActions->addWidget(history);
-  treeActions->addWidget(exportTable);
-  treeActions->addWidget(save);
+
+  auto *structureGroup = new QGroupBox("Trame");
+  structureGroup->setObjectName("documentStructureActions");
+  structureGroup->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+  auto *structureActions = new QHBoxLayout(structureGroup);
+  structureActions->addWidget(addChapter);
+  structureActions->addWidget(addSubchapter);
+  structureActions->addWidget(promote);
+  structureActions->addWidget(demote);
+  structureActions->addStretch();
+  auto *contentGroup = new QGroupBox("Contenu");
+  contentGroup->setObjectName("documentContentActions");
+  contentGroup->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+  auto *contentActions = new QHBoxLayout(contentGroup);
+  contentActions->addWidget(addRequirement);
+  contentActions->addWidget(addText);
+  contentActions->addWidget(addImage);
+  contentActions->addWidget(remove);
+  contentActions->addStretch();
+  auto *editPage = new QWidget;
+  editPage->setObjectName("documentEditActions");
+  auto *editLayout = new QHBoxLayout(editPage);
+  editLayout->setContentsMargins(6, 6, 6, 6);
+  editLayout->addWidget(structureGroup);
+  editLayout->addWidget(contentGroup);
+  editLayout->addWidget(save, 0, Qt::AlignRight | Qt::AlignVCenter);
+
+  auto *templateGroup = new QGroupBox("Template DOCX");
+  templateGroup->setObjectName("documentTemplateGroup");
+  templateGroup->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+  auto *templateRow = new QHBoxLayout(templateGroup);
+  templateRow->addWidget(m_template, 1);
+  templateRow->addWidget(chooseTemplate);
+  templateRow->addWidget(validateTemplate);
+  auto *generationGroup = new QGroupBox("Génération");
+  generationGroup->setObjectName("documentGenerationActions");
+  generationGroup->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+  auto *generationActions = new QHBoxLayout(generationGroup);
+  generationActions->addWidget(preview);
+  generationActions->addWidget(m_exportObsolete);
+  generationActions->addStretch();
+  generationActions->addWidget(draft);
+  generationActions->addWidget(publish);
+  auto *otherExportsGroup = new QGroupBox("Données et historique");
+  otherExportsGroup->setObjectName("documentOtherExportActions");
+  otherExportsGroup->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+  auto *otherExports = new QHBoxLayout(otherExportsGroup);
+  otherExports->addWidget(history);
+  otherExports->addWidget(exportTable);
+  otherExports->addStretch();
+  auto *exportPage = new QWidget;
+  exportPage->setObjectName("documentExportActions");
+  auto *exportLayout = new QVBoxLayout(exportPage);
+  exportLayout->setContentsMargins(6, 6, 6, 6);
+  exportLayout->addWidget(templateGroup);
+  exportLayout->addWidget(generationGroup);
+  exportLayout->addWidget(otherExportsGroup);
+
+  auto *actionTabs = new QTabWidget;
+  actionTabs->setObjectName("documentActionTabs");
+  actionTabs->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+  actionTabs->addTab(editPage, "Édition");
+  actionTabs->addTab(exportPage, "Export");
+  auto fitActionTabs = [actionTabs](int index) {
+    QWidget *page = actionTabs->widget(index);
+    if (!page)
+      return;
+    const int frameWidth = actionTabs->style()->pixelMetric(
+        QStyle::PM_DefaultFrameWidth, nullptr, actionTabs);
+    const int height = actionTabs->tabBar()->sizeHint().height() +
+                       page->sizeHint().height() +
+                       2 * frameWidth + 4;
+    actionTabs->setFixedHeight(height);
+  };
+  connect(actionTabs, &QTabWidget::currentChanged, this, fitActionTabs);
+  fitActionTabs(0);
   auto *right = new QWidget;
   auto *rightLayout = new QVBoxLayout(right);
   rightLayout->addLayout(properties);
-  rightLayout->addLayout(treeActions);
-  rightLayout->addWidget(m_tree);
+  rightLayout->addWidget(actionTabs);
+  rightLayout->addWidget(m_tree, 1);
   auto *splitter = new QSplitter;
+  splitter->setObjectName("documentSplitter");
   splitter->addWidget(left);
   splitter->addWidget(right);
   splitter->setStretchFactor(1, 1);
+  splitter->setSizes({300, 1200});
+  splitter->restoreState(
+      QSettings().value("Documents/splitter").toByteArray());
   auto *layout = new QVBoxLayout(this);
   layout->addWidget(splitter);
+  connect(splitter, &QSplitter::splitterMoved, this, [splitter] {
+    QSettings().setValue("Documents/splitter", splitter->saveState());
+  });
   connect(m_documents, &QListWidget::currentRowChanged, this, [this](int row) {
     if (row >= 0)
       loadDocument(m_documents->item(row)->data(Qt::UserRole).toInt());
@@ -368,8 +453,10 @@ void DocumentWidget::refresh() {
   QSqlQuery pts("SELECT ID FROM PT WHERE ARCHIVED=0 ORDER BY POSITION,SEGMENT", QSqlDatabase::database(m_connection, false));
   while (pts.next()) m_pt->addItem(tree.fullCode(pts.value(0).toInt()), pts.value(0));
   for (const DocumentRecord &record : m_service.documents()) {
-    auto *item = new QListWidgetItem(record.reference + " — " + record.title);
+    auto *item =
+        new QListWidgetItem(record.reference + "\n" + record.title);
     item->setData(Qt::UserRole, record.id);
+    item->setToolTip({});
     m_documents->addItem(item);
   }
   if (selectedDocument >= 0)

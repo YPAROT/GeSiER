@@ -8,6 +8,7 @@
 #include <QHeaderView>
 #include <QLineEdit>
 #include <QLabel>
+#include <QListWidget>
 #include <QMenu>
 #include <QPushButton>
 #include <QPlainTextEdit>
@@ -15,10 +16,12 @@
 #include <QTimer>
 #include <QSettings>
 #include <QSpinBox>
+#include <QSplitter>
 #include <QSqlDatabase>
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QTableWidget>
+#include <QTabWidget>
 #include <QTemporaryDir>
 #include <QTextBrowser>
 #include <QTextEdit>
@@ -122,7 +125,71 @@ void RequirementWidgetTest::marksObsoleteRequirementsInDocumentTree() {
   widget.setConnectionName(manager.currentConnection());
   widget.openDocument(1);
   auto *tree = widget.findChild<QTreeWidget *>("documentStructureTree");
+  auto *documents = widget.findChild<QListWidget *>("documentList");
+  auto *listPanel = widget.findChild<QWidget *>("documentListPanel");
+  auto *splitter = widget.findChild<QSplitter *>("documentSplitter");
+  auto *tabs = widget.findChild<QTabWidget *>("documentActionTabs");
+  auto *editPage = widget.findChild<QWidget *>("documentEditActions");
+  auto *exportPage = widget.findChild<QWidget *>("documentExportActions");
+  auto *templatePath = widget.findChild<QLineEdit *>("documentTemplatePath");
+  auto *templateGroup =
+      widget.findChild<QWidget *>("documentTemplateGroup");
+  auto *save = widget.findChild<QPushButton *>("documentSaveButton");
+  auto *addMetadata =
+      widget.findChild<QPushButton *>("addDocumentMetadataButton");
+  auto *removeMetadata =
+      widget.findChild<QPushButton *>("removeDocumentMetadataButton");
   QVERIFY(tree);
+  QVERIFY(documents);
+  QVERIFY(listPanel);
+  QVERIFY(splitter);
+  QVERIFY(tabs);
+  QVERIFY(editPage);
+  QVERIFY(exportPage);
+  QVERIFY(templatePath);
+  QVERIFY(templateGroup);
+  QVERIFY(save);
+  QVERIFY(addMetadata);
+  QVERIFY(removeMetadata);
+  QCOMPARE(addMetadata->sizePolicy().horizontalPolicy(), QSizePolicy::Fixed);
+  QCOMPARE(removeMetadata->sizePolicy().horizontalPolicy(), QSizePolicy::Fixed);
+  QCOMPARE(addMetadata->text(), QString("+ Ajouter"));
+  QCOMPARE(removeMetadata->text(), QString("− Supprimer"));
+  QCOMPARE(listPanel->maximumWidth(), 300);
+  QCOMPARE(documents->maximumWidth(), 300);
+  QVERIFY(documents->wordWrap());
+  QCOMPARE(documents->textElideMode(), Qt::ElideNone);
+  QCOMPARE(documents->count(), 1);
+  QCOMPARE(documents->item(0)->text(), QString("SPEC-1\nSpécification"));
+  QVERIFY(documents->item(0)->toolTip().isEmpty());
+  QCOMPARE(tabs->count(), 2);
+  QCOMPARE(tabs->tabText(0), QString("Édition"));
+  QCOMPARE(tabs->tabText(1), QString("Export"));
+  QCOMPARE(tabs->widget(0), editPage);
+  QCOMPARE(tabs->widget(1), exportPage);
+  QVERIFY(templateGroup->isAncestorOf(templatePath));
+  QVERIFY(exportPage->isAncestorOf(templateGroup));
+  QVERIFY(tabs->isAncestorOf(save));
+  QVERIFY(editPage->isAncestorOf(save));
+  QVERIFY(!exportPage->isAncestorOf(save));
+  QVERIFY(!widget.findChild<QWidget *>("documentContentActions")
+               ->isAncestorOf(save));
+  QVERIFY(!widget.findChild<QWidget *>("documentStructureActions")
+               ->isAncestorOf(save));
+  QCOMPARE(widget.findChild<QWidget *>("documentStructureActions")
+               ->sizePolicy()
+               .verticalPolicy(),
+           QSizePolicy::Fixed);
+  QCOMPARE(widget.findChild<QWidget *>("documentContentActions")
+               ->sizePolicy()
+               .verticalPolicy(),
+           QSizePolicy::Fixed);
+  widget.resize(1200, 800);
+  widget.show();
+  QCoreApplication::processEvents();
+  splitter->setSizes({220, 980});
+  QCoreApplication::processEvents();
+  QVERIFY(splitter->sizes().first() < 300);
   QCOMPARE(tree->topLevelItemCount(), 2);
   QCOMPARE(tree->topLevelItem(0)->text(0), QString("REQ-ACT — Active"));
   QCOMPARE(tree->topLevelItem(0)->foreground(0).color(),

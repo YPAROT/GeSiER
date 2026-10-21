@@ -725,7 +725,9 @@ void MainWindow::setupModernNavigation()
     dashboardLayout->addWidget(m_coverageDashboard,1);
 
     QWidget *projectPage=new QWidget(this);QHBoxLayout *projectLayout=new QHBoxLayout(projectPage);
-    m_projectNavigation=new QListWidget(projectPage);m_projectNavigation->setMaximumWidth(210);
+    m_projectNavigation=new QListWidget(projectPage);
+    m_projectNavigation->setObjectName("projectNavigation");
+    m_projectNavigation->setMaximumWidth(165);
     m_projectPages=new QStackedWidget(projectPage);
     m_productTreeWidget=new ProductTreeWidget(projectPage);
     m_requirementWidget=new RequirementWidget(projectPage);
