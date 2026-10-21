@@ -2,6 +2,7 @@
 #include "documentcreationdialog.h"
 #include "docxexportservice.h"
 #include "imageeditdialog.h"
+#include "markdownutility.h"
 #include "producttreeservice.h"
 #include "tabularservice.h"
 #include "tabularexportdialog.h"
@@ -12,6 +13,161 @@
 #include <functional>
 
 namespace {
+struct RequirementChoice {
+  int id = -1;
+  QString code;
+  QString title;
+  QString description;
+  QList<int> productTreeIds;
+  QString productTrees;
+};
+
+int chooseRequirementForDocument(QWidget *parent,
+                                 const QString &connectionName) {
+  const QSqlDatabase db = QSqlDatabase::database(connectionName, false);
+  QList<RequirementChoice> choices;
+  QSqlQuery query(db);
+  query.prepare(
+      "SELECT R.ID,R.CODE,R.TITLE,R.DESCRIPTION,"
+      "COALESCE(GROUP_CONCAT(RP.PT_ID,','), '') "
+      "FROM REQUIREMENT R "
+      "LEFT JOIN REQUIREMENT_PT RP ON RP.REQ_ID=R.ID "
+      "GROUP BY R.ID,R.CODE,R.TITLE,R.DESCRIPTION ORDER BY R.CODE");
+  if (query.exec()) {
+    ProductTreeService productTrees(connectionName);
+    QHash<int, QString> productTreeCodes;
+    while (query.next()) {
+      RequirementChoice choice;
+      choice.id = query.value(0).toInt();
+      choice.code = query.value(1).toString();
+      choice.title = query.value(2).toString();
+      choice.description = MarkdownUtility::toPlainText(query.value(3).toString());
+      for (const QString &value :
+           query.value(4).toString().split(',', Qt::SkipEmptyParts)) {
+        const int productTreeId = value.toInt();
+        choice.productTreeIds << productTreeId;
+        if (!productTreeCodes.contains(productTreeId))
+          productTreeCodes.insert(productTreeId,
+                                  productTrees.fullCode(productTreeId));
+        const QString code = productTreeCodes.value(productTreeId);
+        if (!code.isEmpty())
+          choice.productTrees +=
+              (choice.productTrees.isEmpty() ? QString() : " | ") + code;
+      }
+      choices << choice;
+    }
+  }
+
+  QDialog dialog(parent);
+  dialog.setObjectName("documentRequirementPicker");
+  dialog.setWindowTitle("Ajouter une exigence");
+  dialog.resize(1050, 600);
+  auto *codeFilter = new QLineEdit;
+  codeFilter->setObjectName("documentRequirementCodeFilter");
+  codeFilter->setPlaceholderText("Référence / code…");
+  auto *titleFilter = new QLineEdit;
+  titleFilter->setObjectName("documentRequirementTitleFilter");
+  titleFilter->setPlaceholderText("Titre…");
+  auto *productTreeFilter = new QComboBox;
+  productTreeFilter->setObjectName("documentRequirementPtFilter");
+  productTreeFilter->addItem("Tous les Product Trees", -1);
+  ProductTreeService productTrees(connectionName);
+  QSqlQuery productTreeQuery(
+      "SELECT ID,ARCHIVED FROM PT ORDER BY ARCHIVED,POSITION,SEGMENT", db);
+  while (productTreeQuery.next()) {
+    const int id = productTreeQuery.value(0).toInt();
+    QString label = productTrees.fullCode(id);
+    if (productTreeQuery.value(1).toBool())
+      label += " [Archivé]";
+    productTreeFilter->addItem(label, id);
+  }
+  auto *descriptionFilter = new QLineEdit;
+  descriptionFilter->setObjectName("documentRequirementDescriptionFilter");
+  descriptionFilter->setPlaceholderText("Description…");
+  auto *filters = new QGridLayout;
+  filters->addWidget(new QLabel("Référence / code"), 0, 0);
+  filters->addWidget(new QLabel("Titre"), 0, 1);
+  filters->addWidget(new QLabel("Product Tree"), 0, 2);
+  filters->addWidget(new QLabel("Description"), 0, 3);
+  filters->addWidget(codeFilter, 1, 0);
+  filters->addWidget(titleFilter, 1, 1);
+  filters->addWidget(productTreeFilter, 1, 2);
+  filters->addWidget(descriptionFilter, 1, 3);
+
+  auto *results = new QTableWidget(0, 4);
+  results->setObjectName("documentRequirementResults");
+  results->setHorizontalHeaderLabels(
+      {"Référence / code", "Titre", "Product Trees", "Description"});
+  results->setSelectionBehavior(QAbstractItemView::SelectRows);
+  results->setSelectionMode(QAbstractItemView::SingleSelection);
+  results->setEditTriggers(QAbstractItemView::NoEditTriggers);
+  results->verticalHeader()->hide();
+  results->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+  results->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+  results->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+  results->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Stretch);
+  auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok |
+                                       QDialogButtonBox::Cancel);
+  buttons->button(QDialogButtonBox::Ok)->setEnabled(false);
+  auto *layout = new QVBoxLayout(&dialog);
+  layout->addLayout(filters);
+  layout->addWidget(results, 1);
+  layout->addWidget(buttons);
+
+  auto reload = [&] {
+    const QString code = codeFilter->text().trimmed();
+    const QString title = titleFilter->text().trimmed();
+    const QString description = descriptionFilter->text().trimmed();
+    const int productTreeId = productTreeFilter->currentData().toInt();
+    results->setRowCount(0);
+    for (const RequirementChoice &choice : choices) {
+      if (!code.isEmpty() &&
+          !choice.code.contains(code, Qt::CaseInsensitive))
+        continue;
+      if (!title.isEmpty() &&
+          !choice.title.contains(title, Qt::CaseInsensitive))
+        continue;
+      if (!description.isEmpty() &&
+          !choice.description.contains(description, Qt::CaseInsensitive))
+        continue;
+      if (productTreeId >= 0 &&
+          !choice.productTreeIds.contains(productTreeId))
+        continue;
+      const int row = results->rowCount();
+      results->insertRow(row);
+      const QStringList values{choice.code, choice.title, choice.productTrees,
+                               choice.description};
+      for (int column = 0; column < values.size(); ++column) {
+        auto *item = new QTableWidgetItem(values[column]);
+        item->setData(Qt::UserRole, choice.id);
+        results->setItem(row, column, item);
+      }
+    }
+    buttons->button(QDialogButtonBox::Ok)->setEnabled(false);
+  };
+  QObject::connect(codeFilter, &QLineEdit::textChanged, &dialog, reload);
+  QObject::connect(titleFilter, &QLineEdit::textChanged, &dialog, reload);
+  QObject::connect(descriptionFilter, &QLineEdit::textChanged, &dialog,
+                   reload);
+  QObject::connect(productTreeFilter,
+                   QOverload<int>::of(&QComboBox::currentIndexChanged),
+                   &dialog, [reload](int) { reload(); });
+  QObject::connect(results, &QTableWidget::itemSelectionChanged, &dialog, [=] {
+    buttons->button(QDialogButtonBox::Ok)
+        ->setEnabled(results->currentRow() >= 0);
+  });
+  QObject::connect(results, &QTableWidget::cellDoubleClicked, &dialog,
+                   [&dialog](int, int) { dialog.accept(); });
+  QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog,
+                   &QDialog::accept);
+  QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog,
+                   &QDialog::reject);
+  reload();
+  if (dialog.exec() != QDialog::Accepted || results->currentRow() < 0)
+    return -1;
+  return results->item(results->currentRow(), 0)->data(Qt::UserRole).toInt();
+}
+
 class DocumentTreeWidget final : public QTreeWidget {
 public:
   std::function<void(QTreeWidgetItem *)> itemDropped;
@@ -71,6 +227,7 @@ DocumentWidget::DocumentWidget(QWidget *parent) : QWidget(parent) {
   auto *demote = new QPushButton("Niveau +");
   demote->setToolTip("Placer le chapitre sélectionné sous le chapitre précédent");
   auto *addRequirement = new QPushButton("Ajouter une exigence");
+  addRequirement->setObjectName("addRequirementToDocumentButton");
   auto *addText = new QPushButton("Ajouter du texte");
   auto *addImage = new QPushButton("Ajouter une image");
   auto *preview = new QPushButton("Prévisualiser");
@@ -318,14 +475,10 @@ DocumentWidget::DocumentWidget(QWidget *parent) : QWidget(parent) {
   });
   connect(addRequirement, &QPushButton::clicked, this, [this] {
     if (m_current < 0) return;
-    QSqlQuery query("SELECT ID,CODE||' — '||TITLE FROM REQUIREMENT ORDER BY CODE", QSqlDatabase::database(m_connection, false));
-    QStringList labels; QList<int> ids;
-    while (query.next()) { ids << query.value(0).toInt(); labels << query.value(1).toString(); }
-    bool ok = false;
-    const QString choice = QInputDialog::getItem(this, "Ajouter une exigence", "Exigence", labels, 0, false, &ok);
-    const int index = labels.indexOf(choice);
-    if (ok && index >= 0) {
-      const RequirementResult result = m_service.placeRequirement(m_current, selectedContainer(), ids[index]);
+    const int requirementId = chooseRequirementForDocument(this, m_connection);
+    if (requirementId >= 0) {
+      const RequirementResult result = m_service.placeRequirement(
+          m_current, selectedContainer(), requirementId);
       if (!result.success) QMessageBox::warning(this, "Document", result.message);
       else { loadTree(m_current); emit dataChanged(); }
     }

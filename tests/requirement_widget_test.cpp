@@ -113,10 +113,14 @@ void RequirementWidgetTest::marksObsoleteRequirementsInDocumentTree() {
                          .arg(ptId)));
   QVERIFY(query.exec("INSERT INTO DOCUMENT_REFERENCE(DOC_ID,REFERENCE,IS_PRIMARY) VALUES(1,'SPEC-1',1)"));
   QVERIFY(query.exec(QString(
-      "INSERT INTO REQUIREMENT(ID,CODE,TITLE,TYPE,STATUS) VALUES"
-      "(1,'REQ-ACT','Active',1,1),"
-      "(2,'REQ-OBS','Ancienne',1,"
+      "INSERT INTO REQUIREMENT(ID,CODE,TITLE,DESCRIPTION,TYPE,STATUS) VALUES"
+      "(1,'REQ-ACT','Active','Description active',1,1),"
+      "(2,'REQ-OBS','Ancienne','Description obsolète',1,"
       "(SELECT ID FROM REQ_STATUS WHERE UPPER(SHORTCUT)='O' LIMIT 1))")));
+  QVERIFY(query.exec(QString(
+      "INSERT INTO REQUIREMENT_PT(REQ_ID,PT_ID,IS_PRIMARY) VALUES"
+      "(1,%1,1),(2,%1,1)")
+                         .arg(ptId)));
   DocumentService service(manager.currentConnection());
   QVERIFY(service.placeRequirement(1, -1, 1).success);
   QVERIFY(service.placeRequirement(1, -1, 2).success);
@@ -135,6 +139,8 @@ void RequirementWidgetTest::marksObsoleteRequirementsInDocumentTree() {
   auto *templateGroup =
       widget.findChild<QWidget *>("documentTemplateGroup");
   auto *save = widget.findChild<QPushButton *>("documentSaveButton");
+  auto *addRequirement =
+      widget.findChild<QPushButton *>("addRequirementToDocumentButton");
   auto *addMetadata =
       widget.findChild<QPushButton *>("addDocumentMetadataButton");
   auto *removeMetadata =
@@ -149,6 +155,7 @@ void RequirementWidgetTest::marksObsoleteRequirementsInDocumentTree() {
   QVERIFY(templatePath);
   QVERIFY(templateGroup);
   QVERIFY(save);
+  QVERIFY(addRequirement);
   QVERIFY(addMetadata);
   QVERIFY(removeMetadata);
   QCOMPARE(addMetadata->sizePolicy().horizontalPolicy(), QSizePolicy::Fixed);
@@ -190,6 +197,43 @@ void RequirementWidgetTest::marksObsoleteRequirementsInDocumentTree() {
   splitter->setSizes({220, 980});
   QCoreApplication::processEvents();
   QVERIFY(splitter->sizes().first() < 300);
+  bool pickerInspected = false;
+  QTimer::singleShot(0, [&] {
+    auto *picker = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+    QVERIFY(picker);
+    QCOMPARE(picker->objectName(), QString("documentRequirementPicker"));
+    auto *codeFilter =
+        picker->findChild<QLineEdit *>("documentRequirementCodeFilter");
+    auto *titleFilter =
+        picker->findChild<QLineEdit *>("documentRequirementTitleFilter");
+    auto *ptFilter =
+        picker->findChild<QComboBox *>("documentRequirementPtFilter");
+    auto *descriptionFilter = picker->findChild<QLineEdit *>(
+        "documentRequirementDescriptionFilter");
+    auto *results =
+        picker->findChild<QTableWidget *>("documentRequirementResults");
+    QVERIFY(codeFilter);
+    QVERIFY(titleFilter);
+    QVERIFY(ptFilter);
+    QVERIFY(descriptionFilter);
+    QVERIFY(results);
+    QCOMPARE(results->rowCount(), 2);
+    codeFilter->setText("OBS");
+    QCOMPARE(results->rowCount(), 1);
+    codeFilter->clear();
+    titleFilter->setText("Active");
+    QCOMPARE(results->rowCount(), 1);
+    titleFilter->clear();
+    descriptionFilter->setText("obsolète");
+    QCOMPARE(results->rowCount(), 1);
+    descriptionFilter->clear();
+    ptFilter->setCurrentIndex(ptFilter->findData(ptId));
+    QCOMPARE(results->rowCount(), 2);
+    pickerInspected = true;
+    picker->reject();
+  });
+  QTest::mouseClick(addRequirement, Qt::LeftButton);
+  QVERIFY(pickerInspected);
   QCOMPARE(tree->topLevelItemCount(), 2);
   QCOMPARE(tree->topLevelItem(0)->text(0), QString("REQ-ACT — Active"));
   QCOMPARE(tree->topLevelItem(0)->foreground(0).color(),
