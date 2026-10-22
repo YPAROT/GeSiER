@@ -1,9 +1,8 @@
 #include "requirementservice.h"
 #include "auditservice.h"
-#include "producttreeservice.h"
+#include "requirementcodeformat.h"
 #include "markdownutility.h"
 
-#include <QRegularExpression>
 #include <QImage>
 #include <QSet>
 #include <QSqlDatabase>
@@ -259,18 +258,19 @@ QString RequirementService::suggestCode(int ptId) const {
   if (ptId < 0)
     return {};
   QSqlDatabase db = QSqlDatabase::database(m_connectionName);
-  ProductTreeService pt(m_connectionName);
-  int number = 1;
+  RequirementCodeFormatService formatService(m_connectionName);
+  const RequirementCodeFormat format = formatService.format();
+  int number = 0;
   QSqlQuery sequence(db);
   sequence.prepare(
       "SELECT NEXT_VALUE FROM REQUIREMENT_CODE_SEQUENCE WHERE PT_ID=?");
   sequence.addBindValue(ptId);
   if (sequence.exec() && sequence.next())
     number = sequence.value(0).toInt();
-  while (number < 100000) {
-    QString code = QString("%1-R-%2")
-                       .arg(pt.fullCode(ptId))
-                       .arg(number++, 4, 10, QChar('0'));
+  qlonglong limit = 1;
+  for (int i = 0; i < format.digits; ++i) limit *= 10;
+  while (number >= 0 && number < limit) {
+    QString code = formatService.code(ptId, number++);
     QSqlQuery used(db);
     used.prepare("SELECT 1 FROM REQUIREMENT WHERE CODE=? COLLATE NOCASE");
     used.addBindValue(code);
@@ -278,6 +278,11 @@ QString RequirementService::suggestCode(int ptId) const {
       return code;
   }
   return {};
+}
+
+RequirementCodeValidation RequirementService::validateCode(const QString &code,
+                                                             int ptId) const {
+  return RequirementCodeFormatService(m_connectionName).validate(code, ptId);
 }
 
 RequirementResult RequirementService::save(const RequirementRecord &record,
@@ -334,7 +339,6 @@ RequirementResult RequirementService::save(const RequirementRecord &record,
   if (manageTransaction && !db.transaction())
     return RequirementResult::failure(db.lastError().text());
   int id = record.id;
-  ProductTreeService pt(m_connectionName);
   if (id < 0) {
     QSqlQuery defaults(db);
     if (!defaults.exec(
@@ -477,17 +481,15 @@ RequirementResult RequirementService::save(const RequirementRecord &record,
       return RequirementResult::failure(insertImage.lastError().text());
     }
   }
-  QRegularExpression automatic(
-      "^" + QRegularExpression::escape(pt.fullCode(record.primaryPtId)) +
-      "-R-(\\d{4,})$");
-  auto match = automatic.match(record.code.trimmed());
-  if (match.hasMatch()) {
+  const RequirementCodeValidation codeValidation =
+      validateCode(record.code.trimmed(), record.primaryPtId);
+  if (codeValidation.conforming) {
     QSqlQuery sequence(db);
     sequence.prepare("INSERT INTO REQUIREMENT_CODE_SEQUENCE(PT_ID,NEXT_VALUE) "
                      "VALUES(?,?) ON CONFLICT(PT_ID) DO UPDATE SET "
                      "NEXT_VALUE=MAX(NEXT_VALUE,excluded.NEXT_VALUE)");
     sequence.addBindValue(record.primaryPtId);
-    sequence.addBindValue(match.captured(1).toInt() + 1);
+    sequence.addBindValue(codeValidation.index + 1);
     if (!sequence.exec()) {
       if (manageTransaction) db.rollback();
       return RequirementResult::failure(sequence.lastError().text());

@@ -3,6 +3,7 @@
 #include <QList>
 #include <QByteArray>
 #include <QString>
+#include "requirementcodeformat.h"
 
 struct RequirementFilter {
   QString code;
@@ -84,6 +85,7 @@ public:
                                 QString *error = nullptr) const;
   RequirementRecord get(int id, QString *error = nullptr) const;
   QString suggestCode(int ptId) const;
+  RequirementCodeValidation validateCode(const QString &code, int ptId) const;
   RequirementResult save(const RequirementRecord &, bool manageTransaction = true);
   RequirementResult setObsolete(int id);
 

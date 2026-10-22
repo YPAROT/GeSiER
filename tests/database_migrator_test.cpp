@@ -81,7 +81,8 @@ class DatabaseMigratorTest : public QObject {
   Q_OBJECT
   QTemporaryDir m_directory;
 private slots:
-  void createsNormalizedVersion23Schema();
+  void createsNormalizedVersion24Schema();
+  void configuresRequirementCodeFormat();
   void removesUnusedConfigurationsInheritedFromModel();
   void storesMarkdownImagesAtomically();
   void migratesLegacySchemaWithoutLosingLinks();
@@ -108,7 +109,7 @@ private slots:
   void roundTripsStructuredDocxCollections();
 };
 
-void DatabaseMigratorTest::createsNormalizedVersion23Schema() {
+void DatabaseMigratorTest::createsNormalizedVersion24Schema() {
   QTemporaryDir directory;
   REQ_SQLManager manager;
   const auto creation = manager.newDB(directory.filePath("normalized-v23.db"));
@@ -117,7 +118,7 @@ void DatabaseMigratorTest::createsNormalizedVersion23Schema() {
   QSqlQuery q(db);
   QVERIFY(q.exec("PRAGMA user_version"));
   QVERIFY(q.next());
-  QCOMPARE(q.value(0).toInt(), 23);
+  QCOMPARE(q.value(0).toInt(), 24);
   QVERIFY(db.tables().contains("EVENT_SUBJECT"));
 
   const auto columns = [&](const QString &table) {
@@ -167,6 +168,54 @@ void DatabaseMigratorTest::createsNormalizedVersion23Schema() {
   QCOMPARE(q.value(0).toInt(), 0);
   QVERIFY(q.exec("PRAGMA foreign_key_check"));
   QVERIFY(!q.next());
+  manager.close();
+}
+
+void DatabaseMigratorTest::configuresRequirementCodeFormat() {
+  QTemporaryDir directory;
+  REQ_SQLManager manager;
+  QVERIFY(manager.newDB(directory.filePath("code-format.db")).type() == QSqlError::NoError);
+  QSqlDatabase db = QSqlDatabase::database(manager.currentConnection());
+  QSqlQuery migration(db);
+  QVERIFY(migration.exec("INSERT INTO REQUIREMENT(ID,CODE,TITLE,TYPE,STATUS) VALUES(99,'LEGACY-CODE','Historique',1,1)"));
+  QVERIFY(migration.exec("DELETE FROM PROJECT_META WHERE KEY LIKE 'requirement_code_%'"));
+  QVERIFY(migration.exec("PRAGMA user_version=23"));
+  QString migrationError; QVERIFY2(DatabaseMigrator::migrate(db,&migrationError),qPrintable(migrationError));
+  QVERIFY(migration.exec("SELECT CODE FROM REQUIREMENT WHERE ID=99")); QVERIFY(migration.next());
+  QCOMPARE(migration.value(0).toString(),QString("LEGACY-CODE"));
+  ProductTreeService tree(manager.currentConnection());
+  QVERIFY(tree.addNode(-1, "XIFU").success);
+  QSqlQuery query(db);
+  QVERIFY(query.exec("SELECT ID FROM PT WHERE SEGMENT='XIFU'")); QVERIFY(query.next());
+  const int root = query.value(0).toInt();
+  QVERIFY(tree.addNode(root, "DRE").success);
+  QVERIFY(query.exec("SELECT ID FROM PT WHERE SEGMENT='DRE'")); QVERIFY(query.next());
+  const int dre = query.value(0).toInt();
+  RequirementService requirements(manager.currentConnection());
+  QCOMPARE(requirements.suggestCode(dre), QString("XIFU-DRE-R-0000"));
+  QVERIFY(requirements.validateCode("XIFU-DRE-R-0001", dre).conforming);
+  QVERIFY(requirements.validateCode("XIFU-DRE-R-0000", dre).conforming);
+  RequirementRecord first; first.code="XIFU-DRE-R-0000"; first.title="Première";
+  first.typeId=1; first.statusId=1; first.primaryPtId=dre; first.ptIds={dre};
+  QVERIFY(requirements.save(first).success);
+  QCOMPARE(requirements.suggestCode(dre), QString("XIFU-DRE-R-0001"));
+
+  ReferenceDataService settings(manager.currentConnection());
+  RequirementCodeFormat format = settings.codeFormat();
+  format.separator = '_'; format.marker = "REQ"; format.digits = 3;
+  format.includeRoot = false;
+  QVERIFY(settings.saveCodeFormat(format).success);
+  QCOMPARE(tree.fullCode(dre), QString("XIFU_DRE"));
+  QCOMPARE(requirements.suggestCode(dre), QString("DRE_REQ_001"));
+  QVERIFY(requirements.validateCode("DRE_REQ_001", dre).conforming);
+  const auto oldCode = requirements.validateCode("XIFU-DRE-R-0001", dre);
+  QVERIFY(!oldCode.conforming); QVERIFY(!oldCode.errors.isEmpty());
+  QCOMPARE(requirements.suggestCode(root), QString("REQ_000"));
+
+  format.marker = "lower";
+  QVERIFY(!settings.saveCodeFormat(format).success);
+  format.marker = "REQ"; format.separator = 'A';
+  QVERIFY(!settings.saveCodeFormat(format).success);
   manager.close();
 }
 
@@ -1370,7 +1419,7 @@ void DatabaseMigratorTest::migratesLegacySchemaWithoutLosingLinks() {
   QVERIFY(!blocked.success);
   QVERIFY(blocked.blockers.contains("Exigence SYS-001"));
   RequirementService requirements("migration-test");
-  QCOMPARE(requirements.suggestCode(cId), QString("SYS-C-R-0001"));
+  QCOMPARE(requirements.suggestCode(cId), QString("SYS-C-R-0000"));
   QVERIFY(query.exec("SELECT COUNT(*) FROM REQUIREMENT_VERIFICATION WHERE "
                      "REQ_ID IN (1,2) AND METHOD_ID=1"));
   QVERIFY(query.next());

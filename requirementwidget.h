@@ -55,6 +55,7 @@ private:
   void clearEditor();
   void setEditorEnabled(bool);
   void rebuildPrimary(int preferred = -1);
+  void updateCodeWarning();
   void populateList();
   void loadRelations(int id);
   void loadRelationGraph(int id);

@@ -161,6 +161,7 @@ RequirementWidget::RequirementWidget(QWidget *p) : QWidget(p) {
   m_code = new QLineEdit;
   m_code->setObjectName("requirementCodeEditor");
   m_codeWarning = new QLabel;
+  m_codeWarning->setObjectName("requirementCodeWarning");
   m_codeWarning->setStyleSheet("color:#b06000");
   m_codeWarning->setWordWrap(true);
   m_title = new QLineEdit;
@@ -561,6 +562,7 @@ RequirementWidget::RequirementWidget(QWidget *p) : QWidget(p) {
   });
   for (auto *w : {m_code, m_title, m_source})
     connect(w, &QLineEdit::textEdited, this, [this] { m_dirty = true; });
+  connect(m_code, &QLineEdit::textChanged, this, &RequirementWidget::updateCodeWarning);
   connect(m_description, &MarkdownDescriptionEditor::contentChanged, this, [this] {
     if (!m_loading)
       m_dirty = true;
@@ -1074,13 +1076,7 @@ void RequirementWidget::loadEditor(int id) {
   m_configurations->setEnabled(!r.notApplicable);
   loadChanges(id);
   loadHistory(id);
-  ProductTreeService pt(m_connection);
-  QString prefix = pt.fullCode(r.primaryPtId) + "-R-";
-  m_codeWarning->setText(
-      r.primaryPtId >= 0 && !r.code.startsWith(prefix)
-          ? "Le préfixe du code ne correspond plus au PT principal. Le code "
-            "reste volontairement inchangé."
-          : QString());
+  updateCodeWarning();
   m_loading = false;
   m_dirty = false;
   setEditorEnabled(true);
@@ -1114,6 +1110,7 @@ void RequirementWidget::allocationChanged() {
   if (m_current < 0 && m_code->text().isEmpty() &&
       m_primary->currentData().toInt() >= 0)
     m_code->setText(m_service.suggestCode(m_primary->currentData().toInt()));
+  updateCodeWarning();
   m_dirty = true;
 }
 void RequirementWidget::rebuildPrimary(int preferred) {
@@ -1133,8 +1130,22 @@ void RequirementWidget::rebuildPrimary(int preferred) {
   m_primary->blockSignals(false);
 }
 void RequirementWidget::primaryChanged(int) {
+  updateCodeWarning();
   if (!m_loading)
     m_dirty = true;
+}
+void RequirementWidget::updateCodeWarning() {
+  if (m_connection.isEmpty() || m_code->text().isEmpty() ||
+      m_primary->currentIndex() < 0) {
+    m_codeWarning->clear(); m_codeWarning->setToolTip({}); return;
+  }
+  const auto validation = m_service.validateCode(
+      m_code->text(), m_primary->currentData().toInt());
+  if (validation.conforming) {
+    m_codeWarning->clear(); m_codeWarning->setToolTip({}); return;
+  }
+  m_codeWarning->setText("Le code ne correspond pas au format enregistré. Le code est volontairement inchangé.");
+  m_codeWarning->setToolTip(validation.errors.join('\n'));
 }
 QComboBox *RequirementWidget::methodCombo(int selected) const {
   auto *c = new QComboBox;

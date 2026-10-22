@@ -6,6 +6,9 @@
 
 class QLineEdit;
 class QTableWidget;
+class QCheckBox;
+class QLabel;
+class QSpinBox;
 
 class ReferenceDataWidget : public QWidget {
   Q_OBJECT
@@ -20,6 +23,8 @@ signals:
 private:
   void refreshMethods();
   void refreshTypes();
+  void refreshCodeFormat();
+  void updateCodePreview();
   void showResult(const ReferenceDataResult &result);
   int selectedId(QTableWidget *table) const;
   QString m_connection;
@@ -29,6 +34,11 @@ private:
   QLineEdit *m_methodLabel = nullptr;
   QLineEdit *m_typeCode = nullptr;
   QLineEdit *m_typeLabel = nullptr;
+  QLineEdit *m_codeSeparator = nullptr;
+  QLineEdit *m_codeMarker = nullptr;
+  QSpinBox *m_codeDigits = nullptr;
+  QCheckBox *m_codeIncludeRoot = nullptr;
+  QLabel *m_codePreview = nullptr;
 };
 
 #endif

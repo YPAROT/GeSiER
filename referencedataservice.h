@@ -3,6 +3,7 @@
 
 #include <QList>
 #include <QString>
+#include "requirementcodeformat.h"
 
 struct ReferenceDataEntry {
   int id = -1;
@@ -35,6 +36,8 @@ public:
   ReferenceDataResult updateRequirementType(int id, const QString &code,
                                             const QString &label) const;
   ReferenceDataResult deleteRequirementType(int id) const;
+  RequirementCodeFormat codeFormat() const;
+  ReferenceDataResult saveCodeFormat(const RequirementCodeFormat &format) const;
 
 private:
   ReferenceDataResult saveMethod(int id, const QString &label) const;

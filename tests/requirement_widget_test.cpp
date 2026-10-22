@@ -58,7 +58,30 @@ private slots:
   void marksObsoleteRequirementsInDocumentTree();
   void displaysRequirementHistoryAsHumanDiff();
   void refreshesRequirementFilterLookups();
+  void displaysLiveRequirementCodeDiagnostics();
 };
+
+void RequirementWidgetTest::displaysLiveRequirementCodeDiagnostics() {
+  QTemporaryDir directory; REQ_SQLManager manager;
+  QVERIFY(manager.newDB(directory.filePath("code-diagnostics.db")).type()==QSqlError::NoError);
+  ProductTreeService tree(manager.currentConnection()); QVERIFY(tree.addNode(-1,"SYS").success);
+  QSqlQuery query(QSqlDatabase::database(manager.currentConnection()));
+  QVERIFY(query.exec("SELECT ID FROM PT WHERE SEGMENT='SYS'")); QVERIFY(query.next()); const int pt=query.value(0).toInt();
+  QVERIFY(query.exec("INSERT INTO REQUIREMENT(ID,CODE,TITLE,TYPE,STATUS) VALUES(1,'BAD','Test',1,1)"));
+  QVERIFY(query.exec(QString("INSERT INTO REQUIREMENT_PT(REQ_ID,PT_ID,IS_PRIMARY) VALUES(1,%1,1)").arg(pt)));
+  RequirementWidget widget; widget.setConnectionName(manager.currentConnection()); widget.openRequirement(1);
+  auto *code=widget.findChild<QLineEdit *>("requirementCodeEditor");
+  auto *warning=widget.findChild<QLabel *>("requirementCodeWarning"); QVERIFY(code); QVERIFY(warning);
+  QCOMPARE(warning->text(),QString("Le code ne correspond pas au format enregistré. Le code est volontairement inchangé."));
+  QVERIFY(!warning->toolTip().isEmpty());
+  code->setText("SYS-R-0001"); QCoreApplication::processEvents();
+  QVERIFY(warning->text().isEmpty()); QVERIFY(warning->toolTip().isEmpty());
+  code->setText("SYS-R-0000"); QCoreApplication::processEvents();
+  QVERIFY(warning->text().isEmpty()); QVERIFY(warning->toolTip().isEmpty());
+  code->setText("SYS-R-01"); QCoreApplication::processEvents();
+  QVERIFY(warning->toolTip().contains("exactement 4"));
+  widget.setConnectionName({}); manager.close();
+}
 
 void RequirementWidgetTest::refreshesRequirementFilterLookups() {
   QTemporaryDir directory;
@@ -428,6 +451,12 @@ void RequirementWidgetTest::referenceDataWidgetRefreshesCatalogs() {
   auto *types = widget.findChild<QTableWidget *>("requirementTypesTable");
   QVERIFY(methods);
   QVERIFY(types);
+  auto *preview = widget.findChild<QLabel *>("requirementCodePreview");
+  auto *includeRoot = widget.findChild<QCheckBox *>("requirementCodeIncludeRoot");
+  QVERIFY(preview); QVERIFY(includeRoot);
+  QCOMPARE(preview->text(), QString("RACINE-PTLVL1-R-0000"));
+  includeRoot->setChecked(false);
+  QCOMPARE(preview->text(), QString("PTLVL1-R-0000"));
   bool foundMethod = false, foundType = false;
   for (int row = 0; row < methods->rowCount(); ++row)
     foundMethod |= methods->item(row, 0)->text() == "Inspection UI";

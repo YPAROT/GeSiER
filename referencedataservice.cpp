@@ -136,3 +136,14 @@ ReferenceDataResult ReferenceDataService::deleteRequirementType(int id) const {
   if (!query.exec()) return ReferenceDataResult::failure(query.lastError().text());
   return query.numRowsAffected() == 1 ? ReferenceDataResult::ok(id) : ReferenceDataResult::failure("Type d'exigence introuvable.");
 }
+
+RequirementCodeFormat ReferenceDataService::codeFormat() const {
+  return RequirementCodeFormatService(m_connectionName).format();
+}
+
+ReferenceDataResult ReferenceDataService::saveCodeFormat(
+    const RequirementCodeFormat &format) const {
+  const auto result = RequirementCodeFormatService(m_connectionName).saveFormat(format);
+  return result.success ? ReferenceDataResult::ok()
+                        : ReferenceDataResult::failure(result.message);
+}

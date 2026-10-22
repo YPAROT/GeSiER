@@ -1286,6 +1286,22 @@ bool DatabaseMigrator::migrate(QSqlDatabase db, QString *errorMessage) {
     return false;
   }
 
+  // v24: format configurable des codes d'exigence.
+  if (version < 24 &&
+      (!execute(db, "INSERT OR IGNORE INTO PROJECT_META(KEY,VALUE) VALUES"
+                    "('requirement_code_marker','R')", errorMessage) ||
+       !execute(db, "INSERT OR IGNORE INTO PROJECT_META(KEY,VALUE) VALUES"
+                    "('requirement_code_digits','4')", errorMessage) ||
+       !execute(db, "INSERT OR IGNORE INTO PROJECT_META(KEY,VALUE) VALUES"
+                    "('requirement_code_include_root','1')", errorMessage) ||
+       !execute(db,
+                "INSERT INTO MIGRATION_REPORT(FROM_VERSION,TO_VERSION,REPORT) "
+                "VALUES(23,24,'Format configurable des codes d exigence.')",
+                errorMessage))) {
+    db.rollback();
+    return false;
+  }
+
   if (!execute(db, QString("PRAGMA user_version=%1").arg(CurrentVersion),
                errorMessage) ||
       !db.commit()) {
